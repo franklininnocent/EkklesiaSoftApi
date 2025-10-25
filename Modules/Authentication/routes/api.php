@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use Modules\Authentication\Http\Controllers\AuthenticationController;
+use Modules\Authentication\Http\Controllers\UserController;
 use App\Http\Controllers\UsersController;
 
 /*
@@ -32,4 +33,37 @@ Route::middleware('auth:api')->group(function () {
         ->where('id', '[0-9]+');
     Route::patch('/users/{id}/status', [UsersController::class, 'updateStatus'])
         ->where('id', '[0-9]+');
+});
+
+// Multi-Role User Management API (Tenant-Isolated)
+// These routes enable tenant administrators to manage users with multiple role assignments
+Route::middleware('auth:api')->prefix('tenant')->group(function () {
+    // User CRUD Operations
+    Route::get('/users', [UserController::class, 'index'])
+        ->name('tenant.users.index');
+    
+    Route::post('/users', [UserController::class, 'store'])
+        ->name('tenant.users.store');
+    
+    Route::get('/users/{id}', [UserController::class, 'show'])
+        ->where('id', '[0-9]+')
+        ->name('tenant.users.show');
+    
+    Route::put('/users/{id}', [UserController::class, 'update'])
+        ->where('id', '[0-9]+')
+        ->name('tenant.users.update');
+    
+    Route::delete('/users/{id}', [UserController::class, 'destroy'])
+        ->where('id', '[0-9]+')
+        ->name('tenant.users.destroy');
+    
+    // Role Assignment Operations
+    Route::post('/users/{id}/roles', [UserController::class, 'assignRoles'])
+        ->where('id', '[0-9]+')
+        ->name('tenant.users.assign-roles');
+    
+    // Permission Query Operations
+    Route::get('/users/{id}/permissions', [UserController::class, 'permissions'])
+        ->where('id', '[0-9]+')
+        ->name('tenant.users.permissions');
 });

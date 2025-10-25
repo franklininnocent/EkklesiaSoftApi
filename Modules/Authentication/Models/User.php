@@ -76,11 +76,26 @@ class User extends Authenticatable
     ];
 
     /**
-     * Get the role that owns the user.
+     * Get the role that owns the user (Legacy - single role).
+     * 
+     * @deprecated Use roles() for multiple roles support
      */
     public function role()
     {
         return $this->belongsTo(Role::class, 'role_id');
+    }
+
+    /**
+     * Get all roles assigned to this user (Many-to-Many).
+     * 
+     * This is the primary relationship for multi-role support.
+     * Users can have multiple roles, each contributing their permissions.
+     */
+    public function roles(): BelongsToMany
+    {
+        return $this->belongsToMany(Role::class, 'role_user')
+            ->withTimestamps()
+            ->orderBy('level', 'asc'); // Order by role level (highest priority first)
     }
 
     /**
@@ -98,6 +113,172 @@ class User extends Authenticatable
     {
         return $this->belongsToMany(Permission::class, 'permission_user')
             ->withTimestamps();
+    }
+
+    /**
+     * Get ALL permissions for this user (from all roles + direct permissions).
+     * 
+     * This method aggregates permissions from:
+     * 1. All assigned roles
+     * 2. Direct user permissions
+     * 
+     * @return \Illuminate\Support\Collection
+     */
+    public function getAllPermissions()
+    {
+        // Get permissions from all roles
+        $rolePermissions = $this->roles()
+            ->with('permissions')
+            ->get()
+            ->pluck('permissions')
+            ->flatten()
+            ->unique('id');
+        
+        // Get direct permissions
+        $directPermissions = $this->permissions;
+        
+        // Merge and remove duplicates
+        return $rolePermissions->merge($directPermissions)->unique('id');
+    }
+
+    /**
+     * Check if user has a specific permission (from any role or direct assignment).
+     * 
+     * @param string|Permission $permission
+     * @return bool
+     */
+    public function hasPermission($permission): bool
+    {
+        if ($permission instanceof Permission) {
+            $permissionName = $permission->name;
+        } else {
+            $permissionName = $permission;
+        }
+        
+        return $this->getAllPermissions()->contains('name', $permissionName);
+    }
+
+    /**
+     * Check if user has any of the given permissions.
+     * 
+     * @param array $permissions
+     * @return bool
+     */
+    public function hasAnyPermission(array $permissions): bool
+    {
+        return $this->getAllPermissions()
+            ->pluck('name')
+            ->intersect($permissions)
+            ->isNotEmpty();
+    }
+
+    /**
+     * Check if user has all of the given permissions.
+     * 
+     * @param array $permissions
+     * @return bool
+     */
+    public function hasAllPermissions(array $permissions): bool
+    {
+        return $this->getAllPermissions()
+            ->pluck('name')
+            ->intersect($permissions)
+            ->count() === count($permissions);
+    }
+
+    /**
+     * Check if user has a specific role.
+     * 
+     * @param string|Role $role
+     * @return bool
+     */
+    public function hasRole($role): bool
+    {
+        if ($role instanceof Role) {
+            return $this->roles->contains('id', $role->id);
+        }
+        
+        return $this->roles->contains('name', $role);
+    }
+
+    /**
+     * Check if user has any of the given roles.
+     * 
+     * @param array $roles
+     * @return bool
+     */
+    public function hasAnyRole(array $roles): bool
+    {
+        return $this->roles->pluck('name')->intersect($roles)->isNotEmpty();
+    }
+
+    /**
+     * Check if user has all of the given roles.
+     * 
+     * @param array $roles
+     * @return bool
+     */
+    public function hasAllRoles(array $roles): bool
+    {
+        return $this->roles->pluck('name')->intersect($roles)->count() === count($roles);
+    }
+
+    /**
+     * Assign roles to the user.
+     * 
+     * @param mixed ...$roles
+     * @return self
+     */
+    public function assignRoles(...$roles): self
+    {
+        $roles = collect($roles)
+            ->flatten()
+            ->map(function ($role) {
+                if ($role instanceof Role) {
+                    return $role->id;
+                }
+                return Role::where('name', $role)->firstOrFail()->id;
+            });
+        
+        $this->roles()->syncWithoutDetaching($roles);
+        
+        return $this;
+    }
+
+    /**
+     * Sync roles for the user (replaces existing roles).
+     * 
+     * @param array $roleIds
+     * @return self
+     */
+    public function syncRoles(array $roleIds): self
+    {
+        $this->roles()->sync($roleIds);
+        
+        return $this;
+    }
+
+    /**
+     * Remove roles from the user.
+     * 
+     * @param mixed ...$roles
+     * @return self
+     */
+    public function removeRoles(...$roles): self
+    {
+        $roles = collect($roles)
+            ->flatten()
+            ->map(function ($role) {
+                if ($role instanceof Role) {
+                    return $role->id;
+                }
+                return Role::where('name', $role)->first()->id ?? null;
+            })
+            ->filter();
+        
+        $this->roles()->detach($roles);
+        
+        return $this;
     }
 
     /**
@@ -337,98 +518,5 @@ class User extends Authenticatable
             });
 
         return $this;
-    }
-
-    /**
-     * Check if user has a specific permission (via role or direct assignment).
-     */
-    public function hasPermissionTo($permission): bool
-    {
-        // SuperAdmin has all permissions
-        if ($this->isSuperAdmin()) {
-            return true;
-        }
-
-        // Check direct permissions
-        if (is_string($permission)) {
-            if ($this->permissions->contains('name', $permission)) {
-                return true;
-            }
-        } else {
-            if ($this->permissions->contains($permission)) {
-                return true;
-            }
-        }
-
-        // Check role permissions
-        if ($this->role) {
-            return $this->role->hasPermissionTo($permission);
-        }
-
-        return false;
-    }
-
-    /**
-     * Check if user has any of the given permissions.
-     */
-    public function hasAnyPermission(...$permissions): bool
-    {
-        foreach ($permissions as $permission) {
-            if ($this->hasPermissionTo($permission)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Check if user has all of the given permissions.
-     */
-    public function hasAllPermissions(...$permissions): bool
-    {
-        foreach ($permissions as $permission) {
-            if (!$this->hasPermissionTo($permission)) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    /**
-     * Get all permissions for this user (from role + direct).
-     */
-    public function getAllPermissions()
-    {
-        $permissions = collect([]);
-
-        // Add direct permissions
-        $permissions = $permissions->merge($this->permissions);
-
-        // Add role permissions
-        if ($this->role) {
-            $permissions = $permissions->merge($this->role->permissions);
-        }
-
-        return $permissions->unique('id');
-    }
-
-    /**
-     * Get all permission names for this user.
-     */
-    public function getPermissionNames(): array
-    {
-        return $this->getAllPermissions()->pluck('name')->toArray();
-    }
-
-    /**
-     * Sync permissions with this user.
-     */
-    public function syncPermissions(...$permissions): self
-    {
-        $this->permissions()->detach();
-
-        return $this->givePermissionTo($permissions);
     }
 }
