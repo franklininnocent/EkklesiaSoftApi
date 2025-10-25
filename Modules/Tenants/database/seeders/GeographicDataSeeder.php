@@ -34,7 +34,7 @@ class GeographicDataSeeder extends Seeder
     {
         $this->command->info('📍 Seeding countries...');
         
-        $jsonPath = base_path('countries-states-cities-database-master/json/countries.json');
+        $jsonPath = base_path('geographic-data/countries.json');
         
         if (!File::exists($jsonPath)) {
             $this->command->error("Countries JSON file not found at: {$jsonPath}");
@@ -110,7 +110,7 @@ class GeographicDataSeeder extends Seeder
     {
         $this->command->info('📍 Seeding states/provinces...');
         
-        $jsonPath = base_path('countries-states-cities-database-master/json/states.json');
+        $jsonPath = base_path('geographic-data/states.json');
         
         if (!File::exists($jsonPath)) {
             $this->command->error("States JSON file not found at: {$jsonPath}");
