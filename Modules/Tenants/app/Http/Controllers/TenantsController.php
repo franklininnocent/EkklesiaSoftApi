@@ -918,6 +918,207 @@ class TenantsController extends Controller
     }
 
     /**
+     * Get church profile for the authenticated tenant user.
+     * Returns the tenant record associated with the user's tenant_id.
+     * 
+     * @route GET /api/tenant/church-profile
+     */
+    public function getChurchProfile(): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!$user || !$user->tenant_id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User is not associated with a tenant/church',
+                ], 404);
+            }
+
+            // Load tenant with all relationships including ecclesiastical data
+            $tenant = Tenant::with([
+                'creator', 
+                'updater', 
+                'addresses', 
+                'primaryContact.addresses', 
+                'secondaryContact.addresses',
+                // Ecclesiastical relationships
+                'churchProfile.denomination',
+                'churchProfile.archdiocese.denomination',
+                'churchProfile.bishop.archdiocese',
+                'churchLeadership' => function($query) {
+                    $query->active()->current()->ordered();
+                },
+                'activeSocialMedia',
+                'churchStatistics' => function($query) {
+                    $query->latest()->limit(12); // Last 12 records
+                }
+            ])->find($user->tenant_id);
+
+            if (!$tenant) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Church profile not found',
+                ], 404);
+            }
+
+            // Generate full logo URL
+            if ($tenant->logo_url) {
+                $tenant->logo_full_url = $this->fileUploadService->getTenantLogoUrl($tenant->logo_url);
+            }
+
+            Log::info('Church profile retrieved', [
+                'tenant_id' => $tenant->id,
+                'user_id' => $user->id,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $tenant,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error fetching church profile: ' . $e->getMessage(), [
+                'user_id' => auth()->id(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Error fetching church profile',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
+        }
+    }
+
+    /**
+     * Update church profile for the authenticated tenant user.
+     * Allows tenant users (especially primary admin) to update their church information.
+     * 
+     * @route PUT /api/tenant/church-profile
+     */
+    public function updateChurchProfile(Request $request): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            
+            if (!$user || !$user->tenant_id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User is not associated with a tenant/church',
+                ], 404);
+            }
+
+            // Check if user has permission to edit church profile
+            // Primary admin or user with manage_tenants permission can edit
+            if (!$user->is_primary_admin && !$user->hasPermissionTo('manage_tenants')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Only church administrators can update church profile.',
+                ], 403);
+            }
+
+            $tenant = Tenant::find($user->tenant_id);
+
+            if (!$tenant) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Church profile not found',
+                ], 404);
+            }
+
+            // Validation rules for church profile update
+            $validated = $request->validate([
+                'name' => 'sometimes|required|string|max:255',
+                'slogan' => 'nullable|string|max:500',
+                'denomination' => 'nullable|string|max:100',
+                'founded_year' => 'nullable|integer|min:1000|max:' . (date('Y') + 1),
+                'pastor_name' => 'nullable|string|max:255',
+                'associate_pastors' => 'nullable|string|max:500',
+                'phone' => 'nullable|string|max:20',
+                'email' => 'nullable|email|max:255',
+                'website' => 'nullable|url|max:255',
+                'about' => 'nullable|string|max:5000',
+                'vision' => 'nullable|string|max:2000',
+                'mission' => 'nullable|string|max:2000',
+                'core_values' => 'nullable|string|max:2000',
+                'service_times' => 'nullable|string|max:1000',
+                'weekly_attendance' => 'nullable|integer|min:0',
+                'membership_count' => 'nullable|integer|min:0',
+                'social_facebook' => 'nullable|url|max:255',
+                'social_twitter' => 'nullable|url|max:255',
+                'social_instagram' => 'nullable|url|max:255',
+                'social_youtube' => 'nullable|url|max:255',
+                'primary_color' => 'nullable|string|max:7', // Hex color
+                'secondary_color' => 'nullable|string|max:7', // Hex color
+            ]);
+
+            DB::beginTransaction();
+            try {
+                // Update tenant
+                $tenant->update($validated);
+
+                DB::commit();
+
+                // Reload relationships including ecclesiastical data
+                $tenant->load([
+                    'creator', 
+                    'updater', 
+                    'addresses', 
+                    'primaryContact.addresses', 
+                    'secondaryContact.addresses',
+                    'churchProfile.denomination',
+                    'churchProfile.archdiocese.denomination',
+                    'churchProfile.bishop.archdiocese',
+                    'churchLeadership' => function($query) {
+                        $query->active()->current()->ordered();
+                    },
+                    'activeSocialMedia',
+                    'churchStatistics' => function($query) {
+                        $query->latest()->limit(12);
+                    }
+                ]);
+
+                // Generate full logo URL
+                if ($tenant->logo_url) {
+                    $tenant->logo_full_url = $this->fileUploadService->getTenantLogoUrl($tenant->logo_url);
+                }
+
+                Log::info('Church profile updated', [
+                    'tenant_id' => $tenant->id,
+                    'updated_by' => $user->id,
+                    'changes' => $validated,
+                ]);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Church profile updated successfully',
+                    'data' => $tenant,
+                ]);
+            } catch (\Exception $e) {
+                DB::rollBack();
+                throw $e;
+            }
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Error updating church profile: ' . $e->getMessage(), [
+                'user_id' => auth()->id(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Error updating church profile',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
+        }
+    }
+
+    /**
      * Check if current user can manage tenants.
      * Only SuperAdmin and EkklesiaAdmin can manage tenants.
      */

@@ -11,6 +11,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Modules\Authentication\Models\User;
 use Modules\Tenants\Models\Address;
+use Modules\Tenants\Models\ChurchProfile;
+use Modules\Tenants\Models\ChurchLeadership;
+use Modules\Tenants\Models\ChurchStatistic;
+use Modules\Tenants\Models\ChurchSocialMedia;
 
 class Tenant extends Model
 {
@@ -154,6 +158,60 @@ class Tenant extends Model
     {
         return $this->morphMany(Address::class, 'addressable')
             ->where('active', 1);
+    }
+
+    /**
+     * Get the church profile for this tenant.
+     * One-to-one relationship.
+     */
+    public function churchProfile(): HasOne
+    {
+        return $this->hasOne(ChurchProfile::class);
+    }
+
+    /**
+     * Get the church leadership (pastors, associate pastors, etc.) for this tenant.
+     */
+    public function churchLeadership(): HasMany
+    {
+        return $this->hasMany(ChurchLeadership::class);
+    }
+
+    /**
+     * Get the primary pastor for this tenant.
+     */
+    public function primaryPastor(): HasOne
+    {
+        return $this->hasOne(ChurchLeadership::class)
+            ->where('is_primary', 1)
+            ->where('active', 1)
+            ->latest('appointed_date');
+    }
+
+    /**
+     * Get the church statistics for this tenant.
+     */
+    public function churchStatistics(): HasMany
+    {
+        return $this->hasMany(ChurchStatistic::class);
+    }
+
+    /**
+     * Get the social media accounts for this tenant.
+     */
+    public function socialMedia(): HasMany
+    {
+        return $this->hasMany(ChurchSocialMedia::class);
+    }
+
+    /**
+     * Get the active social media accounts for this tenant.
+     */
+    public function activeSocialMedia(): HasMany
+    {
+        return $this->hasMany(ChurchSocialMedia::class)
+            ->where('active', 1)
+            ->orderBy('display_order');
     }
 
     /**
