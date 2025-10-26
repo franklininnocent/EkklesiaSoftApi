@@ -210,23 +210,36 @@ class AuthenticationController extends Controller
             ], 401);
         }
 
-        // Load role relationship
-        $user->load('role');
+        // Load relationships: role, roles (multi-role), permissions, and tenant
+        $user->load(['role', 'roles.permissions', 'permissions', 'tenant']);
+
+        // Build user response with all relationships
+        $userData = [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'contact_number' => $user->contact_number,
+            'user_type' => $user->user_type,
+            'is_primary_admin' => $user->is_primary_admin ?? false,
+            'tenant_id' => $user->tenant_id,
+            'role_id' => $user->role_id, // Legacy
+            'role_name' => $user->role ? $user->role->name : null, // Legacy
+            'role_level' => $user->role ? $user->role->level : null, // Legacy
+            'active' => $user->active,
+            'created_at' => $user->created_at,
+            'updated_at' => $user->updated_at,
+            'is_super_admin' => $user->isSuperAdmin(),
+            'is_admin' => $user->isAdmin(),
+            // Multi-role support
+            'roles' => $user->roles,
+            'permissions' => $user->getAllPermissions()->values(),
+            // Tenant relationship
+            'tenant' => $user->tenant,
+        ];
 
         return response()->json([
             'success' => true,
-            'data' => [
-                'id' => $user->id,
-                'name' => $user->name,
-                'email' => $user->email,
-                'role_id' => $user->role_id,
-                'role_name' => $user->role ? $user->role->name : null,
-                'role_level' => $user->role ? $user->role->level : null,
-                'tenant_id' => $user->tenant_id,
-                'active' => $user->active,
-                'is_super_admin' => $user->isSuperAdmin(),
-                'is_admin' => $user->isAdmin(),
-            ],
+            'data' => $userData,
             'message' => 'User details retrieved successfully'
         ]);
     }

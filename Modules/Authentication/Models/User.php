@@ -43,6 +43,7 @@ class User extends Authenticatable
         'password',
         'contact_number',
         'user_type',
+        'is_primary_admin',
         'role_id',
         'tenant_id',
         'active',
@@ -70,6 +71,7 @@ class User extends Authenticatable
         'role_id' => 'integer',
         'tenant_id' => 'integer',
         'user_type' => 'integer',
+        'is_primary_admin' => 'boolean',
         'deleted_at' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
@@ -350,6 +352,66 @@ class User extends Authenticatable
     public function isEkklesiaManager(): bool
     {
         return $this->role && $this->role->name === Role::EKKLESIA_MANAGER;
+    }
+
+    /**
+     * Check if user is a tenant administrator (has Administrator role within their tenant)
+     */
+    public function isTenantAdmin(): bool
+    {
+        return $this->roles()
+            ->where('name', 'Administrator')
+            ->whereNotNull('tenant_id')
+            ->exists();
+    }
+
+    /**
+     * Check if user can edit another user based on hierarchical permissions
+     * 
+     * Rules:
+     * 1. Cannot edit self
+     * 2. SuperAdmin and EkklesiaAdmin can edit anyone
+     * 3. Primary admin can edit all users in their tenant
+     * 4. Secondary admins cannot edit primary admin or other admins
+     * 5. Must be in same tenant (tenant isolation)
+     * 
+     * @param User $targetUser The user being edited
+     * @return bool
+     */
+    public function canEditUser(User $targetUser): bool
+    {
+        // Rule 1: Cannot edit self
+        if ($this->id === $targetUser->id) {
+            return false;
+        }
+
+        // Rule 2: SuperAdmin and EkklesiaAdmin can edit anyone
+        if ($this->isSuperAdmin() || $this->isEkklesiaAdmin()) {
+            return true;
+        }
+
+        // Rule 5: Must be in same tenant (tenant isolation)
+        if ($this->tenant_id !== $targetUser->tenant_id) {
+            return false;
+        }
+
+        // If target is primary admin, only SuperAdmin/EkklesiaAdmin can edit (already checked above)
+        if ($targetUser->is_primary_admin) {
+            return false;
+        }
+
+        // Rule 3: Primary admin can edit all non-primary users in their tenant
+        if ($this->is_primary_admin) {
+            return true;
+        }
+
+        // Rule 4: Secondary admins cannot edit other admins (including primary)
+        if ($this->isTenantAdmin() && $targetUser->isTenantAdmin()) {
+            return false;
+        }
+
+        // Regular users can edit if they have the permission
+        return $this->hasPermission('users.update');
     }
 
     /**

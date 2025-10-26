@@ -295,6 +295,7 @@ class TenantsController extends Controller
                 'email' => $request->primary_user_email,
                 'contact_number' => $request->primary_contact_number,
                 'user_type' => User::USER_TYPE_PRIMARY_CONTACT,  // 1 = primary_contact
+                'is_primary_admin' => true,  // Mark as primary admin - cannot be deleted/deactivated by tenant users
                 'role_id' => $adminRole->id,  // Assign Administrator role
                 'password' => Hash::make('TempPassword123!'), // Temporary password
                 'active' => 1,

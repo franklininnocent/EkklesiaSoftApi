@@ -86,9 +86,17 @@ class UserController extends Controller
             if ($perPage === 'all') {
                 $users = $query->get();
                 
+                // Add authorization flags to each user
+                $usersWithAuth = $users->map(function ($targetUser) use ($user) {
+                    $userData = $targetUser->toArray();
+                    $userData['can_edit'] = $user->canEditUser($targetUser);
+                    $userData['is_self'] = $user->id === $targetUser->id;
+                    return $userData;
+                });
+                
                 return response()->json([
                     'success' => true,
-                    'data' => $users,
+                    'data' => $usersWithAuth,
                     'meta' => [
                         'total' => $users->count(),
                     ],
@@ -97,9 +105,17 @@ class UserController extends Controller
 
             $users = $query->paginate($perPage);
 
+            // Add authorization flags to each user
+            $usersWithAuth = collect($users->items())->map(function ($targetUser) use ($user) {
+                $userData = $targetUser->toArray();
+                $userData['can_edit'] = $user->canEditUser($targetUser);
+                $userData['is_self'] = $user->id === $targetUser->id;
+                return $userData;
+            });
+
             return response()->json([
                 'success' => true,
-                'data' => $users->items(),
+                'data' => $usersWithAuth,
                 'pagination' => [
                     'current_page' => $users->currentPage(),
                     'per_page' => $users->perPage(),
@@ -141,18 +157,30 @@ class UserController extends Controller
                 ], 403);
             }
 
-            $user = User::with(['roles.permissions', 'tenant', 'addresses'])
-                ->where('tenant_id', $authUser->tenant_id)
-                ->findOrFail($id);
+            // SuperAdmin/EkklesiaAdmin can view any user, others only their tenant
+            if ($authUser->isSuperAdmin() || $authUser->isEkklesiaAdmin()) {
+                $user = User::with(['roles.permissions', 'tenant', 'addresses'])->findOrFail($id);
+            } else {
+                $user = User::with(['roles.permissions', 'tenant', 'addresses'])
+                    ->where('tenant_id', $authUser->tenant_id)
+                    ->findOrFail($id);
+            }
 
             // Include aggregated permissions
             $allPermissions = $user->getAllPermissions();
+
+            // Check if current user can edit this user
+            $canEdit = $authUser->canEditUser($user);
+            $isSelf = $authUser->id === $user->id;
 
             return response()->json([
                 'success' => true,
                 'data' => [
                     'user' => $user,
                     'all_permissions' => $allPermissions,
+                    'can_edit' => $canEdit,
+                    'is_self' => $isSelf,
+                    'edit_restriction_reason' => !$canEdit ? $this->getEditRestrictionReason($authUser, $user) : null,
                 ],
             ]);
 
@@ -282,14 +310,39 @@ class UserController extends Controller
                 ], 403);
             }
 
-            // Find user with tenant isolation
-            $user = User::where('tenant_id', $authUser->tenant_id)->findOrFail($id);
+            // Find user - SuperAdmin/EkklesiaAdmin can access any user, others only their tenant
+            if ($authUser->isSuperAdmin() || $authUser->isEkklesiaAdmin()) {
+                $user = User::findOrFail($id);
+            } else {
+                $user = User::where('tenant_id', $authUser->tenant_id)->findOrFail($id);
+            }
 
-            // Prevent users from modifying SuperAdmin or EkklesiaAdmin accounts
-            if ($user->isSuperAdmin() || $user->isEkklesiaAdmin()) {
+            // Use comprehensive authorization check
+            if (!$authUser->canEditUser($user)) {
+                // Determine specific error message based on the restriction
+                if ($authUser->id === $user->id) {
+                    $message = 'You cannot edit your own account details. Please contact your administrator for assistance.';
+                } elseif ($user->is_primary_admin && !$authUser->isSuperAdmin() && !$authUser->isEkklesiaAdmin()) {
+                    $message = 'Only Super Admin and Ekklesia Admin can modify the primary administrator account.';
+                } elseif (!$authUser->is_primary_admin && $user->isTenantAdmin()) {
+                    $message = 'Secondary administrators cannot modify other administrator accounts. Please contact the primary administrator.';
+                } elseif ($authUser->tenant_id !== $user->tenant_id) {
+                    $message = 'You can only modify users within your own tenant.';
+                } else {
+                    $message = 'You do not have permission to modify this user account.';
+                }
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'You cannot modify system administrator accounts.',
+                    'message' => $message,
+                ], 403);
+            }
+
+            // Prevent deactivation of primary admin (additional safety check)
+            if ($user->is_primary_admin && $request->input('active') == 0) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'The primary admin account cannot be deactivated. This account is essential for maintaining tenant administrative continuity.',
                 ], 403);
             }
 
@@ -397,6 +450,14 @@ class UserController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'You cannot delete system administrator accounts.',
+                ], 403);
+            }
+
+            // Prevent tenant users from deleting the primary admin account
+            if ($user->is_primary_admin) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'The primary admin account cannot be deleted. This account is essential for maintaining tenant administrative continuity and system integrity.',
                 ], 403);
             }
 
@@ -590,6 +651,42 @@ class UserController extends Controller
                 'message' => 'An error occurred while assigning roles.',
             ], 500);
         }
+    }
+
+    /**
+     * Get the reason why a user cannot edit another user.
+     * 
+     * @param User $authUser The authenticated user
+     * @param User $targetUser The user being edited
+     * @return string|null The restriction reason or null if can edit
+     */
+    private function getEditRestrictionReason(User $authUser, User $targetUser): ?string
+    {
+        if ($authUser->id === $targetUser->id) {
+            return 'You cannot edit your own account details. Please contact your administrator for assistance.';
+        }
+
+        if ($authUser->isSuperAdmin() || $authUser->isEkklesiaAdmin()) {
+            return null; // SuperAdmin and EkklesiaAdmin can edit anyone
+        }
+
+        if ($authUser->tenant_id !== $targetUser->tenant_id) {
+            return 'You can only modify users within your own tenant.';
+        }
+
+        if ($targetUser->is_primary_admin) {
+            return 'Only Super Admin and Ekklesia Admin can modify the primary administrator account.';
+        }
+
+        if (!$authUser->is_primary_admin && $targetUser->isTenantAdmin()) {
+            return 'Secondary administrators cannot modify other administrator accounts. Please contact the primary administrator.';
+        }
+
+        if (!$authUser->hasPermission('users.update')) {
+            return 'You do not have permission to modify user accounts.';
+        }
+
+        return null;
     }
 }
 
