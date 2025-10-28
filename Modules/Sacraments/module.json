@@ -1,0 +1,11 @@
+{
+    "name": "Sacraments",
+    "alias": "sacraments",
+    "description": "",
+    "keywords": [],
+    "priority": 0,
+    "providers": [
+        "Modules\\Sacraments\\Providers\\SacramentsServiceProvider"
+    ],
+    "files": []
+}

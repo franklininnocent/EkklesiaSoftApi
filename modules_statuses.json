@@ -2,5 +2,6 @@
     "Authentication": true,
     "Tenants": true,
     "RolesAndPermissions": true,
-    "EcclesiasticalData": true
+    "EcclesiasticalData": true,
+    "Sacraments": true
 }
