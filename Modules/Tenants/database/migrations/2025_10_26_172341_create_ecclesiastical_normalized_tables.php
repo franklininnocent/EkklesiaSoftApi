@@ -77,33 +77,13 @@ return new class extends Migration
         });
 
         // ================================================================
-        // 3. BISHOPS TABLE - Information about bishops and overseers
+        // 3. BISHOPS TABLE - Moved to separate migration for better normalization
         // ================================================================
-        Schema::create('bishops', function (Blueprint $table) {
-            $table->bigIncrements('id');
-            $table->string('full_name', 255)->comment('Full name of the Bishop');
-            $table->string('title', 100)->default('Bishop')->comment('Title (e.g., Bishop, Archbishop, Cardinal)');
-            $table->unsignedBigInteger('archdiocese_id')->nullable()
-                ->comment('Reference to the archdiocese they oversee');
-            $table->date('ordained_date')->nullable()->comment('Date of ordination');
-            $table->date('appointed_date')->nullable()->comment('Date appointed to current position');
-            $table->string('email', 255)->nullable()->comment('Contact email');
-            $table->string('phone', 20)->nullable()->comment('Contact phone');
-            $table->text('biography')->nullable()->comment('Brief biography');
-            $table->string('photo_url', 255)->nullable()->comment('Path to bishop photo');
-            $table->integer('active')->default(1)->comment('1=Active, 0=Inactive');
-            $table->timestamps();
-            
-            // Foreign keys
-            $table->foreign('archdiocese_id')
-                ->references('id')->on('archdioceses')
-                ->onDelete('set null')
-                ->onUpdate('cascade');
-            
-            // Indexes
-            $table->index('archdiocese_id');
-            $table->index(['active', 'appointed_date']);
-        });
+        // Bishops table now created in: 2025_10_28_022900_create_bishops_table.php
+        // with full normalization including:
+        // - Foreign keys to ecclesiastical_titles, religious_orders, countries, states
+        // - Comprehensive biographical data
+        // - Episcopal lineage and history
 
         // ================================================================
         // 4. CHURCH_LEADERSHIP TABLE - Pastors and associate pastors
@@ -181,14 +161,14 @@ return new class extends Migration
                 ->onDelete('set null')
                 ->onUpdate('cascade');
             
-            $table->foreign('bishop_id')
-                ->references('id')->on('bishops')
-                ->onDelete('set null')
-                ->onUpdate('cascade');
+            // Foreign key to bishops table will be added in: 
+            // 2025_10_28_022901_add_bishop_foreign_key_to_church_profiles.php
+            // after the bishops table is created
             
             // Indexes
             $table->index('denomination_id');
             $table->index('archdiocese_id');
+            $table->index('bishop_id');
             $table->index('country');
         });
 
@@ -266,7 +246,7 @@ return new class extends Migration
         Schema::dropIfExists('church_statistics');
         Schema::dropIfExists('church_profiles');
         Schema::dropIfExists('church_leadership');
-        Schema::dropIfExists('bishops');
+        // bishops table dropped in: 2025_10_28_022900_create_bishops_table.php
         Schema::dropIfExists('archdioceses');
         Schema::dropIfExists('denominations');
     }

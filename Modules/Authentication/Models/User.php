@@ -27,6 +27,16 @@ class User extends Authenticatable
     protected $table = 'users';
 
     /**
+     * Create a new factory instance for the model.
+     *
+     * @return \Illuminate\Database\Eloquent\Factories\Factory
+     */
+    protected static function newFactory()
+    {
+        return \Modules\Authentication\Database\Factories\UserFactory::new();
+    }
+
+    /**
      * User type constants
      */
     public const USER_TYPE_PRIMARY_CONTACT = 1;      // Primary contact for tenant
@@ -352,6 +362,32 @@ class User extends Authenticatable
     public function isEkklesiaManager(): bool
     {
         return $this->role && $this->role->name === Role::EKKLESIA_MANAGER;
+    }
+
+    /**
+     * Check if user is Ekklesia User
+     */
+    public function isEkklesiaUser(): bool
+    {
+        return $this->role && $this->role->name === Role::EKKLESIA_USER;
+    }
+
+    /**
+     * Check if user has any Ekklesia role (SuperAdmin, EkklesiaAdmin, EkklesiaManager, EkklesiaUser)
+     * This is used to determine access to Ekklesia-only features like Ecclesiastical Data Management
+     */
+    public function hasEkklesiaRole(): bool
+    {
+        if (!$this->role) {
+            return false;
+        }
+
+        return in_array($this->role->name, [
+            Role::SUPER_ADMIN,
+            Role::EKKLESIA_ADMIN,
+            Role::EKKLESIA_MANAGER,
+            Role::EKKLESIA_USER,
+        ]);
     }
 
     /**

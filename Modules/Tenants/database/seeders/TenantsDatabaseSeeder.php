@@ -17,9 +17,16 @@ class TenantsDatabaseSeeder extends Seeder
         $this->command->line('');
 
         // Seed geographic data first (countries and states)
+        // Then seed ecclesiastical data (denominations, archdioceses, titles, orders, bishops)
+        // Finally seed tenants
         $this->call([
-            GeographicDataSeeder::class,
-            TenantsTableSeeder::class,
+            GeographicDataSeeder::class,                // 1. Countries and states
+            DenominationsSeeder::class,                 // 2. Christian denominations
+            ComprehensiveArchdiocesesSeeder::class,     // 3. Dioceses and archdioceses (normalized)
+            EcclesiasticalTitlesSeeder::class,          // 4. Ecclesiastical titles (Archbishop, Bishop, etc.)
+            ReligiousOrdersSeeder::class,               // 5. Religious orders and congregations
+            TamilNaduBishopsSeeder::class,              // 6. Current bishops of Tamil Nadu dioceses
+            TenantsTableSeeder::class,                  // 7. Sample tenants
         ]);
 
         $this->command->line('');

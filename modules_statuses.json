@@ -1,5 +1,6 @@
 {
     "Authentication": true,
     "Tenants": true,
-    "RolesAndPermissions": true
+    "RolesAndPermissions": true,
+    "EcclesiasticalData": true
 }

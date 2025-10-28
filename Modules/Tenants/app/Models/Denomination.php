@@ -16,6 +16,16 @@ class Denomination extends Model
 {
     use HasFactory;
 
+    /**
+     * Create a new factory instance for the model.
+     *
+     * @return \Illuminate\Database\Eloquent\Factories\Factory
+     */
+    protected static function newFactory()
+    {
+        return \Modules\Tenants\Database\Factories\DenominationFactory::new();
+    }
+
     protected $table = 'denominations';
 
     protected $fillable = [

@@ -43,6 +43,29 @@ class DenominationsSeeder extends Seeder
                 'display_order' => 3,
             ],
             
+            // Eastern Catholic Churches (Indian Rites)
+            [
+                'name' => 'Syro-Malabar Catholic',
+                'code' => 'SYRO_MALABAR',
+                'description' => 'Syro-Malabar Catholic Church, an Eastern Catholic Church in India with Syriac liturgical tradition',
+                'active' => 1,
+                'display_order' => 31,
+            ],
+            [
+                'name' => 'Syro-Malankara Catholic',
+                'code' => 'SYRO_MALANKARA',
+                'description' => 'Syro-Malankara Catholic Church, an Eastern Catholic Church in India with West Syriac liturgical tradition',
+                'active' => 1,
+                'display_order' => 32,
+            ],
+            [
+                'name' => 'Mar Thoma Syrian Church',
+                'code' => 'MAR_THOMA',
+                'description' => 'Mar Thoma Syrian Church, a reformed Oriental Orthodox church in India',
+                'active' => 1,
+                'display_order' => 33,
+            ],
+            
             // Protestant - Major Denominations
             [
                 'name' => 'Anglican/Episcopal',

@@ -1,0 +1,11 @@
+{
+    "name": "EcclesiasticalData",
+    "alias": "ecclesiasticaldata",
+    "description": "",
+    "keywords": [],
+    "priority": 0,
+    "providers": [
+        "Modules\\EcclesiasticalData\\Providers\\EcclesiasticalDataServiceProvider"
+    ],
+    "files": []
+}

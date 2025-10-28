@@ -230,6 +230,7 @@ class AuthenticationController extends Controller
             'updated_at' => $user->updated_at,
             'is_super_admin' => $user->isSuperAdmin(),
             'is_admin' => $user->isAdmin(),
+            'has_ekklesia_role' => $user->hasEkklesiaRole(),
             // Multi-role support
             'roles' => $user->roles,
             'permissions' => $user->getAllPermissions()->values(),

@@ -84,7 +84,12 @@ class ChurchProfileController extends Controller
             }
 
             // Check if user has permission to edit church profile
-            if (!$user->is_primary_admin && !$user->hasPermissionTo('manage_tenants')) {
+            // Allow: primary admin, tenant admin (user_type = 2), or users with manage_tenants permission
+            $hasPermission = $user->is_primary_admin || 
+                           $user->user_type == 2 || 
+                           ($user->permissions && $user->permissions->contains('name', 'manage_tenants'));
+            
+            if (!$hasPermission) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Only church administrators can update church profile.',

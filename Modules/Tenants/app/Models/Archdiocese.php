@@ -30,6 +30,8 @@ class Archdiocese extends Model
         'description',
         'website',
         'active',
+        'country_id',
+        'state_id',
     ];
 
     protected $casts = [
@@ -44,6 +46,22 @@ class Archdiocese extends Model
     public function denomination(): BelongsTo
     {
         return $this->belongsTo(Denomination::class);
+    }
+
+    /**
+     * Get the country this archdiocese belongs to
+     */
+    public function country(): BelongsTo
+    {
+        return $this->belongsTo(Country::class, 'country_id');
+    }
+
+    /**
+     * Get the state/province this archdiocese belongs to
+     */
+    public function state(): BelongsTo
+    {
+        return $this->belongsTo(State::class, 'state_id');
     }
 
     /**
