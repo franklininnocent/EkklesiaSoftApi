@@ -3,9 +3,13 @@
 namespace Modules\EcclesiasticalData\Models;
 
 use Modules\Tenants\Models\Bishop;
+use Modules\Tenants\Models\Archdiocese;
+use Modules\Tenants\Models\Country;
+use Modules\Tenants\Models\State;
 use Modules\EcclesiasticalData\Traits\HasAuditTrail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Builder;
 
 class BishopManagement extends Bishop
@@ -44,6 +48,54 @@ class BishopManagement extends Bishop
             'metadata' => 'array',
             'last_verified_at' => 'datetime',
         ]);
+    }
+
+    /**
+     * Get the ecclesiastical title
+     */
+    public function ecclesiasticalTitle(): BelongsTo
+    {
+        return $this->belongsTo(EcclesiasticalTitle::class, 'ecclesiastical_title_id');
+    }
+
+    /**
+     * Get the religious order
+     */
+    public function religiousOrder(): BelongsTo
+    {
+        return $this->belongsTo(ReligiousOrder::class, 'religious_order_id');
+    }
+
+    /**
+     * Get the country (birth country)
+     */
+    public function country(): BelongsTo
+    {
+        return $this->belongsTo(Country::class, 'birth_country_id');
+    }
+
+    /**
+     * Get the state (birth state)
+     */
+    public function state(): BelongsTo
+    {
+        return $this->belongsTo(State::class, 'birth_state_id');
+    }
+
+    /**
+     * Get the nationality country
+     */
+    public function nationality(): BelongsTo
+    {
+        return $this->belongsTo(Country::class, 'nationality_country_id');
+    }
+
+    /**
+     * Override the archdiocese relationship from parent
+     */
+    public function archdiocese(): BelongsTo
+    {
+        return $this->belongsTo(Archdiocese::class, 'archdiocese_id');
     }
 
     /**

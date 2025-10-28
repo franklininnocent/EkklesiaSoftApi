@@ -97,14 +97,50 @@ class DioceseRepository extends BaseRepository
     public function getStatistics(): array
     {
         return [
-            'total' => $this->model->count(),
-            'active' => $this->model->active()->count(),
-            'archdioceses' => $this->model->where('name', 'LIKE', '%Archdiocese%')->count(),
-            'dioceses' => $this->model->where('name', 'NOT LIKE', '%Archdiocese%')->count(),
+            'total_dioceses' => $this->model->count(),
+            'active_dioceses' => $this->model->active()->count(),
+            'inactive_dioceses' => $this->model->where('active', false)->count(),
+            // Archdioceses have null parent_archdiocese_id, regular dioceses have a parent
+            'total_archdioceses' => $this->model->whereNull('parent_archdiocese_id')->count(),
+            'total_regular_dioceses' => $this->model->whereNotNull('parent_archdiocese_id')->count(),
             'by_country' => $this->model
+                ->with('country:id,name')
                 ->selectRaw('country_id, count(*) as total')
                 ->groupBy('country_id')
-                ->pluck('total', 'country_id'),
+                ->get()
+                ->map(function ($item) {
+                    return [
+                        'country' => $item->country->name ?? 'Unknown',
+                        'total' => $item->total
+                    ];
+                })
+                ->values()
+                ->toArray(),
+            'by_denomination' => $this->model
+                ->with('denomination:id,name')
+                ->selectRaw('denomination_id, count(*) as total')
+                ->groupBy('denomination_id')
+                ->get()
+                ->map(function ($item) {
+                    return [
+                        'denomination' => $item->denomination->name ?? 'Unknown',
+                        'total' => $item->total
+                    ];
+                })
+                ->values()
+                ->toArray(),
+            'recent_additions' => $this->model
+                ->with(['country:id,name', 'denomination:id,name'])
+                ->latest()
+                ->limit(5)
+                ->get(['id', 'name', 'country_id', 'denomination_id', 'parent_archdiocese_id', 'created_at'])
+                ->map(function ($item) {
+                    $data = $item->toArray();
+                    // Add is_archdiocese based on parent_archdiocese_id
+                    $data['is_archdiocese'] = is_null($item->parent_archdiocese_id);
+                    return $data;
+                })
+                ->toArray(),
         ];
     }
 }

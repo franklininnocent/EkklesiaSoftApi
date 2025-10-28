@@ -104,13 +104,46 @@ class BishopRepository extends BaseRepository
     public function getStatistics(): array
     {
         return [
-            'total' => $this->model->newQuery()->count(),
-            'active' => $this->model->newQuery()->active()->count(),
+            'total_bishops' => $this->model->newQuery()->count(),
+            'active_bishops' => $this->model->newQuery()->active()->count(),
+            'inactive_bishops' => $this->model->newQuery()->where('status', 'inactive')->count(),
+            'retired_bishops' => $this->model->newQuery()->where('status', 'retired')->count(),
             'by_title' => $this->model->newQuery()
-                ->selectRaw('additional_titles, count(*) as total')
-                ->groupBy('additional_titles')
-                ->pluck('total', 'additional_titles'),
-            'inactive' => $this->model->newQuery()->where('status', 'inactive')->count(),
+                ->with('ecclesiasticalTitle:id,title')
+                ->selectRaw('ecclesiastical_title_id, count(*) as total')
+                ->whereNotNull('ecclesiastical_title_id')
+                ->groupBy('ecclesiastical_title_id')
+                ->get()
+                ->map(function ($item) {
+                    return [
+                        'title' => $item->ecclesiasticalTitle->title ?? 'Unknown',
+                        'total' => $item->total
+                    ];
+                })
+                ->values()
+                ->toArray(),
+            'by_diocese' => $this->model->newQuery()
+                ->with('archdiocese:id,name')
+                ->selectRaw('archdiocese_id, count(*) as total')
+                ->whereNotNull('archdiocese_id')
+                ->groupBy('archdiocese_id')
+                ->get()
+                ->map(function ($item) {
+                    return [
+                        'diocese' => $item->archdiocese->name ?? 'Unknown',
+                        'total' => $item->total
+                    ];
+                })
+                ->sortByDesc('total')
+                ->take(10)
+                ->values()
+                ->toArray(),
+            'recent_additions' => $this->model->newQuery()
+                ->with(['ecclesiasticalTitle:id,title', 'archdiocese:id,name', 'country:id,name'])
+                ->latest()
+                ->limit(5)
+                ->get(['id', 'full_name', 'ecclesiastical_title_id', 'archdiocese_id', 'birth_country_id', 'appointed_date', 'status', 'created_at'])
+                ->toArray(),
         ];
     }
 }
