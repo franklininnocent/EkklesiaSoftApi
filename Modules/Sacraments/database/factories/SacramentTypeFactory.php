@@ -28,3 +28,4 @@ class SacramentTypeFactory extends Factory
     }
 }
 
+

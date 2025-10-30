@@ -141,3 +141,4 @@ class SacramentTypeSeeder extends Seeder
     }
 }
 
+

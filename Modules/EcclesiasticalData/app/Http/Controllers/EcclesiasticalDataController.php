@@ -1,6 +1,6 @@
 <?php
 
-namespace Modules\EcclesiasticalData\Http\Controllers;
+    namespace Modules\EcclesiasticalData\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;

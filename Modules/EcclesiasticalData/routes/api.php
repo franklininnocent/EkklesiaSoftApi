@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use Modules\EcclesiasticalData\Http\Controllers\DioceseController;
 use Modules\EcclesiasticalData\Http\Controllers\BishopController;
+use Modules\EcclesiasticalData\Http\Controllers\SacramentTypeController;
 use Modules\EcclesiasticalData\Http\Middleware\EnsureUserIsEkklesia;
 
 /*
@@ -44,5 +45,15 @@ Route::prefix('ecclesiastical')->middleware(['auth:api', EnsureUserIsEkklesia::c
         Route::put('/{id}', [BishopController::class, 'update'])->name('ecclesiastical.bishops.update');
         Route::delete('/{id}', [BishopController::class, 'destroy'])->name('ecclesiastical.bishops.destroy');
         Route::get('/{id}/audit-history', [BishopController::class, 'auditHistory'])->name('ecclesiastical.bishops.audit');
+    });
+
+    // Sacrament Types Management Routes (Master Data)
+    Route::prefix('sacrament-types')->group(function () {
+        Route::get('/', [SacramentTypeController::class, 'index'])->name('ecclesiastical.sacrament-types.index');
+        Route::post('/', [SacramentTypeController::class, 'store'])->name('ecclesiastical.sacrament-types.store');
+        Route::get('/statistics', [SacramentTypeController::class, 'statistics'])->name('ecclesiastical.sacrament-types.statistics');
+        Route::get('/{id}', [SacramentTypeController::class, 'show'])->name('ecclesiastical.sacrament-types.show');
+        Route::put('/{id}', [SacramentTypeController::class, 'update'])->name('ecclesiastical.sacrament-types.update');
+        Route::delete('/{id}', [SacramentTypeController::class, 'destroy'])->name('ecclesiastical.sacrament-types.destroy');
     });
 });

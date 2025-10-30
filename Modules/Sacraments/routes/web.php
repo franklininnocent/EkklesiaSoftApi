@@ -1,8 +1,12 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use Modules\Sacraments\Http\Controllers\SacramentsController;
 
-Route::middleware(['auth', 'verified'])->group(function () {
-    Route::resource('sacraments', SacramentsController::class)->names('sacraments');
-});
+/*
+ * Sacraments Module - Web Routes
+ * 
+ * This module is API-only with an Angular frontend.
+ * All routes are defined in api.php
+ * 
+ * No web routes are needed for this module.
+ */

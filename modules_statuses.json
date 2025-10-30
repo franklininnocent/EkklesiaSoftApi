@@ -3,5 +3,7 @@
     "Tenants": true,
     "RolesAndPermissions": true,
     "EcclesiasticalData": true,
-    "Sacraments": true
+    "Sacraments": true,
+    "Family": true,
+    "BCC": true
 }

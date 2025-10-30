@@ -203,3 +203,4 @@ class SacramentTypeModelTest extends TestCase
     }
 }
 
+
