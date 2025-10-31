@@ -9,10 +9,21 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Family\Models\FamilyMember;
 use App\Models\User;
+use Modules\BCC\Database\Factories\BCCLeaderFactory;
 
 class BCCLeader extends Model
 {
     use HasFactory, HasUuids, SoftDeletes;
+
+    /**
+     * Create a new factory instance for the model.
+     *
+     * @return \Illuminate\Database\Eloquent\Factories\Factory
+     */
+    protected static function newFactory()
+    {
+        return BCCLeaderFactory::new();
+    }
 
     /**
      * The table associated with the model.

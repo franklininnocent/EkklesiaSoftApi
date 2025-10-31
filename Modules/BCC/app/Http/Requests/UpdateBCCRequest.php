@@ -22,26 +22,19 @@ class UpdateBCCRequest extends FormRequest
     public function rules(): array
     {
         return [
-            // BCC Information
-            'name' => ['sometimes', 'required', 'string', 'max:255'],
+            // BCC Information (optional on update)
+            'name' => ['sometimes', 'string', 'max:255'],
+            'bcc_code' => ['nullable', 'string', 'max:50'],
             'description' => ['nullable', 'string'],
-            
+
             // Location
             'meeting_place' => ['nullable', 'string', 'max:255'],
-            
+
             // Meeting Schedule
             'meeting_day' => ['nullable', 'in:monday,tuesday,wednesday,thursday,friday,saturday,sunday'],
             'meeting_time' => ['nullable', 'date_format:H:i'],
             'meeting_frequency' => ['nullable', 'string', 'max:100'],
-            
-            // Capacity
-            'min_families' => ['nullable', 'integer', 'min:1'],
-            'max_families' => ['nullable', 'integer', 'min:1', 'gte:min_families'],
-            
-            // Contact Information
-            'contact_phone' => ['nullable', 'string', 'max:20'],
-            'contact_email' => ['nullable', 'email', 'max:255'],
-            
+
             // Status and Dates
             'status' => ['nullable', 'in:active,inactive,suspended'],
             'established_date' => ['nullable', 'date', 'before_or_equal:today'],
@@ -58,14 +51,11 @@ class UpdateBCCRequest extends FormRequest
     {
         return [
             'name' => 'BCC name',
+            'bcc_code' => 'BCC code',
             'meeting_place' => 'meeting place',
             'meeting_day' => 'meeting day',
             'meeting_time' => 'meeting time',
             'meeting_frequency' => 'meeting frequency',
-            'min_families' => 'minimum families',
-            'max_families' => 'maximum families',
-            'contact_phone' => 'contact phone',
-            'contact_email' => 'contact email',
             'established_date' => 'established date',
         ];
     }

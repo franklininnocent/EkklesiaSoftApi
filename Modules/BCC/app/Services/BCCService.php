@@ -90,8 +90,8 @@ class BCCService
                 foreach ($data['leaders'] as $leaderData) {
                     $leaderData['created_by'] = $userId;
                     $leaderData['updated_by'] = $userId;
-                    $leaderData['is_current'] = true;
-                    $leaderData['assigned_date'] = $leaderData['assigned_date'] ?? now()->toDateString();
+                    $leaderData['is_active'] = true;
+                    $leaderData['appointed_date'] = $leaderData['appointed_date'] ?? now()->toDateString();
                     $this->bccRepository->addLeader($bcc->id, $leaderData);
                 }
             }
@@ -298,8 +298,8 @@ class BCCService
             // Add audit info
             $leaderData['created_by'] = $userId;
             $leaderData['updated_by'] = $userId;
-            $leaderData['is_current'] = $leaderData['is_current'] ?? true;
-            $leaderData['assigned_date'] = $leaderData['assigned_date'] ?? now()->toDateString();
+            $leaderData['is_active'] = $leaderData['is_active'] ?? true;
+            $leaderData['appointed_date'] = $leaderData['appointed_date'] ?? now()->toDateString();
 
             // Create leader
             $leader = $this->bccRepository->addLeader($bccId, $leaderData);
@@ -313,7 +313,7 @@ class BCCService
                 'user_id' => $userId
             ]);
 
-            return $leader->fresh(['user', 'familyMember']);
+            return $leader->fresh(['member']);
 
         } catch (\Exception $e) {
             DB::rollBack();
@@ -369,7 +369,7 @@ class BCCService
                 'user_id' => $userId
             ]);
 
-            return $leader->fresh(['user', 'familyMember']);
+            return $leader->fresh(['member']);
 
         } catch (\Exception $e) {
             DB::rollBack();

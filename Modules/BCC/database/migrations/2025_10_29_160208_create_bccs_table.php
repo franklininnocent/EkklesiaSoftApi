@@ -24,9 +24,6 @@ return new class extends Migration
             $table->string('name', 255)->comment('BCC name');
             $table->text('description')->nullable();
             
-            // Parish Zone (Normalized - foreign key to parish_zones)
-            $table->uuid('parish_zone_id')->nullable()->comment('Parish zone this BCC belongs to');
-            
             // Location Information
             $table->string('meeting_place', 255)->nullable()->comment('Regular meeting location');
             
@@ -65,12 +62,8 @@ return new class extends Migration
             // Indexes
             $table->index('tenant_id');
             $table->index('status');
-            $table->index('parish_zone_id');
             $table->unique(['tenant_id', 'bcc_code']); // Unique BCC code per tenant
             $table->unique(['tenant_id', 'name']); // Unique BCC name per tenant
-            
-            // Foreign key for parish zone (added after parish_zones table exists)
-            $table->foreign('parish_zone_id')->references('id')->on('parish_zones')->onDelete('set null');
         });
         
         // Now add the foreign key to families table

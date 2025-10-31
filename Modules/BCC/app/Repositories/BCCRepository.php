@@ -21,7 +21,7 @@ class BCCRepository
     public function getPaginatedBCCs(string $tenantId, array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
         $query = BCC::where('tenant_id', $tenantId)
-            ->with(['leaders.familyMember', 'leaders.user'])
+            ->with(['leaders.member'])
             ->withCount('families');
 
         // Apply filters
@@ -84,10 +84,9 @@ class BCCRepository
                     $query->orderBy('family_name');
                 },
                 'leaders' => function ($query) {
-                    $query->where('is_current', true);
+                    $query->where('is_active', true);
                 },
-                'leaders.familyMember',
-                'leaders.user',
+                'leaders.member',
                 'creator:id,name',
                 'updater:id,name'
             ])
@@ -198,10 +197,19 @@ class BCCRepository
 
         $capacityUtilization = BCC::where('tenant_id', $tenantId)
             ->selectRaw('
-                SUM(max_families) as total_capacity,
-                (SELECT COUNT(*) FROM families WHERE families.bcc_id = bccs.id) as current_count
+                SUM(max_families) as total_capacity
             ')
             ->first();
+
+        $totalLeaders = BCCLeader::whereHas('bcc', function ($query) use ($tenantId) {
+            $query->where('tenant_id', $tenantId);
+        })
+        ->where('is_active', true)
+        ->count();
+
+        $totalFamiliesInBCCs = Family::where('tenant_id', $tenantId)
+            ->whereNotNull('bcc_id')
+            ->count();
 
         return [
             'total_bccs' => $totalBCCs,
@@ -209,6 +217,8 @@ class BCCRepository
             'inactive_bccs' => $totalBCCs - $activeBCCs,
             'bccs_with_space' => $bccsWithSpace,
             'total_families_in_bcc' => $totalFamiliesInBCC,
+            'total_families_in_bccs' => $totalFamiliesInBCCs,
+            'total_leaders' => $totalLeaders,
             'bccs_by_zone' => $bccsByZone,
             'total_capacity' => $capacityUtilization->total_capacity ?? 0,
             'current_utilization' => $totalFamiliesInBCC,
@@ -229,9 +239,9 @@ class BCCRepository
     public function getLeaders(string $bccId): Collection
     {
         return BCCLeader::where('bcc_id', $bccId)
-            ->with(['user', 'familyMember', 'creator', 'updater'])
-            ->orderBy('is_current', 'desc')
-            ->orderBy('assigned_date', 'desc')
+            ->with(['member', 'creator', 'updater'])
+            ->orderBy('is_active', 'desc')
+            ->orderBy('appointed_date', 'desc')
             ->get();
     }
 
@@ -244,8 +254,8 @@ class BCCRepository
     public function getCurrentLeaders(string $bccId): Collection
     {
         return BCCLeader::where('bcc_id', $bccId)
-            ->where('is_current', true)
-            ->with(['user', 'familyMember'])
+            ->where('is_active', true)
+            ->with(['member'])
             ->orderBy('role')
             ->get();
     }
@@ -310,8 +320,8 @@ class BCCRepository
     public function deactivateLeader(BCCLeader $leader, ?string $endDate = null): bool
     {
         return $leader->update([
-            'is_current' => false,
-            'end_date' => $endDate ?? now()->toDateString(),
+            'is_active' => false,
+            'term_end_date' => $endDate ?? now()->toDateString(),
         ]);
     }
 

@@ -11,10 +11,21 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Tenants\Models\Tenant;
 use Modules\Family\Models\Family;
 use App\Models\User;
+use Modules\BCC\Database\Factories\BCCFactory;
 
 class BCC extends Model
 {
     use HasFactory, HasUuids, SoftDeletes;
+
+    /**
+     * Create a new factory instance for the model.
+     *
+     * @return \Illuminate\Database\Eloquent\Factories\Factory
+     */
+    protected static function newFactory()
+    {
+        return BCCFactory::new();
+    }
 
     /**
      * The table associated with the model.
@@ -37,10 +48,6 @@ class BCC extends Model
         'meeting_day',
         'meeting_time',
         'meeting_frequency',
-        'min_families',
-        'max_families',
-        'contact_phone',
-        'contact_email',
         'status',
         'established_date',
         'notes',
@@ -56,8 +63,6 @@ class BCC extends Model
     protected $casts = [
         'meeting_time' => 'datetime:H:i',
         'established_date' => 'date',
-        'min_families' => 'integer',
-        'max_families' => 'integer',
         'current_family_count' => 'integer',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
@@ -69,7 +74,7 @@ class BCC extends Model
      *
      * @var array
      */
-    protected $appends = ['current_family_count', 'is_at_capacity', 'capacity_percentage'];
+    protected $appends = ['current_family_count'];
 
     /**
      * Boot function to auto-generate BCC code
@@ -93,15 +98,18 @@ class BCC extends Model
      */
     protected static function generateBCCCode(string $tenantId): string
     {
-        $lastBCC = static::where('tenant_id', $tenantId)
-            ->orderBy('created_at', 'desc')
-            ->first();
+        // Get all BCC codes for this tenant and find the highest number
+        $codes = static::where('tenant_id', $tenantId)
+            ->pluck('bcc_code')
+            ->filter(function ($code) {
+                return preg_match('/^BCC(\d+)$/', $code);
+            })
+            ->map(function ($code) {
+                preg_match('/BCC(\d+)$/', $code, $matches);
+                return intval($matches[1]);
+            });
 
-        if ($lastBCC && preg_match('/BCC(\d+)$/', $lastBCC->bcc_code, $matches)) {
-            $number = intval($matches[1]) + 1;
-        } else {
-            $number = 1;
-        }
+        $number = $codes->isEmpty() ? 1 : $codes->max() + 1;
 
         return 'BCC' . str_pad($number, 4, '0', STR_PAD_LEFT);
     }

@@ -3,7 +3,6 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use Modules\Authentication\Database\Seeders\AuthenticationDatabaseSeeder;
 
 class DatabaseSeeder extends Seeder
 {
@@ -12,27 +11,25 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        $this->command->info('🌱 Seeding EkklesiaSoft Database...');
-        $this->command->line('');
-        $this->command->line('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        $this->command->line('');
+        // Core seeders (if any)
+        
+        // Module seeders
+        $this->callIfExists([ 
+            \Modules\Tenants\database\seeders\TenantsSeeder::class,
+            \Modules\Authentication\database\seeders\UsersSeeder::class,
+            \Modules\BCC\database\seeders\BCCsSeeder::class,
+            \Modules\Family\database\seeders\FamiliesSeeder::class,
+            \Modules\Sacraments\database\seeders\SacramentTypesSeeder::class,
+            \Modules\Sacraments\database\seeders\SacramentsSeeder::class,
+        ]);
+    }
 
-        // Seed Authentication Module (includes roles)
-        $this->call(AuthenticationDatabaseSeeder::class);
-
-        // Seed Tenants Module
-        $this->call(\Modules\Tenants\Database\Seeders\TenantsDatabaseSeeder::class);
-
-        // Seed RolesAndPermissions Module
-        $this->call(\Modules\RolesAndPermissions\Database\Seeders\RolesAndPermissionsDatabaseSeeder::class);
-
-        // Add other module seeders here as they are created
-        // Example:
-        // $this->call(SettingsDatabaseSeeder::class);
-
-        $this->command->line('');
-        $this->command->line('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        $this->command->line('');
-        $this->command->info('🎉 Database seeding completed successfully!');
+    private function callIfExists(array $seeders): void
+    {
+        foreach ($seeders as $seeder) {
+            if (class_exists($seeder)) {
+                $this->call($seeder);
+            }
+        }
     }
 }

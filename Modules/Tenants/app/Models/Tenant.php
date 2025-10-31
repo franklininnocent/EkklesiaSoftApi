@@ -15,10 +15,21 @@ use Modules\Tenants\Models\ChurchProfile;
 use Modules\Tenants\Models\ChurchLeadership;
 use Modules\Tenants\Models\ChurchStatistic;
 use Modules\Tenants\Models\ChurchSocialMedia;
+use Modules\Tenants\Database\Factories\TenantFactory;
 
 class Tenant extends Model
 {
     use HasFactory, SoftDeletes;
+
+    /**
+     * Create a new factory instance for the model.
+     *
+     * @return \Illuminate\Database\Eloquent\Factories\Factory
+     */
+    protected static function newFactory()
+    {
+        return TenantFactory::new();
+    }
 
     /**
      * The table associated with the model.

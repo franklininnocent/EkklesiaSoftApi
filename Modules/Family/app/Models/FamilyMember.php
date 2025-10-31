@@ -9,10 +9,21 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use App\Models\User;
+use Modules\Family\Database\Factories\FamilyMemberFactory;
 
 class FamilyMember extends Model
 {
     use HasFactory, HasUuids, SoftDeletes;
+
+    /**
+     * Create a new factory instance for the model.
+     *
+     * @return \Illuminate\Database\Eloquent\Factories\Factory
+     */
+    protected static function newFactory()
+    {
+        return FamilyMemberFactory::new();
+    }
 
     /**
      * The table associated with the model.

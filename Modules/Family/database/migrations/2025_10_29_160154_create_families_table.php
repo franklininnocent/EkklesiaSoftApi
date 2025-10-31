@@ -31,7 +31,6 @@ return new class extends Migration
             $table->unsignedBigInteger('state_id')->nullable();
             $table->unsignedBigInteger('country_id')->nullable();
             $table->string('postal_code', 20)->nullable();
-            $table->string('parish_zone', 100)->nullable()->comment('Parish zone or area');
             
             // Contact Information
             $table->string('primary_phone', 20)->nullable();
@@ -40,9 +39,6 @@ return new class extends Migration
             
             // BCC Relationship (nullable - family can exist without BCC)
             $table->uuid('bcc_id')->nullable();
-            
-            // Parish Zone (Normalized - foreign key to parish_zones)
-            $table->uuid('parish_zone_id')->nullable()->comment('Parish zone this family belongs to');
             
             // Status and Metadata
             $table->enum('status', ['active', 'inactive', 'migrated'])->default('active');
@@ -60,12 +56,11 @@ return new class extends Migration
             $table->foreign('created_by')->references('id')->on('users')->onDelete('set null');
             $table->foreign('updated_by')->references('id')->on('users')->onDelete('set null');
             
-            // Note: bcc_id and parish_zone_id foreign keys will be added after their respective tables are created
+            // Note: bcc_id foreign key will be added after bccs table is created
             
             // Indexes
             $table->index('tenant_id');
             $table->index('bcc_id');
-            $table->index('parish_zone_id');
             $table->index('status');
             $table->unique(['tenant_id', 'family_code']); // Unique family code per tenant
         });

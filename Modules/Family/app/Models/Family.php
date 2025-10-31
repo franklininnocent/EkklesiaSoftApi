@@ -13,10 +13,21 @@ use Modules\Tenants\Models\Country;
 use Modules\Tenants\Models\State;
 use Modules\BCC\Models\BCC;
 use App\Models\User;
+use Modules\Family\Database\Factories\FamilyFactory;
 
 class Family extends Model
 {
     use HasFactory, HasUuids, SoftDeletes;
+
+    /**
+     * Create a new factory instance for the model.
+     *
+     * @return \Illuminate\Database\Eloquent\Factories\Factory
+     */
+    protected static function newFactory()
+    {
+        return FamilyFactory::new();
+    }
 
     /**
      * The table associated with the model.
@@ -84,15 +95,18 @@ class Family extends Model
      */
     protected static function generateFamilyCode(string $tenantId): string
     {
-        $lastFamily = static::where('tenant_id', $tenantId)
-            ->orderBy('created_at', 'desc')
-            ->first();
+        // Get all family codes for this tenant and find the highest number
+        $codes = static::where('tenant_id', $tenantId)
+            ->pluck('family_code')
+            ->filter(function ($code) {
+                return preg_match('/^FAM(\d+)$/', $code);
+            })
+            ->map(function ($code) {
+                preg_match('/FAM(\d+)$/', $code, $matches);
+                return intval($matches[1]);
+            });
 
-        if ($lastFamily && preg_match('/FAM(\d+)$/', $lastFamily->family_code, $matches)) {
-            $number = intval($matches[1]) + 1;
-        } else {
-            $number = 1;
-        }
+        $number = $codes->isEmpty() ? 1 : $codes->max() + 1;
 
         return 'FAM' . str_pad($number, 6, '0', STR_PAD_LEFT);
     }

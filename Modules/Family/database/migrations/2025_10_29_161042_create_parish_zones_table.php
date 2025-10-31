@@ -54,10 +54,8 @@ return new class extends Migration
             $table->unique(['tenant_id', 'name']); // Unique zone name per tenant
         });
         
-        // Add foreign key constraint for parish_zone_id in families table
-        Schema::table('families', function (Blueprint $table) {
-            $table->foreign('parish_zone_id')->references('id')->on('parish_zones')->onDelete('set null');
-        });
+        // Note: Parish zones have been removed from the application
+        // Foreign key constraints for parish_zone_id have been removed from families and bccs tables
     }
 
     /**
@@ -65,10 +63,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('families', function (Blueprint $table) {
-            $table->dropForeign(['parish_zone_id']);
-        });
-        
         Schema::dropIfExists('parish_zones');
     }
 };

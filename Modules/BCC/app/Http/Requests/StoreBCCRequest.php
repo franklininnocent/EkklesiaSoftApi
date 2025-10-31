@@ -35,14 +35,6 @@ class StoreBCCRequest extends FormRequest
             'meeting_time' => ['nullable', 'date_format:H:i'],
             'meeting_frequency' => ['nullable', 'string', 'max:100'],
             
-            // Capacity
-            'min_families' => ['nullable', 'integer', 'min:1'],
-            'max_families' => ['nullable', 'integer', 'min:1', 'gte:min_families'],
-            
-            // Contact Information
-            'contact_phone' => ['nullable', 'string', 'max:20'],
-            'contact_email' => ['nullable', 'email', 'max:255'],
-            
             // Status and Dates
             'status' => ['nullable', 'in:active,inactive,suspended'],
             'established_date' => ['nullable', 'date', 'before_or_equal:today'],
@@ -73,10 +65,6 @@ class StoreBCCRequest extends FormRequest
             'meeting_day' => 'meeting day',
             'meeting_time' => 'meeting time',
             'meeting_frequency' => 'meeting frequency',
-            'min_families' => 'minimum families',
-            'max_families' => 'maximum families',
-            'contact_phone' => 'contact phone',
-            'contact_email' => 'contact email',
             'established_date' => 'established date',
             'leaders.*.leader_name' => 'leader name',
             'leaders.*.role' => 'leader role',
@@ -92,9 +80,6 @@ class StoreBCCRequest extends FormRequest
     {
         return [
             'name.required' => 'The BCC name is required.',
-            'max_families.gte' => 'Maximum families must be greater than or equal to minimum families.',
-            'leaders.*.leader_name.required_with' => 'Leader name is required when adding leaders.',
-            'leaders.*.role.required_with' => 'Leader role is required when adding leaders.',
         ];
     }
 }
