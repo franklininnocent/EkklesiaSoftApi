@@ -16,11 +16,12 @@ class UpdateFamilyRequest extends FormRequest
     {
         return [
             'family_name' => ['sometimes', 'string', 'max:255'],
+            'head_of_family' => ['nullable', 'string', 'max:255'],
             'address_line_1' => ['nullable', 'string', 'max:255'],
             'address_line_2' => ['nullable', 'string', 'max:255'],
             'city' => ['nullable', 'string', 'max:120'],
             'postal_code' => ['nullable', 'string', 'max:40'],
-            'bcc_id' => ['nullable', 'uuid'],
+            'bcc_id' => ['nullable', 'uuid', 'exists:bccs,id'],
             'primary_phone' => ['nullable', new PhoneNumberForTenant()],
             'secondary_phone' => ['nullable', new PhoneNumberForTenant()],
             'email' => ['nullable', 'email', 'max:255'],

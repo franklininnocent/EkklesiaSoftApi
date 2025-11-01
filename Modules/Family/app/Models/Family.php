@@ -46,6 +46,8 @@ class Family extends Model
         'family_code',
         'family_name',
         'head_of_family',
+        'head_profile_image_url',
+        'profile_image_url',
         'address_line_1',
         'address_line_2',
         'city',
@@ -71,6 +73,16 @@ class Family extends Model
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
         'deleted_at' => 'datetime',
+    ];
+
+    /**
+     * The accessors to append to the model's array form.
+     *
+     * @var array<string>
+     */
+    protected $appends = [
+        'head_profile_image_full_url',
+        'profile_image_full_url'
     ];
 
     /**
@@ -232,6 +244,54 @@ class Family extends Model
     public function getActiveMemberCountAttribute(): int
     {
         return $this->activeMembers()->count();
+    }
+
+    /**
+     * Get the full URL for the family profile image.
+     *
+     * @return string|null
+     */
+    public function getProfileImageFullUrlAttribute(): ?string
+    {
+        if (!$this->profile_image_url) {
+            return null;
+        }
+
+        return \Storage::disk('public')->url($this->profile_image_url);
+    }
+
+    /**
+     * Get the full URL for the head profile image.
+     *
+     * @return string|null
+     */
+    public function getHeadProfileImageFullUrlAttribute(): ?string
+    {
+        if (!$this->head_profile_image_url) {
+            return null;
+        }
+
+        return \Storage::disk('public')->url($this->head_profile_image_url);
+    }
+
+    /**
+     * Check if the family has a profile image.
+     *
+     * @return bool
+     */
+    public function hasProfileImage(): bool
+    {
+        return !empty($this->profile_image_url);
+    }
+
+    /**
+     * Check if the family head has a profile image.
+     *
+     * @return bool
+     */
+    public function hasHeadProfileImage(): bool
+    {
+        return !empty($this->head_profile_image_url);
     }
 }
 

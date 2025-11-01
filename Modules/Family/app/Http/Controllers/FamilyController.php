@@ -1,16 +1,16 @@
 <?php
 
-namespace Modules\Family\Http\Controllers;
+namespace Modules\Family\app\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Modules\Family\Http\Requests\StoreFamilyRequest;
-use Modules\Family\Http\Requests\UpdateFamilyRequest;
-use Modules\Family\Http\Requests\StoreFamilyMemberRequest;
-use Modules\Family\Http\Requests\UpdateFamilyMemberRequest;
-use Modules\Family\Services\FamilyService;
+use Modules\Family\app\Http\Requests\StoreFamilyRequest;
+use Modules\Family\app\Http\Requests\UpdateFamilyRequest;
+use Modules\Family\app\Http\Requests\StoreFamilyMemberRequest;
+use Modules\Family\app\Http\Requests\UpdateFamilyMemberRequest;
+use Modules\Family\app\Services\FamilyService;
 
 class FamilyController extends Controller
 {
@@ -467,6 +467,33 @@ class FamilyController extends Controller
     public function updateMember(UpdateFamilyMemberRequest $request, string $familyId, string $memberId): JsonResponse
     {
         try {
+            // Sanitize UUIDs from route parameters - remove any whitespace or extra characters
+            $familyId = trim($familyId);
+            $memberId = trim($memberId);
+            
+            // Extract UUID pattern (36 characters with hyphens) if there's any extra text
+            if (preg_match('/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i', $familyId, $matches)) {
+                $familyId = $matches[1];
+            }
+            if (preg_match('/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i', $memberId, $matches)) {
+                $memberId = $matches[1];
+            }
+            
+            // Validate UUIDs are properly formatted
+            if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $familyId)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid family ID format'
+                ], 400);
+            }
+            
+            if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $memberId)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid member ID format'
+                ], 400);
+            }
+            
             $tenantId = Auth::user()->tenant_id;
             $userId = Auth::id();
             
@@ -477,10 +504,26 @@ class FamilyController extends Controller
                 ], 403);
             }
 
+            // Get validated data - this ensures only valid fields are updated
+            $validatedData = $request->validated();
+            
+            // Convert empty strings to null for nullable fields only
+            // Fields that are 'sometimes|required' should not be converted to null if empty
+            $updateData = [];
+            foreach ($validatedData as $key => $value) {
+                // Only convert to null if the value is an empty string AND the field is nullable
+                // Required fields should keep their values even if they happen to be empty strings
+                if ($value === '' && $this->isNullableField($key, $request)) {
+                    $updateData[$key] = null;
+                } else {
+                    $updateData[$key] = $value;
+                }
+            }
+
             $member = $this->familyService->updateMember(
                 $familyId,
                 $memberId,
-                $request->validated(),
+                $updateData,
                 $tenantId,
                 $userId
             );
@@ -488,7 +531,7 @@ class FamilyController extends Controller
             if (!$member) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Family member not found'
+                    'message' => 'Family member not found or does not belong to your tenant'
                 ], 404);
             }
 
@@ -498,13 +541,64 @@ class FamilyController extends Controller
                 'data' => $member
             ]);
 
-        } catch (\Exception $e) {
+        } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to update family member',
-                'error' => $e->getMessage()
+                'message' => 'Validation failed',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Family member not found'
+            ], 404);
+        } catch (\Exception $e) {
+            \Log::error('Error updating family member', [
+                'family_id' => $familyId,
+                'member_id' => $memberId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update family member: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Check if a field is nullable in the validation rules
+     */
+    private function isNullableField(string $field, \Illuminate\Http\Request $request): bool
+    {
+        // List of fields that are explicitly nullable in UpdateFamilyMemberRequest
+        $nullableFields = [
+            'middle_name',
+            'date_of_birth',
+            'gender',
+            'marital_status',
+            'phone',
+            'email',
+            'is_primary_contact',
+            'baptism_date',
+            'baptism_place',
+            'first_communion_date',
+            'first_communion_place',
+            'confirmation_date',
+            'confirmation_place',
+            'marriage_date',
+            'marriage_place',
+            'marriage_spouse_name',
+            'occupation',
+            'education',
+            'skills_talents',
+            'notes',
+            'status',
+            'deceased_date'
+        ];
+        
+        return in_array($field, $nullableFields);
     }
 
     /**
@@ -545,6 +639,212 @@ class FamilyController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to delete family member',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Upload profile image for family head
+     *
+     * @param Request $request
+     * @param string $id
+     * @return JsonResponse
+     */
+    public function uploadProfileImage(Request $request, string $id): JsonResponse
+    {
+        try {
+            $tenantId = Auth::user()->tenant_id;
+            $userId = Auth::id();
+            
+            if (!$tenantId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tenant ID is required'
+                ], 403);
+            }
+
+            // Validate image file
+            $request->validate([
+                'profile_image' => ['required', 'image', 'mimes:jpeg,jpg,png,gif,webp', 'max:5120']
+            ]);
+
+            $family = $this->familyService->uploadProfileImage(
+                $id,
+                $request->file('profile_image'),
+                $tenantId,
+                $userId
+            );
+
+            if (!$family) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Family not found'
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Profile image uploaded successfully',
+                'data' => $family
+            ]);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to upload profile image',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Delete profile image for family
+     *
+     * @param string $id
+     * @return JsonResponse
+     */
+    public function deleteProfileImage(string $id): JsonResponse
+    {
+        try {
+            $tenantId = Auth::user()->tenant_id;
+            $userId = Auth::id();
+            
+            if (!$tenantId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tenant ID is required'
+                ], 403);
+            }
+
+            $family = $this->familyService->deleteProfileImage($id, $tenantId, $userId);
+
+            if (!$family) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Family not found'
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Profile image deleted successfully',
+                'data' => $family
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to delete profile image',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Upload profile image for family head
+     *
+     * @param Request $request
+     * @param string $id
+     * @return JsonResponse
+     */
+    public function uploadHeadProfileImage(Request $request, string $id): JsonResponse
+    {
+        try {
+            $tenantId = Auth::user()->tenant_id;
+            $userId = Auth::id();
+            
+            if (!$tenantId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tenant ID is required'
+                ], 403);
+            }
+
+            // Validate image file
+            $request->validate([
+                'head_profile_image' => ['required', 'image', 'mimes:jpeg,jpg,png,gif,webp', 'max:5120']
+            ]);
+
+            $family = $this->familyService->uploadHeadProfileImage(
+                $id,
+                $request->file('head_profile_image'),
+                $tenantId,
+                $userId
+            );
+
+            if (!$family) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Family not found'
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Head profile image uploaded successfully',
+                'data' => $family
+            ]);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to upload head profile image',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Delete profile image for family head
+     *
+     * @param string $id
+     * @return JsonResponse
+     */
+    public function deleteHeadProfileImage(string $id): JsonResponse
+    {
+        try {
+            $tenantId = Auth::user()->tenant_id;
+            $userId = Auth::id();
+            
+            if (!$tenantId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tenant ID is required'
+                ], 403);
+            }
+
+            $family = $this->familyService->deleteHeadProfileImage($id, $tenantId, $userId);
+
+            if (!$family) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Family not found'
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Head profile image deleted successfully',
+                'data' => $family
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to delete head profile image',
                 'error' => $e->getMessage()
             ], 500);
         }

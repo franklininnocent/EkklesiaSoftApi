@@ -165,6 +165,7 @@ class TenantFileAccessMiddleware
      * 
      * Expected format: storage/tenants/{tenant_id}/...
      * Or: api/tenant/{tenant_id}/files/...
+     * Or: storage/families/{tenant_id}/...
      */
     protected function extractTenantIdFromPath(string $path): ?int
     {
@@ -173,12 +174,17 @@ class TenantFileAccessMiddleware
             return (int) $matches[1];
         }
 
-        // Pattern 2: api/tenant/{id}/files/...
+        // Pattern 2: storage/families/{id}/...
+        if (preg_match('#storage/families/(\d+)/#', $path, $matches)) {
+            return (int) $matches[1];
+        }
+
+        // Pattern 3: api/tenant/{id}/files/...
         if (preg_match('#api/tenant/(\d+)/files/#', $path, $matches)) {
             return (int) $matches[1];
         }
 
-        // Pattern 3: Tenant logos (special case - all admins can see)
+        // Pattern 4: Tenant logos (special case - all admins can see)
         // storage/tenants/logos/... (no tenant ID in path, logo is tenant-owned)
         // This needs special handling in controller
 

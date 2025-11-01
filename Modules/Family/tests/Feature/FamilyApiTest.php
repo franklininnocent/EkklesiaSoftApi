@@ -305,7 +305,6 @@ class FamilyApiTest extends TestCase
             'address_line_1' => '123 Main Street',
             'city' => 'Springfield',
             'postal_code' => '12345',
-            'primary_phone' => '1234567890',
             'email' => 'family@example.com',
             'bcc_id' => $bcc->id,
             'status' => 'active',

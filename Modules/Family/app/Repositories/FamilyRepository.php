@@ -1,6 +1,6 @@
 <?php
 
-namespace Modules\Family\Repositories;
+namespace Modules\Family\app\Repositories;
 
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -233,7 +233,14 @@ class FamilyRepository
     public function addMember(Family $family, array $memberData): FamilyMember
     {
         $memberData['family_id'] = $family->id;
-        return FamilyMember::create($memberData);
+        $member = FamilyMember::create($memberData);
+        
+        // Auto-sync head_of_family if this member is designated as head
+        if (isset($memberData['relationship_to_head']) && in_array(strtolower($memberData['relationship_to_head']), ['self', 'head'])) {
+            $this->syncHeadOfFamily($family->id);
+        }
+        
+        return $member;
     }
 
     /**
@@ -245,7 +252,19 @@ class FamilyRepository
      */
     public function updateMember(FamilyMember $member, array $data): bool
     {
-        return $member->update($data);
+        $updated = $member->update($data);
+        
+        if ($updated) {
+            // Refresh the model to ensure we have the latest data
+            $member->refresh();
+            
+            // Auto-sync head_of_family if relationship_to_head was changed
+            if (isset($data['relationship_to_head']) && in_array(strtolower($data['relationship_to_head']), ['self', 'head'])) {
+                $this->syncHeadOfFamily($member->family_id);
+            }
+        }
+        
+        return $updated;
     }
 
     /**
@@ -285,6 +304,44 @@ class FamilyRepository
             ->orderBy('relationship_to_head')
             ->orderBy('date_of_birth')
             ->get();
+    }
+    
+    /**
+     * Sync the family's head_of_family field from active members
+     *
+     * @param string $familyId
+     * @return void
+     */
+    public function syncHeadOfFamily(string $familyId): void
+    {
+        $family = Family::find($familyId);
+        if (!$family) {
+            return;
+        }
+        
+        // Find active member with relationship='self' or 'head'
+        $headMember = FamilyMember::where('family_id', $familyId)
+            ->whereIn('relationship_to_head', ['self', 'head'])
+            ->where('status', 'active')
+            ->first();
+        
+        if ($headMember) {
+            // Update head_of_family to match the active head member's full name
+            $family->update([
+                'head_of_family' => trim("{$headMember->first_name} {$headMember->last_name}")
+            ]);
+        } else {
+            // If no active head member, try to find any member with relationship='self' or 'head'
+            $headMember = FamilyMember::where('family_id', $familyId)
+                ->whereIn('relationship_to_head', ['self', 'head'])
+                ->first();
+            
+            if ($headMember) {
+                $family->update([
+                    'head_of_family' => trim("{$headMember->first_name} {$headMember->last_name}")
+                ]);
+            }
+        }
     }
 }
 

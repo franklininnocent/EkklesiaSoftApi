@@ -57,4 +57,9 @@ Route::middleware('auth:api')->prefix('users')->group(function () {
     Route::get('/{id}/permissions', [UserController::class, 'permissions'])
         ->where('id', '[0-9]+')
         ->name('users.permissions');
+    
+    // Status Update Operation
+    Route::patch('/{id}/status', [UserController::class, 'updateStatus'])
+        ->where('id', '[0-9]+')
+        ->name('users.update-status');
 });

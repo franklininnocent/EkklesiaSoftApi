@@ -654,6 +654,101 @@ class UserController extends Controller
     }
 
     /**
+     * Update user status (active/inactive).
+     *
+     * @param Request $request
+     * @param int $id
+     * @return JsonResponse
+     */
+    public function updateStatus(Request $request, int $id): JsonResponse
+    {
+        DB::beginTransaction();
+        
+        try {
+            $authUser = $request->user();
+            
+            // Authorization check
+            if (!$authUser->hasPermission('users.update')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. You do not have permission to update users.',
+                ], 403);
+            }
+
+            // Validate request
+            $request->validate([
+                'active' => 'required|integer|in:0,1',
+            ]);
+
+            // Find user with tenant isolation
+            $user = User::where('tenant_id', $authUser->tenant_id)->findOrFail($id);
+
+            // Prevent deactivation of primary admin
+            if ($user->is_primary_admin && $request->input('active') === 0) {
+                DB::rollBack();
+                return response()->json([
+                    'success' => false,
+                    'message' => 'The primary admin account cannot be deactivated. This account is essential for maintaining tenant administrative continuity.',
+                ], 403);
+            }
+
+            // Prevent self-deactivation
+            if ($user->id === $authUser->id && $request->input('active') === 0) {
+                DB::rollBack();
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You cannot deactivate your own account.',
+                ], 403);
+            }
+
+            // Update status
+            $user->active = $request->input('active');
+            $user->save();
+
+            DB::commit();
+
+            Log::info('User status updated', [
+                'updated_by' => $authUser->id,
+                'user_id' => $user->id,
+                'new_status' => $user->active,
+                'tenant_id' => $authUser->tenant_id,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'User status updated successfully.',
+                'data' => $user,
+            ]);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed.',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'User not found or does not belong to your tenant.',
+            ], 404);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            Log::error('Error updating user status: ' . $e->getMessage(), [
+                'user_id' => $id,
+                'exception' => $e,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An error occurred while updating the user status.',
+            ], 500);
+        }
+    }
+
+    /**
      * Get the reason why a user cannot edit another user.
      * 
      * @param User $authUser The authenticated user

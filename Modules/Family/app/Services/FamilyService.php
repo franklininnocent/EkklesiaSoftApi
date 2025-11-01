@@ -1,6 +1,6 @@
 <?php
 
-namespace Modules\Family\Services;
+namespace Modules\Family\app\Services;
 
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -8,7 +8,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
-use Modules\Family\Repositories\FamilyRepository;
+use Modules\Family\app\Repositories\FamilyRepository;
+use Modules\Family\app\Services\FamilyFileUploadService;
 use Carbon\Carbon;
 
 class FamilyService
@@ -19,13 +20,20 @@ class FamilyService
     protected FamilyRepository $familyRepository;
 
     /**
+     * @var FamilyFileUploadService
+     */
+    protected FamilyFileUploadService $fileUploadService;
+
+    /**
      * FamilyService constructor.
      *
      * @param FamilyRepository $familyRepository
+     * @param FamilyFileUploadService $fileUploadService
      */
-    public function __construct(FamilyRepository $familyRepository)
+    public function __construct(FamilyRepository $familyRepository, FamilyFileUploadService $fileUploadService)
     {
         $this->familyRepository = $familyRepository;
+        $this->fileUploadService = $fileUploadService;
     }
 
     /**
@@ -334,6 +342,18 @@ class FamilyService
     public function updateMember(string $familyId, string $memberId, array $data, string $tenantId, string $userId): ?FamilyMember
     {
         try {
+            // Sanitize UUIDs - remove any whitespace or extra characters
+            $familyId = trim($familyId);
+            $memberId = trim($memberId);
+            
+            // Extract UUID pattern (36 characters with hyphens)
+            if (preg_match('/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i', $familyId, $matches)) {
+                $familyId = $matches[1];
+            }
+            if (preg_match('/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i', $memberId, $matches)) {
+                $memberId = $matches[1];
+            }
+            
             // Verify family belongs to tenant
             $family = $this->familyRepository->findById($familyId, $tenantId);
             if (!$family) {
@@ -347,11 +367,31 @@ class FamilyService
 
             DB::beginTransaction();
 
+            // Log the data being sent for debugging
+            Log::debug('Updating family member', [
+                'member_id' => $memberId,
+                'family_id' => $familyId,
+                'data' => $data,
+                'member_current_data' => $member->toArray()
+            ]);
+
             // Add audit info
             $data['updated_by'] = $userId;
 
             // Update member
-            $this->familyRepository->updateMember($member, $data);
+            $updated = $this->familyRepository->updateMember($member, $data);
+            
+            if (!$updated) {
+                DB::rollBack();
+                Log::error('Failed to update family member - update returned false', [
+                    'member_id' => $memberId,
+                    'family_id' => $familyId,
+                    'tenant_id' => $tenantId,
+                    'user_id' => $userId,
+                    'data' => $data
+                ]);
+                throw new \RuntimeException('Failed to update family member');
+            }
 
             DB::commit();
 
@@ -359,7 +399,8 @@ class FamilyService
                 'member_id' => $memberId,
                 'family_id' => $familyId,
                 'tenant_id' => $tenantId,
-                'user_id' => $userId
+                'user_id' => $userId,
+                'updated_fields' => array_keys($data)
             ]);
 
             return $member->fresh();
@@ -445,6 +486,242 @@ class FamilyService
         }
 
         return $this->familyRepository->getFamilyMembers($familyId);
+    }
+
+    /**
+     * Upload profile image for family head
+     *
+     * @param string $id
+     * @param \Illuminate\Http\UploadedFile $file
+     * @param string $tenantId
+     * @param string $userId
+     * @return Family|null
+     * @throws \Exception
+     */
+    public function uploadProfileImage(string $id, $file, string $tenantId, string $userId): ?Family
+    {
+        try {
+            $family = $this->familyRepository->findById($id, $tenantId);
+
+            if (!$family) {
+                return null;
+            }
+
+            DB::beginTransaction();
+
+            // Upload the new image
+            $imagePath = $this->fileUploadService->uploadProfileImage(
+                $file,
+                $tenantId,
+                $family->profile_image_url
+            );
+
+            if (!$imagePath) {
+                DB::rollBack();
+                throw new \Exception('Failed to upload profile image');
+            }
+
+            // Update family with new image path
+            $this->familyRepository->update($family, [
+                'profile_image_url' => $imagePath,
+                'updated_by' => $userId
+            ]);
+
+            DB::commit();
+
+            Log::info('Family profile image uploaded', [
+                'family_id' => $id,
+                'tenant_id' => $tenantId,
+                'user_id' => $userId,
+                'image_path' => $imagePath
+            ]);
+
+            return $this->familyRepository->findById($id, $tenantId);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to upload family profile image', [
+                'family_id' => $id,
+                'error' => $e->getMessage(),
+                'tenant_id' => $tenantId,
+                'user_id' => $userId
+            ]);
+            throw $e;
+        }
+    }
+
+    /**
+     * Delete profile image for family
+     *
+     * @param string $id
+     * @param string $tenantId
+     * @param string $userId
+     * @return Family|null
+     * @throws \Exception
+     */
+    public function deleteProfileImage(string $id, string $tenantId, string $userId): ?Family
+    {
+        try {
+            $family = $this->familyRepository->findById($id, $tenantId);
+
+            if (!$family) {
+                return null;
+            }
+
+            if (!$family->profile_image_url) {
+                // No image to delete
+                return $family;
+            }
+
+            DB::beginTransaction();
+
+            // Delete the image file
+            $this->fileUploadService->deleteProfileImage($family->profile_image_url, $tenantId);
+
+            // Update family to remove image path
+            $this->familyRepository->update($family, [
+                'profile_image_url' => null,
+                'updated_by' => $userId
+            ]);
+
+            DB::commit();
+
+            Log::info('Family profile image deleted', [
+                'family_id' => $id,
+                'tenant_id' => $tenantId,
+                'user_id' => $userId
+            ]);
+
+            return $this->familyRepository->findById($id, $tenantId);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to delete family profile image', [
+                'family_id' => $id,
+                'error' => $e->getMessage(),
+                'tenant_id' => $tenantId,
+                'user_id' => $userId
+            ]);
+            throw $e;
+        }
+    }
+
+    /**
+     * Upload profile image for family head
+     *
+     * @param string $id
+     * @param mixed $file
+     * @param string $tenantId
+     * @param string $userId
+     * @return Family|null
+     * @throws \Exception
+     */
+    public function uploadHeadProfileImage(string $id, $file, string $tenantId, string $userId): ?Family
+    {
+        try {
+            $family = $this->familyRepository->findById($id, $tenantId);
+
+            if (!$family) {
+                return null;
+            }
+
+            DB::beginTransaction();
+
+            // Upload the new image
+            $imagePath = $this->fileUploadService->uploadProfileImage(
+                $file,
+                $tenantId,
+                $family->head_profile_image_url
+            );
+
+            if (!$imagePath) {
+                DB::rollBack();
+                throw new \Exception('Failed to upload head profile image');
+            }
+
+            // Update family with new image path
+            $this->familyRepository->update($family, [
+                'head_profile_image_url' => $imagePath,
+                'updated_by' => $userId
+            ]);
+
+            DB::commit();
+
+            Log::info('Family head profile image uploaded', [
+                'family_id' => $id,
+                'tenant_id' => $tenantId,
+                'user_id' => $userId,
+                'image_path' => $imagePath
+            ]);
+
+            return $this->familyRepository->findById($id, $tenantId);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to upload family head profile image', [
+                'family_id' => $id,
+                'error' => $e->getMessage(),
+                'tenant_id' => $tenantId,
+                'user_id' => $userId
+            ]);
+            throw $e;
+        }
+    }
+
+    /**
+     * Delete profile image for family head
+     *
+     * @param string $id
+     * @param string $tenantId
+     * @param string $userId
+     * @return Family|null
+     * @throws \Exception
+     */
+    public function deleteHeadProfileImage(string $id, string $tenantId, string $userId): ?Family
+    {
+        try {
+            $family = $this->familyRepository->findById($id, $tenantId);
+
+            if (!$family) {
+                return null;
+            }
+
+            if (!$family->head_profile_image_url) {
+                // No image to delete
+                return $family;
+            }
+
+            DB::beginTransaction();
+
+            // Delete the image file
+            $this->fileUploadService->deleteProfileImage($family->head_profile_image_url, $tenantId);
+
+            // Update family to remove image path
+            $this->familyRepository->update($family, [
+                'head_profile_image_url' => null,
+                'updated_by' => $userId
+            ]);
+
+            DB::commit();
+
+            Log::info('Family head profile image deleted', [
+                'family_id' => $id,
+                'tenant_id' => $tenantId,
+                'user_id' => $userId
+            ]);
+
+            return $this->familyRepository->findById($id, $tenantId);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to delete family head profile image', [
+                'family_id' => $id,
+                'error' => $e->getMessage(),
+                'tenant_id' => $tenantId,
+                'user_id' => $userId
+            ]);
+            throw $e;
+        }
     }
 }
 
