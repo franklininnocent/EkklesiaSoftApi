@@ -105,10 +105,26 @@ class Archdiocese extends Model
     }
 
     /**
-     * Scope: Filter by country
+     * Scope: Filter by country (legacy string field)
      */
     public function scopeByCountry($query, string $country)
     {
         return $query->where('country', $country);
+    }
+
+    /**
+     * Scope: Filter by country_id
+     */
+    public function scopeByCountryId($query, int $countryId)
+    {
+        return $query->where('country_id', $countryId);
+    }
+
+    /**
+     * Scope: Filter by state_id
+     */
+    public function scopeByStateId($query, int $stateId)
+    {
+        return $query->where('state_id', $stateId);
     }
 }

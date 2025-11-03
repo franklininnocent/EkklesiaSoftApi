@@ -78,6 +78,9 @@ class PermissionsSeeder extends Seeder
                 'manage_email' => 'Manage email settings',
                 'manage_notifications' => 'Manage notification settings',
             ],
+            'Pope' => [
+                'manage_pope_details' => 'Manage pope image and details',
+            ],
             'Reports' => [
                 'view' => 'View reports',
                 'create' => 'Create custom reports',

@@ -249,6 +249,19 @@ class TenantsController extends Controller
 
             // Step 2: Create Administrator role for the tenant
             // Each tenant gets their own "Administrator" role (unique per tenant via composite constraint)
+            
+            // Fix PostgreSQL sequence synchronization issue
+            // Reset the sequence to the max ID + 1 to avoid duplicate key errors
+            try {
+                $maxId = (int) (DB::table('roles')->max('id') ?? 0);
+                $nextId = max($maxId, 0) + 1;
+                // Set sequence to next available ID (safe since $nextId is a controlled integer)
+                DB::statement("SELECT setval('roles_id_seq', {$nextId}, true)");
+                Log::info('Roles sequence synchronized', ['max_id' => $maxId, 'next_id' => $nextId]);
+            } catch (\Exception $e) {
+                Log::warning('Could not reset roles sequence, continuing anyway', ['error' => $e->getMessage()]);
+            }
+            
             $adminRole = Role::create([
                 'name' => 'Administrator',
                 'description' => "{$tenant->name} Super Administrator",

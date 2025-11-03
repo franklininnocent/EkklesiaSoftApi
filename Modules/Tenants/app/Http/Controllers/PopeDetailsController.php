@@ -8,160 +8,148 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Modules\Tenants\Models\PopeDetails;
 use Illuminate\Http\UploadedFile;
-use Modules\Tenants\Models\ChurchProfile;
 
 /**
- * Church Profile Controller
+ * Pope Details Controller
  * 
- * Manages the extended church profile information for tenants.
- * Allows tenant administrators to configure ecclesiastical details.
+ * Manages global Pope image and details.
+ * Requires manage_pope_details permission.
+ * Pope data is global (not tenant-specific).
  */
-class ChurchProfileController extends Controller
+class PopeDetailsController extends Controller
 {
     /**
-     * Get the church profile for the authenticated tenant user.
+     * Get global pope details.
      * 
-     * @route GET /api/church-profile
+     * @route GET /api/church-profile/pope
      */
     public function show(): JsonResponse
     {
         try {
-            $user = auth()->user();
-            
-            if (!$user || !$user->tenant_id) {
+            $popeDetails = PopeDetails::getCurrent();
+
+            if (!$popeDetails) {
                 return response()->json([
-                    'success' => false,
-                    'message' => 'User is not associated with a tenant/church',
-                ], 404);
+                    'success' => true,
+                    'data' => [
+                        'pope_name' => null,
+                        'pope_image_path' => null,
+                        'pope_image_url' => null,
+                        'pope_title' => null,
+                        'pope_effective_from' => null,
+                    ],
+                ]);
             }
 
-            // Get or create church profile
-            $churchProfile = ChurchProfile::with([
-                'denomination',
-                'archdiocese.denomination',
-                'bishop.archdiocese'
-            ])->firstOrCreate(
-                ['tenant_id' => $user->tenant_id],
-                [
-                    'founded_year' => null,
-                    'country' => null,
-                ]
-            );
-
-            // Generate full URL for patron image if exists
-            $patronImageUrl = null;
-            if ($churchProfile->patron_image_path) {
-                $patronImageUrl = Storage::disk('public')->url($churchProfile->patron_image_path);
+            // Generate full URL for pope image if exists
+            $popeImageUrl = null;
+            if ($popeDetails->pope_image_path) {
+                $popeImageUrl = $this->getPopeImageUrl($popeDetails->pope_image_path);
             }
-
-            // Add patron_image_url to response
-            $churchProfileData = $churchProfile->toArray();
-            $churchProfileData['patron_image_url'] = $patronImageUrl;
 
             return response()->json([
                 'success' => true,
-                'data' => $churchProfileData,
+                'data' => [
+                    'pope_name' => $popeDetails->pope_name,
+                    'pope_image_path' => $popeDetails->pope_image_path,
+                    'pope_image_url' => $popeImageUrl,
+                    'pope_title' => $popeDetails->pope_title,
+                    'pope_effective_from' => $popeDetails->pope_effective_from?->format('Y-m-d'),
+                ],
             ]);
         } catch (\Exception $e) {
-            Log::error('Error fetching church profile: ' . $e->getMessage(), [
+            Log::error('Error fetching pope details: ' . $e->getMessage(), [
                 'user_id' => auth()->id(),
                 'trace' => $e->getTraceAsString()
             ]);
             
             return response()->json([
                 'success' => false,
-                'message' => 'Error fetching church profile',
+                'message' => 'Error fetching pope details',
                 'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
             ], 500);
         }
     }
 
     /**
-     * Update the church profile for the authenticated tenant user.
-     * Only tenant administrators can update.
+     * Update global pope details.
+     * Requires manage_pope_details permission.
      * 
-     * @route PUT /api/church-profile
+     * @route PUT /api/church-profile/pope
      */
     public function update(Request $request): JsonResponse
     {
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'User is not associated with a tenant/church',
-                ], 404);
+                    'message' => 'Unauthenticated',
+                ], 401);
             }
 
-            // Check if user has permission to edit church profile
-            // Allow: primary admin, tenant admin (user_type = 2), or users with manage_tenants permission
-            $hasPermission = $user->is_primary_admin || 
-                           $user->user_type == 2 || 
-                           ($user->permissions && $user->permissions->contains('name', 'manage_tenants'));
+            // Check permission (try both formats for compatibility)
+            $hasPermission = $user->hasPermission('pope.manage_pope_details') || 
+                            $user->hasPermission('manage_pope_details');
             
-            if (!$hasPermission) {
+            // Also allow SuperAdmin and EkklesiaAdmin roles
+            $isEkklesiaAdmin = $user->isSuperAdmin() || $user->isEkklesiaAdmin();
+            
+            if (!$hasPermission && !$isEkklesiaAdmin) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized. Only church administrators can update church profile.',
+                    'message' => 'Unauthorized. You do not have permission to manage pope details.',
                 ], 403);
             }
 
             // Validation rules
             $validated = $request->validate([
-                'denomination_id' => 'nullable|exists:denominations,id',
-                'archdiocese_id' => 'nullable|exists:archdioceses,id',
-                'bishop_id' => 'nullable|exists:bishops,id',
-                'founded_year' => 'nullable|integer|min:1000|max:' . (date('Y') + 1),
-                'country' => 'nullable|string|max:100',
-                'phone' => 'nullable|string|max:20',
-                'email' => 'nullable|email|max:255',
-                'website' => 'nullable|url|max:255',
-                'about' => 'nullable|string|max:5000',
-                'vision' => 'nullable|string|max:2000',
-                'mission' => 'nullable|string|max:2000',
-                'core_values' => 'nullable|string|max:2000',
-                'service_times' => 'nullable|string|max:1000',
-                'patron_name' => 'nullable|string|max:255',
-                'patron_image_path' => 'nullable|string|max:255',
+                'pope_name' => 'required|string|max:255',
+                'pope_title' => 'nullable|string|max:100',
+                'pope_effective_from' => 'nullable|date',
             ]);
 
             DB::beginTransaction();
             try {
-                $churchProfile = ChurchProfile::updateOrCreate(
-                    ['tenant_id' => $user->tenant_id],
-                    $validated
-                );
+                // Get or create the global pope details record
+                $popeDetails = PopeDetails::getCurrent();
+                
+                if (!$popeDetails) {
+                    $popeDetails = new PopeDetails();
+                    $popeDetails->created_by = $user->id;
+                }
+
+                $popeDetails->pope_name = $validated['pope_name'];
+                $popeDetails->pope_title = $validated['pope_title'] ?? null;
+                $popeDetails->pope_effective_from = $validated['pope_effective_from'] ?? null;
+                $popeDetails->updated_by = $user->id;
+                $popeDetails->save();
 
                 DB::commit();
 
-                // Reload relationships
-                $churchProfile->load([
-                    'denomination',
-                    'archdiocese.denomination',
-                    'bishop.archdiocese'
-                ]);
-
-                // Generate full URL for patron image if exists
-                $patronImageUrl = null;
-                if ($churchProfile->patron_image_path) {
-                    $patronImageUrl = Storage::disk('public')->url($churchProfile->patron_image_path);
+                // Generate full URL for pope image if exists
+                $popeImageUrl = null;
+                if ($popeDetails->pope_image_path) {
+                    $popeImageUrl = $this->getPopeImageUrl($popeDetails->pope_image_path);
                 }
 
-                // Add patron_image_url to response
-                $churchProfileData = $churchProfile->toArray();
-                $churchProfileData['patron_image_url'] = $patronImageUrl;
-
-                Log::info('Church profile updated', [
-                    'tenant_id' => $user->tenant_id,
+                Log::info('Pope details updated', [
                     'updated_by' => $user->id,
                 ]);
 
                 return response()->json([
                     'success' => true,
-                    'message' => 'Church profile updated successfully',
-                    'data' => $churchProfileData,
+                    'message' => 'Pope details updated successfully',
+                    'data' => [
+                        'pope_name' => $popeDetails->pope_name,
+                        'pope_image_path' => $popeDetails->pope_image_path,
+                        'pope_image_url' => $popeImageUrl,
+                        'pope_title' => $popeDetails->pope_title,
+                        'pope_effective_from' => $popeDetails->pope_effective_from?->format('Y-m-d'),
+                    ],
                 ]);
             } catch (\Exception $e) {
                 DB::rollBack();
@@ -174,46 +162,48 @@ class ChurchProfileController extends Controller
                 'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
-            Log::error('Error updating church profile: ' . $e->getMessage(), [
+            Log::error('Error updating pope details: ' . $e->getMessage(), [
                 'user_id' => auth()->id(),
                 'trace' => $e->getTraceAsString()
             ]);
             
             return response()->json([
                 'success' => false,
-                'message' => 'Error updating church profile',
+                'message' => 'Error updating pope details',
                 'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
             ], 500);
         }
     }
 
     /**
-     * Upload patron image for the church.
-     * Tenant-specific: Each tenant can upload their own patron image.
+     * Upload pope image.
+     * Requires manage_pope_details permission.
      * 
-     * @route POST /api/church-profile/upload-patron-image
+     * @route POST /api/church-profile/pope/upload-image
      */
-    public function uploadPatronImage(Request $request): JsonResponse
+    public function uploadImage(Request $request): JsonResponse
     {
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'User is not associated with a tenant/church',
-                ], 404);
+                    'message' => 'Unauthenticated',
+                ], 401);
             }
 
-            // Check permission
-            $hasPermission = $user->is_primary_admin || 
-                           $user->user_type == 2 || 
-                           ($user->permissions && $user->permissions->contains('name', 'manage_tenants'));
+            // Check permission (try both formats for compatibility)
+            $hasPermission = $user->hasPermission('pope.manage_pope_details') || 
+                            $user->hasPermission('manage_pope_details');
             
-            if (!$hasPermission) {
+            // Also allow SuperAdmin and EkklesiaAdmin roles
+            $isEkklesiaAdmin = $user->isSuperAdmin() || $user->isEkklesiaAdmin();
+            
+            if (!$hasPermission && !$isEkklesiaAdmin) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized. Only church administrators can upload patron image.',
+                    'message' => 'Unauthorized. You do not have permission to manage pope details.',
                 ], 403);
             }
 
@@ -233,49 +223,51 @@ class ChurchProfileController extends Controller
 
             DB::beginTransaction();
             try {
-                // Get or create church profile
-                $churchProfile = ChurchProfile::firstOrCreate(
-                    ['tenant_id' => $user->tenant_id],
-                    []
-                );
-
-                // Delete existing patron image if it exists
-                if ($churchProfile->patron_image_path) {
-                    $this->deletePatronImageFile($churchProfile->patron_image_path, $user->tenant_id);
+                // Get or create the global pope details record
+                $popeDetails = PopeDetails::getCurrent();
+                
+                if (!$popeDetails) {
+                    $popeDetails = new PopeDetails();
+                    $popeDetails->created_by = $user->id;
                 }
 
-                // Upload new image (tenant-specific)
-                $imagePath = $this->uploadPatronImageFile($file, $user->tenant_id);
+                // Delete existing pope image if it exists
+                if ($popeDetails->pope_image_path) {
+                    $this->deletePopeImage($popeDetails->pope_image_path);
+                }
+
+                // Upload new image (global storage, not tenant-specific)
+                $imagePath = $this->uploadPopeImage($file);
 
                 if (!$imagePath) {
                     DB::rollBack();
                     return response()->json([
                         'success' => false,
-                        'message' => 'Failed to upload patron image',
+                        'message' => 'Failed to upload pope image',
                     ], 500);
                 }
 
-                // Update church profile with new image path
-                $churchProfile->patron_image_path = $imagePath;
-                $churchProfile->save();
+                // Update pope details with new image path
+                $popeDetails->pope_image_path = $imagePath;
+                $popeDetails->updated_by = $user->id;
+                $popeDetails->save();
 
                 DB::commit();
 
                 // Generate full URL
-                $patronImageUrl = Storage::disk('public')->url($imagePath);
+                $popeImageUrl = $this->getPopeImageUrl($imagePath);
 
-                Log::info('Patron image uploaded', [
-                    'tenant_id' => $user->tenant_id,
+                Log::info('Pope image uploaded', [
                     'updated_by' => $user->id,
                     'image_path' => $imagePath,
                 ]);
 
                 return response()->json([
                     'success' => true,
-                    'message' => 'Patron image uploaded successfully',
+                    'message' => 'Pope image uploaded successfully',
                     'data' => [
-                        'patron_image_path' => $imagePath,
-                        'patron_image_url' => $patronImageUrl,
+                        'pope_image_path' => $imagePath,
+                        'pope_image_url' => $popeImageUrl,
                     ],
                 ]);
             } catch (\Exception $e) {
@@ -289,98 +281,101 @@ class ChurchProfileController extends Controller
                 'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
-            Log::error('Error uploading patron image: ' . $e->getMessage(), [
+            Log::error('Error uploading pope image: ' . $e->getMessage(), [
                 'user_id' => auth()->id(),
                 'trace' => $e->getTraceAsString()
             ]);
             
             return response()->json([
                 'success' => false,
-                'message' => 'Error uploading patron image',
+                'message' => 'Error uploading pope image',
                 'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
             ], 500);
         }
     }
 
     /**
-     * Delete patron image.
+     * Delete pope image.
+     * Requires manage_pope_details permission.
      * 
-     * @route DELETE /api/church-profile/patron-image
+     * @route DELETE /api/church-profile/pope/image
      */
-    public function deletePatronImage(): JsonResponse
+    public function deleteImage(): JsonResponse
     {
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'User is not associated with a tenant/church',
-                ], 404);
+                    'message' => 'Unauthenticated',
+                ], 401);
             }
 
-            // Check permission
-            $hasPermission = $user->is_primary_admin || 
-                           $user->user_type == 2 || 
-                           ($user->permissions && $user->permissions->contains('name', 'manage_tenants'));
+            // Check permission (try both formats for compatibility)
+            $hasPermission = $user->hasPermission('pope.manage_pope_details') || 
+                            $user->hasPermission('manage_pope_details');
             
-            if (!$hasPermission) {
+            // Also allow SuperAdmin and EkklesiaAdmin roles
+            $isEkklesiaAdmin = $user->isSuperAdmin() || $user->isEkklesiaAdmin();
+            
+            if (!$hasPermission && !$isEkklesiaAdmin) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized. Only church administrators can delete patron image.',
+                    'message' => 'Unauthorized. You do not have permission to manage pope details.',
                 ], 403);
             }
 
             DB::beginTransaction();
             try {
-                $churchProfile = ChurchProfile::where('tenant_id', $user->tenant_id)->first();
+                $popeDetails = PopeDetails::getCurrent();
 
-                if ($churchProfile && $churchProfile->patron_image_path) {
-                    $this->deletePatronImageFile($churchProfile->patron_image_path, $user->tenant_id);
-                    $churchProfile->patron_image_path = null;
-                    $churchProfile->save();
+                if ($popeDetails && $popeDetails->pope_image_path) {
+                    $this->deletePopeImage($popeDetails->pope_image_path);
+                    $popeDetails->pope_image_path = null;
+                    $popeDetails->updated_by = $user->id;
+                    $popeDetails->save();
                 }
 
                 DB::commit();
 
-                Log::info('Patron image deleted', [
-                    'tenant_id' => $user->tenant_id,
+                Log::info('Pope image deleted', [
                     'updated_by' => $user->id,
                 ]);
 
                 return response()->json([
                     'success' => true,
-                    'message' => 'Patron image deleted successfully',
+                    'message' => 'Pope image deleted successfully',
                 ]);
             } catch (\Exception $e) {
                 DB::rollBack();
                 throw $e;
             }
         } catch (\Exception $e) {
-            Log::error('Error deleting patron image: ' . $e->getMessage(), [
+            Log::error('Error deleting pope image: ' . $e->getMessage(), [
                 'user_id' => auth()->id(),
                 'trace' => $e->getTraceAsString()
             ]);
             
             return response()->json([
                 'success' => false,
-                'message' => 'Error deleting patron image',
+                'message' => 'Error deleting pope image',
                 'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
             ], 500);
         }
     }
 
     /**
-     * Upload patron image to storage (tenant-specific path)
+     * Upload pope image to storage (global path)
      */
-    private function uploadPatronImageFile(UploadedFile $file, int $tenantId): ?string
+    private function uploadPopeImage(UploadedFile $file): ?string
     {
         try {
             // Generate secure filename
-            $filename = $this->generatePatronImageFilename($file, $tenantId);
+            $filename = $this->generatePopeImageFilename($file);
             
-            // Store in tenant-specific directory
-            $directory = "tenants/{$tenantId}/patron";
+            // Store in global directory (not tenant-specific)
+            $directory = "pope";
             
             // Store the original file
             $storedPath = Storage::disk('public')->putFileAs(
@@ -391,19 +386,19 @@ class ChurchProfileController extends Controller
             );
 
             // Create thumbnails
-            $this->createPatronThumbnails($storedPath);
+            $this->createThumbnails($storedPath);
 
             return $storedPath;
         } catch (\Exception $e) {
-            Log::error('Error uploading patron image file: ' . $e->getMessage());
+            Log::error('Error uploading pope image: ' . $e->getMessage());
             return null;
         }
     }
 
     /**
-     * Generate secure filename for patron image
+     * Generate secure filename for pope image
      */
-    private function generatePatronImageFilename(UploadedFile $file, int $tenantId): string
+    private function generatePopeImageFilename(UploadedFile $file): string
     {
         $extension = strtolower($file->getClientOriginalExtension());
         $allowedExtensions = ['jpg', 'jpeg', 'png', 'webp'];
@@ -416,13 +411,13 @@ class ChurchProfileController extends Controller
         $random = \Illuminate\Support\Str::random(16);
         $hash = substr(hash('sha256', $file->getClientOriginalName() . $timestamp), 0, 8);
         
-        return "patron_t{$tenantId}_{$timestamp}_{$random}_{$hash}.{$extension}";
+        return "pope_{$timestamp}_{$random}_{$hash}.{$extension}";
     }
 
     /**
-     * Create thumbnails for patron image (128x128 and 300x300)
+     * Create thumbnails for pope image (128x128 and 300x300)
      */
-    private function createPatronThumbnails(string $imagePath): void
+    private function createThumbnails(string $imagePath): void
     {
         try {
             $fullPath = Storage::disk('public')->path($imagePath);
@@ -446,7 +441,7 @@ class ChurchProfileController extends Controller
                 $thumbnailPath = "{$directory}/{$filename}_{$sizeName}.{$extension}";
                 $thumbnailFullPath = Storage::disk('public')->path($thumbnailPath);
 
-                // Use GD if available
+                // Use GD or Intervention Image if available
                 if (function_exists('imagecreatefromstring')) {
                     $imageInfo = getimagesize($fullPath);
                     if (!$imageInfo) {
@@ -499,26 +494,29 @@ class ChurchProfileController extends Controller
                 }
             }
         } catch (\Exception $e) {
-            Log::warning('Failed to create thumbnails for patron image: ' . $e->getMessage());
+            Log::warning('Failed to create thumbnails for pope image: ' . $e->getMessage());
             // Don't fail the upload if thumbnails fail
         }
     }
 
     /**
-     * Delete patron image and thumbnails
+     * Get full URL for pope image
      */
-    private function deletePatronImageFile(string $path, int $tenantId): void
+    private function getPopeImageUrl(?string $path): ?string
+    {
+        if (!$path) {
+            return null;
+        }
+
+        return Storage::disk('public')->url($path);
+    }
+
+    /**
+     * Delete pope image and thumbnails
+     */
+    private function deletePopeImage(string $path): void
     {
         try {
-            // Verify tenant ownership
-            if (!str_contains($path, "tenants/{$tenantId}/patron")) {
-                Log::warning('Attempted to delete patron image not owned by tenant', [
-                    'path' => $path,
-                    'tenant_id' => $tenantId,
-                ]);
-                return;
-            }
-
             // Delete main image
             if (Storage::disk('public')->exists($path)) {
                 Storage::disk('public')->delete($path);
@@ -538,7 +536,7 @@ class ChurchProfileController extends Controller
                 }
             }
         } catch (\Exception $e) {
-            Log::error('Error deleting patron image: ' . $e->getMessage());
+            Log::error('Error deleting pope image: ' . $e->getMessage());
         }
     }
 }

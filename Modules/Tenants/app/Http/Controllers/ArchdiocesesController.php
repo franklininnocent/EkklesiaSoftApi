@@ -27,14 +27,56 @@ class ArchdiocesesController extends Controller
         try {
             $query = Archdiocese::with('denomination')->active();
 
-            // Filter by country
-            if ($request->has('country')) {
+            // Filter by country (legacy string field - for backward compatibility)
+            if ($request->has('country') && !$request->has('country_id')) {
                 $query->byCountry($request->country);
             }
 
+            // Filter by country_id (preferred method)
+            if ($request->has('country_id')) {
+                $query->byCountryId($request->input('country_id'));
+            }
+
+            // Filter by state_id
+            if ($request->has('state_id')) {
+                $query->byStateId($request->input('state_id'));
+            }
+
             // Filter by denomination
+            // If filtering by denomination_id returns no results, include archdioceses with null denomination_id as fallback
+            // This provides a better UX when archdioceses aren't properly linked to denominations in the database
             if ($request->has('denomination_id')) {
-                $query->where('denomination_id', $request->denomination_id);
+                $denominationId = $request->input('denomination_id');
+                
+                // Check if there are exact matches - build a separate query to avoid affecting main query
+                $exactMatchesQuery = Archdiocese::active();
+                
+                // Apply same country filter if present
+                if ($request->has('country_id')) {
+                    $exactMatchesQuery->byCountryId($request->input('country_id'));
+                } elseif ($request->has('country')) {
+                    $exactMatchesQuery->byCountry($request->country);
+                }
+                
+                // Apply same state filter if present
+                if ($request->has('state_id')) {
+                    $exactMatchesQuery->byStateId($request->input('state_id'));
+                }
+                
+                $hasExactMatches = $exactMatchesQuery
+                    ->where('denomination_id', $denominationId)
+                    ->exists();
+                
+                // If no exact matches found, include archdioceses with null denomination_id as fallback
+                if (!$hasExactMatches) {
+                    $query->where(function ($q) use ($denominationId) {
+                        $q->where('denomination_id', $denominationId)
+                          ->orWhereNull('denomination_id');
+                    });
+                } else {
+                    // Show only archdioceses with the exact denomination_id match
+                    $query->where('denomination_id', $denominationId);
+                }
             }
 
             // Optional search filter

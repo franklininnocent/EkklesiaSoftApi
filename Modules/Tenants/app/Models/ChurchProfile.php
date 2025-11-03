@@ -34,6 +34,8 @@ class ChurchProfile extends Model
         'mission',
         'core_values',
         'service_times',
+        'patron_name',
+        'patron_image_path',
     ];
 
     protected $casts = [

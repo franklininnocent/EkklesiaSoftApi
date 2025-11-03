@@ -10,6 +10,7 @@ use Modules\Tenants\Http\Controllers\ChurchProfileController;
 use Modules\Tenants\Http\Controllers\ChurchLeadershipController;
 use Modules\Tenants\Http\Controllers\ChurchStatisticsController;
 use Modules\Tenants\Http\Controllers\ChurchSocialMediaController;
+use Modules\Tenants\Http\Controllers\PopeDetailsController;
 
 /*
  *--------------------------------------------------------------------------
@@ -93,6 +94,18 @@ Route::middleware('auth:api')->group(function () {
     Route::prefix('church-profile')->group(function () {
         Route::get('/', [ChurchProfileController::class, 'show']);
         Route::put('/', [ChurchProfileController::class, 'update']);
+        
+        // Patron Image Management (tenant-specific)
+        Route::post('/upload-patron-image', [ChurchProfileController::class, 'uploadPatronImage']);
+        Route::delete('/patron-image', [ChurchProfileController::class, 'deletePatronImage']);
+        
+        // Pope Details Management (requires manage_pope_details permission)
+        Route::prefix('pope')->group(function () {
+            Route::get('/', [PopeDetailsController::class, 'show']);
+            Route::put('/', [PopeDetailsController::class, 'update']);
+            Route::post('/upload-image', [PopeDetailsController::class, 'uploadImage']);
+            Route::delete('/image', [PopeDetailsController::class, 'deleteImage']);
+        });
     });
     
     // Church Leadership Management (Full CRUD)
