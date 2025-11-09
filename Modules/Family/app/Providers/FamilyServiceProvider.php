@@ -43,7 +43,9 @@ class FamilyServiceProvider extends ServiceProvider
      */
     protected function registerCommands(): void
     {
-        // $this->commands([]);
+        $this->commands([
+            \Modules\Family\app\Console\Commands\DeleteDuplicateFamilyMembers::class,
+        ]);
     }
 
     /**

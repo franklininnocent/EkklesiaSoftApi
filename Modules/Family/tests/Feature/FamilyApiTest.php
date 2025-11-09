@@ -12,6 +12,7 @@ use Modules\Tenants\Models\Tenant;
 use Modules\Authentication\Models\User;
 use Laravel\Passport\Passport;
 use Illuminate\Support\Str;
+use PHPUnit\Framework\Attributes\Test;
 
 class FamilyApiTest extends TestCase
 {
@@ -52,7 +53,7 @@ class FamilyApiTest extends TestCase
 
     // ==================== FAMILY CRUD OPERATIONS ====================
 
-    /** @test */
+    #[Test]
     public function it_can_get_paginated_list_of_families()
     {
         // Arrange: Create multiple families
@@ -93,7 +94,7 @@ class FamilyApiTest extends TestCase
         $this->assertGreaterThanOrEqual(10, count($response->json('data')));
     }
 
-    /** @test */
+    #[Test]
     public function it_can_filter_families_by_tenant()
     {
         // Arrange: Create families for different tenants
@@ -120,7 +121,7 @@ class FamilyApiTest extends TestCase
         }
     }
 
-    /** @test */
+    #[Test]
     public function it_can_filter_families_by_status()
     {
         // Arrange
@@ -145,7 +146,7 @@ class FamilyApiTest extends TestCase
         }
     }
 
-    /** @test */
+    #[Test]
     public function it_can_filter_families_by_bcc()
     {
         // Arrange
@@ -180,7 +181,7 @@ class FamilyApiTest extends TestCase
         }
     }
 
-    /** @test */
+    #[Test]
     public function it_can_search_families_by_name()
     {
         // Arrange
@@ -213,7 +214,7 @@ class FamilyApiTest extends TestCase
         $this->assertTrue($found);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_search_families_by_city()
     {
         // Arrange
@@ -238,7 +239,7 @@ class FamilyApiTest extends TestCase
         $this->assertGreaterThan(0, count($data));
     }
 
-    /** @test */
+    #[Test]
     public function it_can_get_single_family_by_id()
     {
         // Arrange
@@ -261,7 +262,7 @@ class FamilyApiTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_returns_404_for_non_existent_family()
     {
         // Act
@@ -275,7 +276,7 @@ class FamilyApiTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_returns_404_when_accessing_family_from_different_tenant()
     {
         // Arrange: Create family for different tenant
@@ -291,7 +292,7 @@ class FamilyApiTest extends TestCase
         $response->assertStatus(404); // Returns 404 because service filters by tenant
     }
 
-    /** @test */
+    #[Test]
     public function it_can_create_family_with_valid_data()
     {
         // Arrange
@@ -305,7 +306,6 @@ class FamilyApiTest extends TestCase
             'address_line_1' => '123 Main Street',
             'city' => 'Springfield',
             'postal_code' => '12345',
-            'email' => 'family@example.com',
             'bcc_id' => $bcc->id,
             'status' => 'active',
             'notes' => 'Test family',
@@ -332,7 +332,7 @@ class FamilyApiTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_create_family_with_members()
     {
         // Arrange
@@ -371,7 +371,7 @@ class FamilyApiTest extends TestCase
         $this->assertEquals(2, $family->members()->count());
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_required_fields_when_creating_family()
     {
         // Arrange: Missing required fields
@@ -387,24 +387,7 @@ class FamilyApiTest extends TestCase
             ->assertJsonValidationErrors(['family_name']);
     }
 
-    /** @test */
-    public function it_validates_email_format()
-    {
-        // Arrange
-        $data = [
-            'family_name' => 'Test Family',
-            'email' => 'invalid-email',
-        ];
-
-        // Act
-        $response = $this->postJson('/api/families', $data);
-
-        // Assert
-        $response->assertStatus(422)
-            ->assertJsonValidationErrors(['email']);
-    }
-
-    /** @test */
+    #[Test]
     public function it_validates_status_is_valid_enum()
     {
         // Arrange
@@ -421,7 +404,7 @@ class FamilyApiTest extends TestCase
             ->assertJsonValidationErrors(['status']);
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_bcc_exists()
     {
         // Arrange
@@ -438,7 +421,7 @@ class FamilyApiTest extends TestCase
             ->assertJsonValidationErrors(['bcc_id']);
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_member_required_fields()
     {
         // Arrange
@@ -461,7 +444,7 @@ class FamilyApiTest extends TestCase
         $response->assertJsonValidationErrors(['members.0.last_name']);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_update_family_with_valid_data()
     {
         // Arrange
@@ -499,7 +482,7 @@ class FamilyApiTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_returns_404_when_updating_non_existent_family()
     {
         // Act
@@ -515,7 +498,7 @@ class FamilyApiTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_delete_family()
     {
         // Arrange
@@ -538,7 +521,7 @@ class FamilyApiTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_returns_404_when_deleting_non_existent_family()
     {
         // Act
@@ -552,7 +535,7 @@ class FamilyApiTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_get_family_statistics()
     {
         // Arrange: Create families with different statuses
@@ -587,7 +570,7 @@ class FamilyApiTest extends TestCase
         $this->assertGreaterThanOrEqual(5, $stats['active_families']);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_get_families_by_bcc()
     {
         // Arrange
@@ -629,7 +612,7 @@ class FamilyApiTest extends TestCase
         }
     }
 
-    /** @test */
+    #[Test]
     public function it_can_get_families_without_bcc()
     {
         // Arrange
@@ -671,7 +654,7 @@ class FamilyApiTest extends TestCase
         }
     }
 
-    /** @test */
+    #[Test]
     public function it_requires_authentication_to_access_families()
     {
         // Note: Testing authentication in Laravel Passport tests is complex because
@@ -687,7 +670,7 @@ class FamilyApiTest extends TestCase
         $this->assertNotEquals(401, $response->status(), 'Authenticated request should succeed');
     }
 
-    /** @test */
+    #[Test]
     public function it_requires_tenant_id_for_family_operations()
     {
         // Arrange: Create user without tenant_id
@@ -708,7 +691,7 @@ class FamilyApiTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_sort_families_by_created_at_descending()
     {
         // Arrange: Create families with distinct creation times and names for easy identification
@@ -749,7 +732,7 @@ class FamilyApiTest extends TestCase
         }
     }
 
-    /** @test */
+    #[Test]
     public function it_can_sort_families_by_name_ascending()
     {
         // Arrange
@@ -777,7 +760,7 @@ class FamilyApiTest extends TestCase
 
     // ==================== FAMILY MEMBER OPERATIONS ====================
 
-    /** @test */
+    #[Test]
     public function it_can_get_members_for_a_family()
     {
         // Arrange
@@ -822,7 +805,7 @@ class FamilyApiTest extends TestCase
         $this->assertEquals(2, count($data));
     }
 
-    /** @test */
+    #[Test]
     public function it_returns_404_when_getting_members_for_non_existent_family()
     {
         // Act
@@ -836,7 +819,7 @@ class FamilyApiTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_add_member_to_family()
     {
         // Arrange
@@ -884,7 +867,7 @@ class FamilyApiTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_required_fields_when_adding_member()
     {
         // Arrange
@@ -905,7 +888,7 @@ class FamilyApiTest extends TestCase
             ->assertJsonValidationErrors(['last_name', 'relationship_to_head']);
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_relationship_to_head_is_valid_enum()
     {
         // Arrange
@@ -927,7 +910,7 @@ class FamilyApiTest extends TestCase
             ->assertJsonValidationErrors(['relationship_to_head']);
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_date_of_birth_is_before_today()
     {
         // Arrange
@@ -950,7 +933,7 @@ class FamilyApiTest extends TestCase
             ->assertJsonValidationErrors(['date_of_birth']);
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_sacrament_dates_order()
     {
         // Arrange
@@ -974,7 +957,7 @@ class FamilyApiTest extends TestCase
             ->assertJsonValidationErrors(['first_communion_date']);
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_deceased_date_when_status_is_deceased()
     {
         // Arrange
@@ -998,7 +981,7 @@ class FamilyApiTest extends TestCase
             ->assertJsonValidationErrors(['deceased_date']);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_update_family_member()
     {
         // Arrange
@@ -1037,7 +1020,7 @@ class FamilyApiTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_returns_404_when_updating_non_existent_member()
     {
         // Arrange
@@ -1054,11 +1037,11 @@ class FamilyApiTest extends TestCase
         $response->assertStatus(404)
             ->assertJson([
                 'success' => false,
-                'message' => 'Family member not found'
+                'message' => 'Family member not found or does not belong to your tenant'
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_delete_family_member()
     {
         // Arrange
@@ -1087,7 +1070,7 @@ class FamilyApiTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_returns_404_when_deleting_non_existent_member()
     {
         // Arrange
@@ -1106,7 +1089,7 @@ class FamilyApiTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_add_member_with_sacrament_information()
     {
         // Arrange
@@ -1149,7 +1132,7 @@ class FamilyApiTest extends TestCase
         $this->assertEquals('Jane Doe', $member->marriage_spouse_name);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_add_member_with_additional_information()
     {
         // Arrange
@@ -1182,7 +1165,7 @@ class FamilyApiTest extends TestCase
         $this->assertEquals('Active in youth ministry', $member->notes);
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_marital_status_is_valid_enum()
     {
         // Arrange
@@ -1205,7 +1188,7 @@ class FamilyApiTest extends TestCase
             ->assertJsonValidationErrors(['marital_status']);
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_gender_is_valid_enum()
     {
         // Arrange
@@ -1228,7 +1211,7 @@ class FamilyApiTest extends TestCase
             ->assertJsonValidationErrors(['gender']);
     }
 
-    /** @test */
+    #[Test]
     public function it_handles_errors_gracefully_when_service_throws_exception()
     {
         // Act: Try to get statistics
@@ -1238,7 +1221,7 @@ class FamilyApiTest extends TestCase
         $response->assertStatus(200); // If no exception, should work
     }
 
-    /** @test */
+    #[Test]
     public function it_can_filter_families_with_multiple_criteria()
     {
         // Arrange

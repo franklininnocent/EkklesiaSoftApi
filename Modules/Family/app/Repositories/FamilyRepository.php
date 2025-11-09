@@ -28,9 +28,7 @@ class FamilyRepository
             $query->where(function ($q) use ($search) {
                 $q->where('family_name', 'ILIKE', "%{$search}%")
                     ->orWhere('family_code', 'ILIKE', "%{$search}%")
-                    ->orWhere('head_of_family', 'ILIKE', "%{$search}%")
-                    ->orWhere('primary_phone', 'ILIKE', "%{$search}%")
-                    ->orWhere('email', 'ILIKE', "%{$search}%");
+                    ->orWhere('head_of_family', 'ILIKE', "%{$search}%");
             });
         }
 
@@ -252,9 +250,31 @@ class FamilyRepository
      */
     public function updateMember(FamilyMember $member, array $data): bool
     {
+        // CRITICAL: Ensure we're updating an existing model, not creating a new one
+        if (!$member->exists) {
+            \Log::error('Attempted to update non-existent member model', [
+                'member_id' => $member->id ?? 'none',
+                'family_id' => $member->family_id ?? 'none'
+            ]);
+            return false;
+        }
+        
+        // Store original ID to verify it doesn't change
+        $originalId = $member->id;
+        
         $updated = $member->update($data);
         
         if ($updated) {
+            // Verify the ID hasn't changed (should never happen, but safety check)
+            if ($member->id !== $originalId) {
+                \Log::error('CRITICAL: Member ID changed during update - this should never happen!', [
+                    'original_id' => $originalId,
+                    'new_id' => $member->id,
+                    'family_id' => $member->family_id
+                ]);
+                return false;
+            }
+            
             // Refresh the model to ensure we have the latest data
             $member->refresh();
             

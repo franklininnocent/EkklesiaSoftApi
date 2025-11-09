@@ -11,6 +11,7 @@ use Modules\Family\Models\FamilyMember;
 use Modules\Family\app\Repositories\FamilyRepository;
 use Modules\Family\app\Services\FamilyFileUploadService;
 use Carbon\Carbon;
+use Illuminate\Validation\ValidationException;
 
 class FamilyService
 {
@@ -99,6 +100,7 @@ class FamilyService
                 foreach ($data['members'] as $memberData) {
                     $memberData['created_by'] = $userId;
                     $memberData['updated_by'] = $userId;
+                    $this->enforceSacramentDependencies($memberData);
                     $this->familyRepository->addMember($family, $memberData);
                 }
             }
@@ -157,18 +159,80 @@ class FamilyService
             }
             unset($data['updated_at']);
 
+            // Extract members array if present (before updating family)
+            $membersData = $data['members'] ?? null;
+            unset($data['members']); // Remove members from family update data
+
             // Add audit info
             $data['updated_by'] = $userId;
 
             // Update family
             $this->familyRepository->update($family, $data);
 
+            // Handle members if provided
+            if (!empty($membersData) && is_array($membersData)) {
+                foreach ($membersData as $memberData) {
+                    // Extract and normalize member ID (could be UUID string, null, or empty)
+                    // CRITICAL: Use isset() check first, then check if value is not empty string or null
+                    $memberId = null;
+                    if (isset($memberData['id']) && $memberData['id'] !== null && $memberData['id'] !== '') {
+                        $memberId = trim((string) $memberData['id']);
+                    }
+                    
+                    // Log for debugging
+                    Log::info('Processing family member update', [
+                        'member_id' => $memberId,
+                        'has_id' => !empty($memberId),
+                        'family_id' => $family->id,
+                        'first_name' => $memberData['first_name'] ?? 'N/A',
+                        'last_name' => $memberData['last_name'] ?? 'N/A'
+                    ]);
+                    
+                    unset($memberData['id']); // Remove id from update data
+
+                    if ($memberId) {
+                        // Update existing member
+                        $member = $this->familyRepository->findMemberById($memberId, $family->id);
+                        if ($member) {
+                            Log::info('Updating existing family member', [
+                                'member_id' => $memberId,
+                                'family_id' => $family->id
+                            ]);
+                            $memberData['updated_by'] = $userId;
+                            $this->enforceSacramentDependencies($memberData, $member);
+                            $this->familyRepository->updateMember($member, $memberData);
+                        } else {
+                            // Member ID provided but not found - log error and throw exception
+                            Log::error('Member ID provided but not found in database', [
+                                'member_id' => $memberId,
+                                'family_id' => $family->id,
+                                'tenant_id' => $tenantId,
+                                'member_data' => array_keys($memberData)
+                            ]);
+                            // Don't create a new member if ID was provided - this indicates a data integrity issue
+                            throw new \RuntimeException("Member with ID {$memberId} not found for family {$family->id}. Cannot update non-existent member.");
+                        }
+                    } else {
+                        // Create new member (no ID provided)
+                        Log::info('Creating new family member (no ID provided)', [
+                            'family_id' => $family->id,
+                            'first_name' => $memberData['first_name'] ?? 'N/A'
+                        ]);
+                        $memberData['created_by'] = $userId;
+                        $memberData['updated_by'] = $userId;
+                        $this->enforceSacramentDependencies($memberData);
+                        $this->familyRepository->addMember($family, $memberData);
+                    }
+                }
+            }
+
             DB::commit();
 
             Log::info('Family updated', [
                 'family_id' => $family->id,
                 'tenant_id' => $tenantId,
-                'user_id' => $userId
+                'user_id' => $userId,
+                'members_processed' => !empty($membersData) ? count($membersData) : 0
             ]);
 
             // Reload with relationships
@@ -302,6 +366,8 @@ class FamilyService
             $memberData['created_by'] = $userId;
             $memberData['updated_by'] = $userId;
 
+            $this->enforceSacramentDependencies($memberData);
+
             // Create member
             $member = $this->familyRepository->addMember($family, $memberData);
 
@@ -362,21 +428,31 @@ class FamilyService
 
             $member = $this->familyRepository->findMemberById($memberId, $familyId);
             if (!$member) {
+                Log::error('Family member not found for update - this should NOT create a new member', [
+                    'member_id' => $memberId,
+                    'family_id' => $familyId,
+                    'tenant_id' => $tenantId,
+                    'user_id' => $userId
+                ]);
                 return null;
             }
 
             DB::beginTransaction();
 
             // Log the data being sent for debugging
-            Log::debug('Updating family member', [
+            Log::info('Updating existing family member', [
                 'member_id' => $memberId,
                 'family_id' => $familyId,
-                'data' => $data,
-                'member_current_data' => $member->toArray()
+                'member_name' => "{$member->first_name} {$member->last_name}",
+                'data_keys' => array_keys($data),
+                'tenant_id' => $tenantId,
+                'user_id' => $userId
             ]);
 
             // Add audit info
             $data['updated_by'] = $userId;
+
+            $this->enforceSacramentDependencies($data, $member);
 
             // Update member
             $updated = $this->familyRepository->updateMember($member, $data);
@@ -722,6 +798,66 @@ class FamilyService
             ]);
             throw $e;
         }
+    }
+
+    /**
+     * Ensure sacramental prerequisites are satisfied.
+     *
+     * @param array $memberData
+     * @param FamilyMember|null $existingMember
+     * @throws ValidationException
+     */
+    private function enforceSacramentDependencies(array $memberData, ?FamilyMember $existingMember = null): void
+    {
+        $resolve = function (string $key) use ($memberData, $existingMember) {
+            if (array_key_exists($key, $memberData)) {
+                return $memberData[$key];
+            }
+
+            return $existingMember?->{$key} ?? null;
+        };
+
+        $hasBaptism = $this->hasSacramentValue($resolve('baptism_date'));
+        $hasConfirmation = $this->hasSacramentValue($resolve('confirmation_date'));
+        $hasFirstCommunion = $this->hasSacramentValue($resolve('first_communion_date'));
+        $hasMarriage = $this->hasSacramentValue($resolve('marriage_date'));
+
+        $errors = [];
+
+        if (($hasFirstCommunion || $hasConfirmation || $hasMarriage) && !$hasBaptism) {
+            if ($hasFirstCommunion) {
+                $errors['first_communion_date'][] = 'Baptism must be recorded before First Communion.';
+            }
+
+            if ($hasConfirmation) {
+                $errors['confirmation_date'][] = 'Baptism must be recorded before Confirmation.';
+            }
+
+            if ($hasMarriage) {
+                $errors['marriage_date'][] = 'Baptism must be recorded before Marriage.';
+            }
+        }
+
+        if ($hasFirstCommunion && !$hasConfirmation) {
+            $errors['first_communion_date'][] = 'Confirmation must be recorded before First Communion.';
+        }
+
+        if (!empty($errors)) {
+            throw ValidationException::withMessages($errors);
+        }
+    }
+
+    private function hasSacramentValue(mixed $value): bool
+    {
+        if ($value instanceof Carbon) {
+            return true;
+        }
+
+        if (is_string($value)) {
+            return trim($value) !== '';
+        }
+
+        return !empty($value);
     }
 }
 

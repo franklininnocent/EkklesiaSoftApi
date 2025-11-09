@@ -17,11 +17,20 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (!Schema::hasTable('church_profiles')) {
+            return;
+        }
+
         Schema::table('church_profiles', function (Blueprint $table) {
-            $table->string('patron_name', 255)->nullable()->after('bishop_id')
-                ->comment('Name of the church patron saint');
-            $table->string('patron_image_path', 255)->nullable()->after('patron_name')
-                ->comment('Path to patron saint image');
+            if (!Schema::hasColumn('church_profiles', 'patron_name')) {
+                $table->string('patron_name', 255)->nullable()->after('bishop_id')
+                    ->comment('Name of the church patron saint');
+            }
+
+            if (!Schema::hasColumn('church_profiles', 'patron_image_path')) {
+                $table->string('patron_image_path', 255)->nullable()->after('patron_name')
+                    ->comment('Path to patron saint image');
+            }
         });
     }
 
@@ -30,8 +39,19 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (!Schema::hasTable('church_profiles')) {
+            return;
+        }
+
         Schema::table('church_profiles', function (Blueprint $table) {
-            $table->dropColumn(['patron_name', 'patron_image_path']);
+            $columnsToDrop = array_filter([
+                Schema::hasColumn('church_profiles', 'patron_image_path') ? 'patron_image_path' : null,
+                Schema::hasColumn('church_profiles', 'patron_name') ? 'patron_name' : null,
+            ]);
+
+            if (!empty($columnsToDrop)) {
+                $table->dropColumn($columnsToDrop);
+            }
         });
     }
 };

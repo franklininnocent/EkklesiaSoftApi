@@ -32,11 +32,6 @@ return new class extends Migration
             $table->unsignedBigInteger('country_id')->nullable();
             $table->string('postal_code', 20)->nullable();
             
-            // Contact Information
-            $table->string('primary_phone', 20)->nullable();
-            $table->string('secondary_phone', 20)->nullable();
-            $table->string('email', 255)->nullable();
-            
             // BCC Relationship (nullable - family can exist without BCC)
             $table->uuid('bcc_id')->nullable();
             

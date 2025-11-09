@@ -22,9 +22,6 @@ class UpdateFamilyRequest extends FormRequest
             'city' => ['nullable', 'string', 'max:120'],
             'postal_code' => ['nullable', 'string', 'max:40'],
             'bcc_id' => ['nullable', 'uuid', 'exists:bccs,id'],
-            'primary_phone' => ['nullable', new PhoneNumberForTenant()],
-            'secondary_phone' => ['nullable', new PhoneNumberForTenant()],
-            'email' => ['nullable', 'email', 'max:255'],
             'status' => ['nullable', 'in:active,inactive,migrated'],
             'notes' => ['nullable', 'string'],
 
