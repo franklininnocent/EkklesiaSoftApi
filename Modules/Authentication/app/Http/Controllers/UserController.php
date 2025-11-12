@@ -42,8 +42,33 @@ class UserController extends Controller
         try {
             $user = $request->user();
             
-            // Authorization: Only tenant administrators can list users
-            if (!$user->hasPermission('users.view')) {
+            // Load roles relationship if not already loaded (needed for isTenantAdmin check)
+            if (!$user->relationLoaded('roles')) {
+                $user->load('roles');
+            }
+            
+            // Authorization: Users with users.view permission OR tenant administrators can view users
+            $hasPermission = $user->hasPermission('users.view');
+            $isTenantAdmin = $user->isTenantAdmin();
+            $isSuperAdmin = $user->isSuperAdmin();
+            $isEkklesiaAdmin = $user->isEkklesiaAdmin();
+            
+            $canView = $hasPermission || $isTenantAdmin || $isSuperAdmin || $isEkklesiaAdmin;
+            
+            // Log authorization check for debugging
+            Log::debug('User list authorization check', [
+                'user_id' => $user->id,
+                'user_email' => $user->email,
+                'tenant_id' => $user->tenant_id,
+                'has_permission' => $hasPermission,
+                'is_tenant_admin' => $isTenantAdmin,
+                'is_super_admin' => $isSuperAdmin,
+                'is_ekklesia_admin' => $isEkklesiaAdmin,
+                'can_view' => $canView,
+                'roles' => $user->roles->pluck('name')->toArray(),
+            ]);
+            
+            if (!$canView) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. You do not have permission to view users.',
@@ -149,8 +174,13 @@ class UserController extends Controller
         try {
             $authUser = $request->user();
             
-            // Authorization check
-            if (!$authUser->hasPermission('users.view')) {
+            // Authorization check: Users with users.view permission OR tenant administrators can view users
+            $canView = $authUser->hasPermission('users.view') || 
+                      $authUser->isTenantAdmin() ||
+                      $authUser->isSuperAdmin() ||
+                      $authUser->isEkklesiaAdmin();
+            
+            if (!$canView) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. You do not have permission to view users.',
@@ -215,8 +245,34 @@ class UserController extends Controller
         try {
             $authUser = $request->user();
             
-            // Authorization: Only users with users.create permission can create users
-            if (!$authUser->hasPermission('users.create')) {
+            // Load roles relationship if not already loaded (needed for isTenantAdmin check)
+            if (!$authUser->relationLoaded('roles')) {
+                $authUser->load('roles');
+            }
+            
+            // Authorization: Users with users.create permission OR tenant administrators can create users
+            // Tenant administrators should be able to manage users within their tenant
+            $hasPermission = $authUser->hasPermission('users.create');
+            $isTenantAdmin = $authUser->isTenantAdmin();
+            $isSuperAdmin = $authUser->isSuperAdmin();
+            $isEkklesiaAdmin = $authUser->isEkklesiaAdmin();
+            
+            $canCreate = $hasPermission || $isTenantAdmin || $isSuperAdmin || $isEkklesiaAdmin;
+            
+            // Log authorization check for debugging
+            Log::debug('User creation authorization check', [
+                'user_id' => $authUser->id,
+                'user_email' => $authUser->email,
+                'tenant_id' => $authUser->tenant_id,
+                'has_permission' => $hasPermission,
+                'is_tenant_admin' => $isTenantAdmin,
+                'is_super_admin' => $isSuperAdmin,
+                'is_ekklesia_admin' => $isEkklesiaAdmin,
+                'can_create' => $canCreate,
+                'roles' => $authUser->roles->pluck('name')->toArray(),
+            ]);
+            
+            if (!$canCreate) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. You do not have permission to create users.',
@@ -302,8 +358,13 @@ class UserController extends Controller
         try {
             $authUser = $request->user();
             
-            // Authorization check
-            if (!$authUser->hasPermission('users.update')) {
+            // Authorization check: Users with users.update permission OR tenant administrators can update users
+            $canUpdate = $authUser->hasPermission('users.update') || 
+                        $authUser->isTenantAdmin() ||
+                        $authUser->isSuperAdmin() ||
+                        $authUser->isEkklesiaAdmin();
+            
+            if (!$canUpdate) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. You do not have permission to update users.',
@@ -434,8 +495,13 @@ class UserController extends Controller
         try {
             $authUser = $request->user();
             
-            // Authorization check
-            if (!$authUser->hasPermission('users.delete')) {
+            // Authorization check: Users with users.delete permission OR tenant administrators can delete users
+            $canDelete = $authUser->hasPermission('users.delete') || 
+                        $authUser->isTenantAdmin() ||
+                        $authUser->isSuperAdmin() ||
+                        $authUser->isEkklesiaAdmin();
+            
+            if (!$canDelete) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. You do not have permission to delete users.',
@@ -517,8 +583,13 @@ class UserController extends Controller
         try {
             $authUser = $request->user();
             
-            // Authorization check
-            if (!$authUser->hasPermission('users.view')) {
+            // Authorization check: Users with users.view permission OR tenant administrators can view user permissions
+            $canView = $authUser->hasPermission('users.view') || 
+                      $authUser->isTenantAdmin() ||
+                      $authUser->isSuperAdmin() ||
+                      $authUser->isEkklesiaAdmin();
+            
+            if (!$canView) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. You do not have permission to view user permissions.',
@@ -574,8 +645,13 @@ class UserController extends Controller
         try {
             $authUser = $request->user();
             
-            // Authorization check (requires both users.update and roles.assign permissions)
-            if (!$authUser->hasPermission('users.update') || !$authUser->hasPermission('roles.assign')) {
+            // Authorization check: Requires both users.update and roles.assign permissions OR tenant admin
+            $canAssign = ($authUser->hasPermission('users.update') && $authUser->hasPermission('roles.assign')) ||
+                        $authUser->isTenantAdmin() ||
+                        $authUser->isSuperAdmin() ||
+                        $authUser->isEkklesiaAdmin();
+            
+            if (!$canAssign) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. You do not have permission to assign roles.',
@@ -667,8 +743,13 @@ class UserController extends Controller
         try {
             $authUser = $request->user();
             
-            // Authorization check
-            if (!$authUser->hasPermission('users.update')) {
+            // Authorization check: Users with users.update permission OR tenant administrators can update user status
+            $canUpdate = $authUser->hasPermission('users.update') || 
+                        $authUser->isTenantAdmin() ||
+                        $authUser->isSuperAdmin() ||
+                        $authUser->isEkklesiaAdmin();
+            
+            if (!$canUpdate) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. You do not have permission to update users.',
@@ -744,6 +825,80 @@ class UserController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'An error occurred while updating the user status.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Get user statistics for the current tenant.
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function statistics(Request $request): JsonResponse
+    {
+        try {
+            $authUser = $request->user();
+            
+            // Load roles relationship if not already loaded (needed for isTenantAdmin check)
+            if (!$authUser->relationLoaded('roles')) {
+                $authUser->load('roles');
+            }
+            
+            // Authorization: Users with users.view permission OR tenant administrators can view statistics
+            $hasPermission = $authUser->hasPermission('users.view');
+            $isTenantAdmin = $authUser->isTenantAdmin();
+            $isSuperAdmin = $authUser->isSuperAdmin();
+            $isEkklesiaAdmin = $authUser->isEkklesiaAdmin();
+            
+            $canView = $hasPermission || $isTenantAdmin || $isSuperAdmin || $isEkklesiaAdmin;
+            
+            if (!$canView) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. You do not have permission to view user statistics.',
+                ], 403);
+            }
+
+            // Get statistics for the user's tenant (tenant isolation)
+            // Build base query for tenant
+            $baseQuery = User::where('tenant_id', $authUser->tenant_id);
+            
+            // Get total count
+            $total = (clone $baseQuery)->count();
+            
+            // Get active users count
+            $active = (clone $baseQuery)->where('active', 1)->count();
+            
+            // Get inactive users count
+            $inactive = (clone $baseQuery)->where('active', 0)->count();
+
+            Log::debug('User statistics retrieved', [
+                'user_id' => $authUser->id,
+                'tenant_id' => $authUser->tenant_id,
+                'total' => $total,
+                'active' => $active,
+                'inactive' => $inactive,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'total' => $total,
+                    'active' => $active,
+                    'inactive' => $inactive,
+                ],
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error fetching user statistics: ' . $e->getMessage(), [
+                'user_id' => $request->user()->id ?? null,
+                'exception' => $e,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An error occurred while fetching user statistics.',
             ], 500);
         }
     }

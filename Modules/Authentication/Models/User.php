@@ -395,9 +395,24 @@ class User extends Authenticatable
      */
     public function isTenantAdmin(): bool
     {
+        // Check if user has Administrator role that belongs to their tenant
+        // The role must have the same tenant_id as the user
+        if (!$this->tenant_id) {
+            return false; // User without tenant cannot be tenant admin
+        }
+        
+        // First try using loaded relationship if available (more efficient)
+        if ($this->relationLoaded('roles')) {
+            return $this->roles->contains(function ($role) {
+                return $role->name === 'Administrator' && 
+                       $role->tenant_id === $this->tenant_id;
+            });
+        }
+        
+        // Fallback to query if relationship not loaded
         return $this->roles()
             ->where('name', 'Administrator')
-            ->whereNotNull('tenant_id')
+            ->where('tenant_id', $this->tenant_id)
             ->exists();
     }
 

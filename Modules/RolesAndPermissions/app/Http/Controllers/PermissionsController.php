@@ -36,9 +36,14 @@ class PermissionsController extends Controller
                     'user_email' => $user->email,
                 ]);
             } else if ($user->isEkklesiaAdmin() || $user->isEkklesiaManager()) {
-                // System-level Ekklesia roles see all permissions
-                // No filter needed for management purposes
-                Log::debug('Permissions query: Ekklesia Admin/Manager - viewing all permissions', [
+                // System-level Ekklesia roles see all permissions EXCEPT "Tenants" and "Pope" modules
+                // CRITICAL SECURITY: "Tenants" and "Pope" modules are SuperAdmin only
+                $query->where(function ($q) {
+                    $q->where('module', '!=', 'Tenants')
+                      ->where('module', '!=', 'Pope');
+                });
+                
+                Log::debug('Permissions query: Ekklesia Admin/Manager - viewing all permissions (Tenants and Pope modules excluded)', [
                     'user_id' => $user->id,
                     'user_email' => $user->email,
                 ]);
@@ -46,13 +51,17 @@ class PermissionsController extends Controller
                 // TENANT ADMINISTRATORS AND USERS - STRICT ISOLATION
                 // Can see:
                 // 1. System permissions (for assigning to roles) - tenant_id = null AND is_custom = false
+                //    EXCEPT "Tenants" and "Pope" module permissions (SuperAdmin only)
                 // 2. Their own tenant's custom permissions ONLY
                 // Cannot see other tenants' custom permissions
                 $query->where(function ($q) use ($user) {
                     $q->where(function ($subQ) {
                         // System permissions (available to all tenants)
+                        // CRITICAL SECURITY: Exclude "Tenants" and "Pope" modules - SuperAdmin only
                         $subQ->whereNull('tenant_id')
-                             ->where('is_custom', false);
+                             ->where('is_custom', false)
+                             ->where('module', '!=', 'Tenants')
+                             ->where('module', '!=', 'Pope');
                     })
                     ->orWhere(function ($subQ) use ($user) {
                         // Their tenant's custom permissions ONLY
@@ -61,7 +70,7 @@ class PermissionsController extends Controller
                     });
                 });
                 
-                Log::info('Permissions query: Tenant user - strict isolation applied', [
+                Log::info('Permissions query: Tenant user - strict isolation applied (Tenants and Pope modules excluded)', [
                     'user_id' => $user->id,
                     'user_email' => $user->email,
                     'tenant_id' => $user->tenant_id,
@@ -383,6 +392,24 @@ class PermissionsController extends Controller
 
             $permission = Permission::findOrFail($request->permission_id);
             $role = Role::findOrFail($request->role_id);
+            $currentUser = auth()->user();
+
+            // CRITICAL SECURITY: Prevent non-SuperAdmin users from assigning "Tenants" and "Pope" module permissions
+            if (($permission->module === 'Tenants' || $permission->module === 'Pope') && !$currentUser->isSuperAdmin()) {
+                Log::warning('Non-SuperAdmin user attempted to assign restricted module permission to role (SuperAdmin only)', [
+                    'user_id' => $currentUser->id,
+                    'user_email' => $currentUser->email,
+                    'permission_id' => $permission->id,
+                    'permission_name' => $permission->name,
+                    'permission_module' => $permission->module,
+                    'role_id' => $role->id,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: Tenants and Pope module permissions can only be assigned by Super Administrators',
+                ], 403);
+            }
 
             $permission->assignToRole($role);
 
@@ -428,6 +455,25 @@ class PermissionsController extends Controller
 
             $permission = Permission::findOrFail($request->permission_id);
             $role = Role::findOrFail($request->role_id);
+            $currentUser = auth()->user();
+
+            // CRITICAL SECURITY: Prevent non-SuperAdmin users from removing "Tenants" and "Pope" module permissions
+            // This ensures that even if a role has restricted permissions, non-SuperAdmin users cannot modify them
+            if (($permission->module === 'Tenants' || $permission->module === 'Pope') && !$currentUser->isSuperAdmin()) {
+                Log::warning('Non-SuperAdmin user attempted to remove restricted module permission from role (SuperAdmin only)', [
+                    'user_id' => $currentUser->id,
+                    'user_email' => $currentUser->email,
+                    'permission_id' => $permission->id,
+                    'permission_name' => $permission->name,
+                    'permission_module' => $permission->module,
+                    'role_id' => $role->id,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: Tenants and Pope module permissions can only be managed by Super Administrators',
+                ], 403);
+            }
 
             $permission->removeFromRole($role);
 
@@ -451,6 +497,7 @@ class PermissionsController extends Controller
 
     /**
      * Assign permission directly to a user.
+     * CRITICAL SECURITY: Prevents non-SuperAdmin users from assigning "Tenants" module permissions
      */
     public function assignToUser(Request $request): JsonResponse
     {
@@ -473,6 +520,24 @@ class PermissionsController extends Controller
 
             $permission = Permission::findOrFail($request->permission_id);
             $user = User::findOrFail($request->user_id);
+            $currentUser = auth()->user();
+
+            // CRITICAL SECURITY: Prevent non-SuperAdmin users from assigning "Tenants" and "Pope" module permissions
+            if (($permission->module === 'Tenants' || $permission->module === 'Pope') && !$currentUser->isSuperAdmin()) {
+                Log::warning('Non-SuperAdmin user attempted to assign restricted module permission to user (SuperAdmin only)', [
+                    'user_id' => $currentUser->id,
+                    'user_email' => $currentUser->email,
+                    'permission_id' => $permission->id,
+                    'permission_name' => $permission->name,
+                    'permission_module' => $permission->module,
+                    'target_user_id' => $user->id,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: Tenants and Pope module permissions can only be assigned by Super Administrators',
+                ], 403);
+            }
 
             $permission->assignToUser($user);
 
@@ -518,6 +583,25 @@ class PermissionsController extends Controller
 
             $permission = Permission::findOrFail($request->permission_id);
             $user = User::findOrFail($request->user_id);
+            $currentUser = auth()->user();
+
+            // CRITICAL SECURITY: Prevent non-SuperAdmin users from removing "Tenants" and "Pope" module permissions
+            // This ensures that even if a user has restricted permissions, non-SuperAdmin users cannot modify them
+            if (($permission->module === 'Tenants' || $permission->module === 'Pope') && !$currentUser->isSuperAdmin()) {
+                Log::warning('Non-SuperAdmin user attempted to remove restricted module permission from user (SuperAdmin only)', [
+                    'user_id' => $currentUser->id,
+                    'user_email' => $currentUser->email,
+                    'permission_id' => $permission->id,
+                    'permission_name' => $permission->name,
+                    'permission_module' => $permission->module,
+                    'target_user_id' => $user->id,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized: Tenants and Pope module permissions can only be managed by Super Administrators',
+                ], 403);
+            }
 
             $permission->removeFromUser($user);
 
@@ -573,6 +657,31 @@ class PermissionsController extends Controller
                         'message' => 'Unauthorized to modify this role',
                     ], 403);
                 }
+
+                // CRITICAL SECURITY: Prevent non-SuperAdmin users from assigning "Tenants" and "Pope" module permissions
+                $permissionIds = $request->permission_ids;
+                $restrictedPermissionIds = Permission::whereIn('module', ['Tenants', 'Pope'])
+                    ->whereIn('id', $permissionIds)
+                    ->pluck('id')
+                    ->toArray();
+
+                if (!empty($restrictedPermissionIds)) {
+                    $restrictedPermissions = Permission::whereIn('id', $restrictedPermissionIds)
+                        ->get(['id', 'name', 'module']);
+                    
+                    Log::warning('Non-SuperAdmin user attempted to assign restricted module permissions (SuperAdmin only)', [
+                        'user_id' => $user->id,
+                        'user_email' => $user->email,
+                        'role_id' => $role->id,
+                        'restricted_permission_ids' => $restrictedPermissionIds,
+                        'restricted_modules' => $restrictedPermissions->pluck('module')->unique()->toArray(),
+                    ]);
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Unauthorized: Tenants and Pope module permissions can only be assigned by Super Administrators',
+                    ], 403);
+                }
             }
 
             // Use Laravel's sync method to replace all permissions atomically
@@ -604,6 +713,7 @@ class PermissionsController extends Controller
 
     /**
      * Get permissions for a specific role.
+     * CRITICAL SECURITY: Filters out "Tenants" module permissions for non-SuperAdmin users
      */
     public function getPermissionsForRole($roleId): JsonResponse
     {
@@ -622,9 +732,19 @@ class PermissionsController extends Controller
                 }
             }
 
+            // Get permissions for the role
+            $permissions = $role->permissions;
+
+            // CRITICAL SECURITY: Filter out "Tenants" and "Pope" module permissions for non-SuperAdmin users
+            if (!$user->isSuperAdmin()) {
+                $permissions = $permissions->filter(function ($permission) {
+                    return $permission->module !== 'Tenants' && $permission->module !== 'Pope';
+                })->values(); // Re-index array after filtering
+            }
+
             return response()->json([
                 'success' => true,
-                'data' => $role->permissions,
+                'data' => $permissions,
             ]);
         } catch (\Exception $e) {
             Log::error('Error fetching permissions for role: ' . $e->getMessage());
@@ -690,17 +810,41 @@ class PermissionsController extends Controller
             return true;
         }
 
-        // System-level Ekklesia roles can view all permissions
+        // System-level Ekklesia roles can view all permissions EXCEPT "Tenants" and "Pope" modules
+        // CRITICAL SECURITY: "Tenants" and "Pope" modules are SuperAdmin only
         if ($user->isEkklesiaAdmin() || $user->isEkklesiaManager()) {
+            if ($permission->module === 'Tenants' || $permission->module === 'Pope') {
+                Log::warning('Ekklesia Admin/Manager attempted to view restricted module permission (SuperAdmin only)', [
+                    'user_id' => $user->id,
+                    'user_email' => $user->email,
+                    'permission_id' => $permission->id,
+                    'permission_name' => $permission->name,
+                    'permission_module' => $permission->module,
+                ]);
+                return false;
+            }
             return true;
         }
 
         // CRITICAL SECURITY: Tenant users can view:
         // 1. System permissions (tenant_id = null AND is_custom = false)
+        //    EXCEPT "Tenants" and "Pope" module permissions (SuperAdmin only)
         // 2. Their own tenant's custom permissions ONLY
         if ($user->tenant_id) {
             // System permission (available to all tenants)
+            // BUT exclude "Tenants" and "Pope" modules - SuperAdmin only
             if (is_null($permission->tenant_id) && !$permission->is_custom) {
+                if ($permission->module === 'Tenants' || $permission->module === 'Pope') {
+                    Log::warning('Tenant user attempted to view restricted module permission (SuperAdmin only)', [
+                        'user_id' => $user->id,
+                        'user_email' => $user->email,
+                        'user_tenant_id' => $user->tenant_id,
+                        'permission_id' => $permission->id,
+                        'permission_name' => $permission->name,
+                        'permission_module' => $permission->module,
+                    ]);
+                    return false;
+                }
                 return true;
             }
             
@@ -718,6 +862,7 @@ class PermissionsController extends Controller
                 'permission_name' => $permission->name,
                 'permission_tenant_id' => $permission->tenant_id,
                 'permission_is_custom' => $permission->is_custom,
+                'permission_module' => $permission->module,
             ]);
             
             return false;

@@ -62,4 +62,8 @@ Route::middleware('auth:api')->prefix('users')->group(function () {
     Route::patch('/{id}/status', [UserController::class, 'updateStatus'])
         ->where('id', '[0-9]+')
         ->name('users.update-status');
+    
+    // Statistics Operation
+    Route::get('/statistics', [UserController::class, 'statistics'])
+        ->name('users.statistics');
 });

@@ -210,8 +210,47 @@ class AuthenticationController extends Controller
             ], 401);
         }
 
-        // Load relationships: role, roles (multi-role), permissions, and tenant
-        $user->load(['role', 'roles.permissions', 'permissions', 'tenant']);
+        // Load relationships: role, roles (multi-role), permissions, tenant with addresses
+        $user->load([
+            'role', 
+            'roles.permissions', 
+            'permissions', 
+            'tenant'
+        ]);
+
+        // Get tenant's country information from addresses
+        $tenantCountry = null;
+        $tenantCountryId = null;
+        if ($user->tenant) {
+            // Load tenant addresses with country relationship
+            $user->tenant->load(['addresses.country']);
+            
+            // Use the tenant's addresses relationship
+            $addresses = $user->tenant->addresses()->where('active', 1)->whereNotNull('country_id')->with('country')->get();
+            
+            // Try to get country from official address first
+            $officialAddress = $addresses->firstWhere('address_type', 'official');
+            if ($officialAddress && $officialAddress->country) {
+                $tenantCountry = $officialAddress->country;
+                $tenantCountryId = $officialAddress->country_id;
+            } 
+            // Fallback to primary address
+            elseif ($addresses->isNotEmpty()) {
+                $primaryAddress = $addresses->firstWhere('address_type', 'primary');
+                if ($primaryAddress && $primaryAddress->country) {
+                    $tenantCountry = $primaryAddress->country;
+                    $tenantCountryId = $primaryAddress->country_id;
+                }
+                // Fallback to first active address with country
+                else {
+                    $anyAddress = $addresses->first();
+                    if ($anyAddress && $anyAddress->country) {
+                        $tenantCountry = $anyAddress->country;
+                        $tenantCountryId = $anyAddress->country_id;
+                    }
+                }
+            }
+        }
 
         // Build user response with all relationships
         $userData = [
@@ -235,7 +274,18 @@ class AuthenticationController extends Controller
             'roles' => $user->roles,
             'permissions' => $user->getAllPermissions()->values(),
             // Tenant relationship
-            'tenant' => $user->tenant,
+            'tenant' => $user->tenant ? array_merge($user->tenant->toArray(), [
+                // Add country information for phone code lookup
+                'country_id' => $tenantCountryId,
+                'country' => $tenantCountry ? [
+                    'id' => $tenantCountry->id,
+                    'name' => $tenantCountry->name,
+                    'iso2' => $tenantCountry->iso2,
+                    'iso3' => $tenantCountry->iso3,
+                    'phone_code' => $tenantCountry->phone_code,
+                    'emoji' => $tenantCountry->emoji,
+                ] : null,
+            ]) : null,
         ];
 
         return response()->json([
