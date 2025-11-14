@@ -34,6 +34,7 @@ return [
         'Accept',
         'Origin',
         'X-CSRF-TOKEN',
+        'X-Tenant-Country',
     ],
 
     'exposed_headers' => [

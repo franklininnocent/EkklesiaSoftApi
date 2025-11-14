@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
+use Modules\Family\Models\FamilyMember;
 use Modules\Sacraments\Services\SacramentService;
 use Modules\Sacraments\Models\SacramentType;
 
@@ -20,6 +22,8 @@ use Modules\Sacraments\Models\SacramentType;
  */
 class SacramentController extends Controller
 {
+    protected array $sacramentTypeCache = [];
+
     public function __construct(protected SacramentService $service) {}
 
     /**
@@ -151,26 +155,65 @@ class SacramentController extends Controller
 
             $user = $request->user();
 
-            $validated = $request->validate([
+            // Prepare data - convert empty strings to null for nullable fields
+            $data = $request->all();
+            $nullableFields = [
+                'family_id', 'bcc_id', 'recipient_dob', 'recipient_birth_date', 
+                'recipient_birth_place', 'recipient_gender', 'place_administered', 'minister_name', 
+                'minister_title', 'certificate_number', 'book_number', 'page_number',
+                'father_name', 'mother_name', 'godparent1_name', 'godparent2_name',
+                'witnesses', 'notes', 'status'
+            ];
+            
+            foreach ($nullableFields as $field) {
+                if (isset($data[$field]) && $data[$field] === '') {
+                    $data[$field] = null;
+                }
+            }
+
+            // Build validation rules with tenant isolation
+            $tenantId = $user->tenant_id;
+            $validationRules = [
                 'sacrament_type_id' => 'required|exists:sacrament_types,id',
+                'family_id' => [
+                    'nullable',
+                    'uuid',
+                    Rule::exists('families', 'id')->where('tenant_id', $tenantId)
+                ],
+                'bcc_id' => [
+                    'nullable',
+                    'uuid',
+                    Rule::exists('bccs', 'id')->where('tenant_id', $tenantId)
+                ],
                 'recipient_name' => 'required|string|max:255',
                 'recipient_dob' => 'nullable|date',
+                'recipient_birth_date' => 'nullable|date',
+                'recipient_birth_place' => 'nullable|string|max:255',
                 'date_administered' => 'required|date',
                 'place_administered' => 'nullable|string|max:255',
+                'recipient_gender' => 'nullable|in:male,female,other',
                 'minister_name' => 'nullable|string|max:255',
+                'minister_title' => 'nullable|string|max:50',
                 'certificate_number' => 'nullable|string|max:255|unique:sacraments',
-                'parent_names' => 'nullable|string',
-                'godparent_names' => 'nullable|string',
-                'sponsor_names' => 'nullable|string',
+                'book_number' => 'nullable|string|max:255',
+                'page_number' => 'nullable|string|max:255',
+                'father_name' => 'nullable|string|max:255',
+                'mother_name' => 'nullable|string|max:255',
+                'godparent1_name' => 'nullable|string|max:255',
+                'godparent2_name' => 'nullable|string|max:255',
+                'witnesses' => 'nullable|string',
                 'notes' => 'nullable|string',
-                'status' => 'nullable|in:pending,completed,cancelled',
-            ]);
+                'status' => 'nullable|in:active,cancelled,conditional',
+            ];
+            
+            $validated = validator($data, $validationRules)->validate();
 
             // Auto-set tenant_id from authenticated user
             $validated['tenant_id'] = $user->tenant_id;
             $validated['created_by'] = $user->id;
 
             $sacrament = $this->service->create($validated);
+            $this->syncBaptismFamilyMembership($sacrament, $user);
 
             Log::info('Sacrament record created', [
                 'sacrament_id' => $sacrament->id,
@@ -192,12 +235,15 @@ class SacramentController extends Controller
         } catch (\Exception $e) {
             Log::error('Error creating sacrament', [
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'request_data' => $request->all(),
                 'user_id' => $request->user()->id ?? null
             ]);
 
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to create sacrament',
+                'error' => config('app.debug') ? $e->getMessage() : 'An error occurred while creating the sacrament record'
             ], 500);
         }
     }
@@ -216,39 +262,82 @@ class SacramentController extends Controller
             $user = $request->user();
 
             // Check if sacrament exists and belongs to user's tenant
-            $sacrament = $this->service->getById($id);
+            $existingSacrament = $this->service->getById($id);
             
-            if (!$sacrament) {
+            if (!$existingSacrament) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Sacrament not found'
                 ], 404);
             }
 
-            if ($sacrament->tenant_id !== $user->tenant_id) {
+            if ($existingSacrament->tenant_id !== $user->tenant_id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. You can only update sacraments from your own tenant.',
                 ], 403);
             }
 
-            $validated = $request->validate([
+            $data = $request->all();
+            $nullableFields = [
+                'family_id', 'bcc_id', 'recipient_dob', 'recipient_birth_date', 
+                'recipient_birth_place', 'recipient_gender', 'place_administered', 'minister_name', 
+                'minister_title', 'certificate_number', 'book_number', 'page_number',
+                'father_name', 'mother_name', 'godparent1_name', 'godparent2_name',
+                'witnesses', 'notes', 'status'
+            ];
+
+            foreach ($nullableFields as $field) {
+                if (isset($data[$field]) && $data[$field] === '') {
+                    $data[$field] = null;
+                }
+            }
+
+            $tenantId = $user->tenant_id;
+
+            $validationRules = [
+                'family_id' => [
+                    'nullable',
+                    'uuid',
+                    Rule::exists('families', 'id')->where('tenant_id', $tenantId)
+                ],
+                'bcc_id' => [
+                    'nullable',
+                    'uuid',
+                    Rule::exists('bccs', 'id')->where('tenant_id', $tenantId)
+                ],
                 'recipient_name' => 'sometimes|string|max:255',
                 'recipient_dob' => 'nullable|date',
+                'recipient_birth_date' => 'nullable|date',
+                'recipient_birth_place' => 'nullable|string|max:255',
                 'date_administered' => 'sometimes|date',
                 'place_administered' => 'nullable|string|max:255',
+                'recipient_gender' => 'nullable|in:male,female,other',
                 'minister_name' => 'nullable|string|max:255',
-                'certificate_number' => 'nullable|string|max:255|unique:sacraments,certificate_number,' . $id,
-                'parent_names' => 'nullable|string',
-                'godparent_names' => 'nullable|string',
-                'sponsor_names' => 'nullable|string',
+                'minister_title' => 'nullable|string|max:50',
+                'certificate_number' => [
+                    'nullable',
+                    'string',
+                    'max:255',
+                    Rule::unique('sacraments', 'certificate_number')->ignore($id)
+                ],
+                'book_number' => 'nullable|string|max:255',
+                'page_number' => 'nullable|string|max:255',
+                'father_name' => 'nullable|string|max:255',
+                'mother_name' => 'nullable|string|max:255',
+                'godparent1_name' => 'nullable|string|max:255',
+                'godparent2_name' => 'nullable|string|max:255',
+                'witnesses' => 'nullable|string',
                 'notes' => 'nullable|string',
-                'status' => 'nullable|in:pending,completed,cancelled',
-            ]);
+                'status' => 'nullable|in:active,cancelled,conditional',
+            ];
+
+            $validated = validator($data, $validationRules)->validate();
 
             $validated['updated_by'] = $user->id;
 
             $sacrament = $this->service->update($id, $validated);
+            $this->syncBaptismFamilyMembership($sacrament, $user);
 
             Log::info('Sacrament record updated', [
                 'sacrament_id' => $id,
@@ -366,6 +455,117 @@ class SacramentController extends Controller
                 'message' => 'Failed to retrieve sacrament types',
             ], 500);
         }
+    }
+
+    /**
+     * Determine if the sacrament type is Baptism.
+     */
+    protected function isBaptismType(int $sacramentTypeId): bool
+    {
+        if (!array_key_exists($sacramentTypeId, $this->sacramentTypeCache)) {
+            $type = SacramentType::find($sacramentTypeId);
+            $this->sacramentTypeCache[$sacramentTypeId] = $type ? strtoupper($type->code) === 'BAPTISM' : false;
+        }
+
+        return $this->sacramentTypeCache[$sacramentTypeId];
+    }
+
+    /**
+     * Ensure baptized recipients become members of their associated family.
+     */
+    protected function syncBaptismFamilyMembership($sacrament, $user): void
+    {
+        if (
+            !$sacrament ||
+            empty($sacrament->family_id) ||
+            !$this->isBaptismType((int) $sacrament->sacrament_type_id)
+        ) {
+            return;
+        }
+
+        $nameParts = $this->parseRecipientName($sacrament->recipient_name);
+        if (!$nameParts) {
+            return;
+        }
+
+        $memberData = array_filter(
+            [
+                'first_name' => $nameParts['first_name'],
+                'middle_name' => $nameParts['middle_name'],
+                'last_name' => $nameParts['last_name'],
+                'date_of_birth' => $sacrament->recipient_birth_date,
+                'gender' => $sacrament->recipient_gender,
+                'baptism_date' => $sacrament->date_administered,
+                'baptism_place' => $sacrament->place_administered,
+                'baptism_godparent_primary' => $sacrament->godparent1_name,
+                'baptism_godparent_secondary' => $sacrament->godparent2_name,
+                'baptism_church_name' => $sacrament->place_administered,
+                'baptism_priest_name' => $sacrament->minister_name,
+                'notes' => $sacrament->notes,
+            ],
+            fn($value) => !is_null($value) && $value !== ''
+        );
+
+        $existingMember = FamilyMember::where('family_id', $sacrament->family_id)
+            ->whereRaw('LOWER(first_name) = ?', [mb_strtolower($nameParts['first_name'])])
+            ->whereRaw('LOWER(last_name) = ?', [mb_strtolower($nameParts['last_name'])])
+            ->when(
+                $sacrament->recipient_birth_date,
+                fn($query) => $query->whereDate('date_of_birth', $sacrament->recipient_birth_date)
+            )
+            ->first();
+
+        if ($existingMember) {
+            $updateData = $memberData;
+            $updateData['updated_by'] = $user->id;
+            $existingMember->fill($updateData);
+            $existingMember->save();
+            return;
+        }
+
+        $memberData['family_id'] = $sacrament->family_id;
+        $memberData['relationship_to_head'] = $this->determineRelationshipToHead($sacrament->family_id);
+        $memberData['is_primary_contact'] = false;
+        $memberData['status'] = 'active';
+        $memberData['created_by'] = $user->id;
+        $memberData['updated_by'] = $user->id;
+
+        FamilyMember::create($memberData);
+    }
+
+    /**
+     * Split recipient name into first/middle/last components.
+     */
+    protected function parseRecipientName(?string $name): ?array
+    {
+        if (!$name) {
+            return null;
+        }
+
+        $normalized = trim(preg_replace('/\s+/', ' ', $name));
+        if ($normalized === '') {
+            return null;
+        }
+
+        $parts = explode(' ', $normalized);
+        $firstName = array_shift($parts);
+        $lastName = count($parts) ? array_pop($parts) : $firstName;
+        $middleName = count($parts) ? implode(' ', $parts) : null;
+
+        return [
+            'first_name' => $firstName,
+            'middle_name' => $middleName,
+            'last_name' => $lastName,
+        ];
+    }
+
+    /**
+     * Determine default relationship role for a new member.
+     */
+    protected function determineRelationshipToHead(string $familyId): string
+    {
+        $existingMembers = FamilyMember::where('family_id', $familyId)->count();
+        return $existingMembers === 0 ? 'self' : 'other';
     }
 }
 

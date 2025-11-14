@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\ValidationException;
 use App\Services\TokenService;
+use Modules\Tenants\Models\Country;
 
 class AuthenticationController extends Controller
 {
@@ -230,22 +231,31 @@ class AuthenticationController extends Controller
             
             // Try to get country from official address first
             $officialAddress = $addresses->firstWhere('address_type', 'official');
-            if ($officialAddress && $officialAddress->country) {
-                $tenantCountry = $officialAddress->country;
-                $tenantCountryId = $officialAddress->country_id;
+            if ($officialAddress) {
+                $country = $officialAddress->getRelation('country');
+                if ($country instanceof Country) {
+                    $tenantCountry = $country;
+                    $tenantCountryId = $officialAddress->country_id;
+                }
             } 
             // Fallback to primary address
-            elseif ($addresses->isNotEmpty()) {
+            if (!$tenantCountry && $addresses->isNotEmpty()) {
                 $primaryAddress = $addresses->firstWhere('address_type', 'primary');
-                if ($primaryAddress && $primaryAddress->country) {
-                    $tenantCountry = $primaryAddress->country;
-                    $tenantCountryId = $primaryAddress->country_id;
+                if ($primaryAddress) {
+                    $country = $primaryAddress->getRelation('country');
+                    if ($country instanceof Country) {
+                        $tenantCountry = $country;
+                        $tenantCountryId = $primaryAddress->country_id;
+                    }
                 }
-                // Fallback to first active address with country
-                else {
-                    $anyAddress = $addresses->first();
-                    if ($anyAddress && $anyAddress->country) {
-                        $tenantCountry = $anyAddress->country;
+            }
+            // Fallback to first active address with country
+            if (!$tenantCountry && $addresses->isNotEmpty()) {
+                $anyAddress = $addresses->first();
+                if ($anyAddress) {
+                    $country = $anyAddress->getRelation('country');
+                    if ($country instanceof Country) {
+                        $tenantCountry = $country;
                         $tenantCountryId = $anyAddress->country_id;
                     }
                 }

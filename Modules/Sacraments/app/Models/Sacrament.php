@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Tenants\Models\Tenant;
+use Modules\Family\Models\Family;
+use Modules\BCC\Models\BCC;
 
 /**
  * Sacrament Model
@@ -30,6 +32,8 @@ class Sacrament extends Model
 
     protected $fillable = [
         'tenant_id',
+        'family_id',
+        'bcc_id',
         'sacrament_type_id',
         'recipient_name',
         'date_administered',
@@ -41,6 +45,7 @@ class Sacrament extends Model
         'page_number',
         'recipient_birth_date',
         'recipient_birth_place',
+        'recipient_gender',
         'father_name',
         'mother_name',
         'godparent1_name',
@@ -82,6 +87,22 @@ class Sacrament extends Model
     public function sacramentType(): BelongsTo
     {
         return $this->belongsTo(SacramentType::class, 'sacrament_type_id');
+    }
+
+    /**
+     * Get the family this sacrament belongs to
+     */
+    public function family(): BelongsTo
+    {
+        return $this->belongsTo(Family::class);
+    }
+
+    /**
+     * Get the BCC this sacrament belongs to
+     */
+    public function bcc(): BelongsTo
+    {
+        return $this->belongsTo(BCC::class);
     }
 
     /**
