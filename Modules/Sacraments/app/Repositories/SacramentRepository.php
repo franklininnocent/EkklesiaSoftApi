@@ -31,6 +31,30 @@ class SacramentRepository
 
         if (!empty($params['date_from']) && !empty($params['date_to'])) {
             $query->dateRange($params['date_from'], $params['date_to']);
+        } elseif (!empty($params['date_from'])) {
+            $query->where('date_administered', '>=', $params['date_from']);
+        } elseif (!empty($params['date_to'])) {
+            $query->where('date_administered', '<=', $params['date_to']);
+        }
+
+        if (!empty($params['minister_name'])) {
+            $query->byMinisterName($params['minister_name']);
+        }
+
+        if (!empty($params['certificate_number'])) {
+            $query->byCertificateNumber($params['certificate_number']);
+        }
+
+        if (!empty($params['book_number'])) {
+            $query->byBookNumber($params['book_number']);
+        }
+
+        if (!empty($params['family_id'])) {
+            $query->byFamily($params['family_id']);
+        }
+
+        if (!empty($params['bcc_id'])) {
+            $query->byBCC($params['bcc_id']);
         }
 
         $perPage = $params['per_page'] ?? 20;
@@ -59,6 +83,14 @@ class SacramentRepository
     public function findById(int $id): ?Sacrament
     {
         return $this->model->with(['sacramentType', 'tenant', 'creator', 'updater'])->find($id);
+    }
+
+    /**
+     * Find multiple sacraments by IDs
+     */
+    public function findByIds(array $ids)
+    {
+        return $this->model->whereIn('id', $ids)->get();
     }
 }
 

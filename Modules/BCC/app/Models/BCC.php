@@ -44,6 +44,7 @@ class BCC extends Model
         'bcc_code',
         'name',
         'description',
+        'location',
         'meeting_place',
         'meeting_day',
         'meeting_time',
@@ -216,7 +217,9 @@ class BCC extends Model
      */
     public function scopeHasSpace($query)
     {
-        return $query->whereRaw('(SELECT COUNT(*) FROM families WHERE families.bcc_id = bccs.id) < bccs.max_families');
+        // Since max_families column doesn't exist, all active BCCs are considered to have space
+        // This scope now just returns active BCCs
+        return $query->where('status', 'active');
     }
 
     /**

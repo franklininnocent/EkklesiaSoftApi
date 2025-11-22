@@ -22,4 +22,8 @@ Route::middleware(['auth:api'])->prefix('sacraments')->name('sacraments.')->grou
     Route::get('/{id}', [SacramentController::class, 'show'])->name('show');
     Route::put('/{id}', [SacramentController::class, 'update'])->name('update');
     Route::delete('/{id}', [SacramentController::class, 'destroy'])->name('destroy');
+    
+    // Bulk Operations
+    Route::post('/bulk/update-status', [SacramentController::class, 'bulkUpdateStatus'])->name('bulk.update-status');
+    Route::post('/bulk/delete', [SacramentController::class, 'bulkDelete'])->name('bulk.delete');
 });

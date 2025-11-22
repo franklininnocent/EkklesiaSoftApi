@@ -136,6 +136,7 @@ class ChurchLeadershipController extends Controller
                 'email' => 'nullable|email|max:255',
                 'phone' => 'nullable|string|max:20',
                 'appointed_date' => 'nullable|date',
+                'relieved_date' => 'nullable|date',
                 'start_date' => 'nullable|date',
                 'end_date' => 'nullable|date|after:start_date',
                 'biography' => 'nullable|string|max:2000',
@@ -147,7 +148,12 @@ class ChurchLeadershipController extends Controller
 
             $validated['tenant_id'] = $user->tenant_id;
             $validated['is_primary'] = $validated['is_primary'] ?? 0;
+            // If relieved_date is set, automatically set active to 0
+            if (!empty($validated['relieved_date'])) {
+                $validated['active'] = 0;
+            } else {
             $validated['active'] = $validated['active'] ?? 1;
+            }
             $validated['display_order'] = $validated['display_order'] ?? 0;
 
             DB::beginTransaction();
@@ -227,6 +233,7 @@ class ChurchLeadershipController extends Controller
                 'email' => 'nullable|email|max:255',
                 'phone' => 'nullable|string|max:20',
                 'appointed_date' => 'nullable|date',
+                'relieved_date' => 'nullable|date',
                 'start_date' => 'nullable|date',
                 'end_date' => 'nullable|date|after:start_date',
                 'biography' => 'nullable|string|max:2000',
@@ -235,6 +242,11 @@ class ChurchLeadershipController extends Controller
                 'display_order' => 'nullable|integer|min:0',
                 'active' => 'nullable|boolean',
             ]);
+
+            // If relieved_date is set, automatically set active to 0
+            if (!empty($validated['relieved_date'])) {
+                $validated['active'] = 0;
+            }
 
             DB::beginTransaction();
             try {

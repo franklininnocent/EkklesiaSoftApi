@@ -363,6 +363,70 @@ class FamilyRepository
             }
         }
     }
+
+    /**
+     * Get all members across all families for a tenant with pagination and filters
+     *
+     * @param string $tenantId
+     * @param array $filters
+     * @param int $perPage
+     * @return LengthAwarePaginator
+     */
+    public function getAllMembers(string $tenantId, array $filters = [], int $perPage = 10, int $page = 1): LengthAwarePaginator
+    {
+        $query = FamilyMember::whereHas('family', function ($q) use ($tenantId) {
+            $q->where('tenant_id', $tenantId);
+        })
+        ->with(['family' => function ($q) {
+            $q->with(['bcc:id,name,bcc_code']);
+        }]);
+
+        // Apply search filter
+        if (!empty($filters['search'])) {
+            $search = $filters['search'];
+            $query->where(function ($q) use ($search) {
+                $q->whereRaw("CONCAT(first_name, ' ', COALESCE(middle_name, ''), ' ', last_name) ILIKE ?", ["%{$search}%"])
+                    ->orWhere('first_name', 'ILIKE', "%{$search}%")
+                    ->orWhere('last_name', 'ILIKE', "%{$search}%")
+                    ->orWhere('phone', 'ILIKE', "%{$search}%")
+                    ->orWhere('email', 'ILIKE', "%{$search}%");
+            });
+        }
+
+        // Apply status filter
+        if (!empty($filters['status'])) {
+            $query->where('status', $filters['status']);
+        }
+
+        // Apply BCC filter
+        if (!empty($filters['bcc_id'])) {
+            $query->whereHas('family', function ($q) use ($filters) {
+                $q->where('bcc_id', $filters['bcc_id']);
+            });
+        }
+
+        // Apply relationship filter (to identify family heads)
+        if (!empty($filters['is_head'])) {
+            if ($filters['is_head'] === 'true' || $filters['is_head'] === true) {
+                $query->whereIn('relationship_to_head', ['self', 'head']);
+            }
+        }
+
+        // Sorting
+        $sortBy = $filters['sort_by'] ?? 'last_name';
+        $sortOrder = $filters['sort_order'] ?? 'asc';
+        
+        // Handle special sorting cases
+        if ($sortBy === 'name') {
+            $query->orderBy('last_name', $sortOrder)
+                  ->orderBy('first_name', $sortOrder);
+        } else {
+            $query->orderBy($sortBy, $sortOrder);
+        }
+
+        // Use paginate with explicit page number
+        return $query->paginate($perPage, ['*'], 'page', $page);
+    }
 }
 
 

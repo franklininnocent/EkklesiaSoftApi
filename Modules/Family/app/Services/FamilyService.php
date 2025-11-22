@@ -859,6 +859,19 @@ class FamilyService
 
         return !empty($value);
     }
+
+    /**
+     * Get all members across all families for a tenant with pagination and filters
+     *
+     * @param string $tenantId
+     * @param array $filters
+     * @param int $perPage
+     * @return LengthAwarePaginator
+     */
+    public function getAllMembers(string $tenantId, array $filters = [], int $perPage = 10, int $page = 1): LengthAwarePaginator
+    {
+        return $this->familyRepository->getAllMembers($tenantId, $filters, $perPage, $page);
+    }
 }
 
 

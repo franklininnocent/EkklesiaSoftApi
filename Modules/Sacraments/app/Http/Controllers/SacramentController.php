@@ -68,7 +68,9 @@ class SacramentController extends Controller
             // Get params and enforce tenant isolation
             $params = $request->only([
                 'sacrament_type_id', 'status', 'search',
-                'date_from', 'date_to', 'per_page', 'sort_by', 'sort_dir'
+                'date_from', 'date_to', 'per_page', 'sort_by', 'sort_dir',
+                'minister_name', 'certificate_number', 'book_number',
+                'family_id', 'bcc_id'
             ]);
             
             // Force tenant_id to current user's tenant
@@ -162,7 +164,12 @@ class SacramentController extends Controller
                 'recipient_birth_place', 'recipient_gender', 'place_administered', 'minister_name', 
                 'minister_title', 'certificate_number', 'book_number', 'page_number',
                 'father_name', 'mother_name', 'godparent1_name', 'godparent2_name',
-                'witnesses', 'notes', 'status'
+                'witnesses', 'notes', 'status',
+                'marriage_bride_full_name', 'marriage_bride_father_name', 'marriage_bride_mother_name',
+                'marriage_bride_address', 'marriage_bride_church_type', 'marriage_bride_church_name',
+                'marriage_bride_church_address', 'marriage_groom_full_name', 'marriage_groom_father_name',
+                'marriage_groom_mother_name', 'marriage_groom_address', 'marriage_groom_church_type',
+                'marriage_groom_church_name', 'marriage_groom_church_address',
             ];
             
             foreach ($nullableFields as $field) {
@@ -194,7 +201,14 @@ class SacramentController extends Controller
                 'recipient_gender' => 'nullable|in:male,female,other',
                 'minister_name' => 'nullable|string|max:255',
                 'minister_title' => 'nullable|string|max:50',
-                'certificate_number' => 'nullable|string|max:255|unique:sacraments',
+                'certificate_number' => [
+                    'nullable',
+                    'string',
+                    'max:255',
+                    Rule::unique('sacraments', 'certificate_number')
+                        ->where('tenant_id', $tenantId)
+                        ->whereNull('deleted_at')
+                ],
                 'book_number' => 'nullable|string|max:255',
                 'page_number' => 'nullable|string|max:255',
                 'father_name' => 'nullable|string|max:255',
@@ -204,6 +218,20 @@ class SacramentController extends Controller
                 'witnesses' => 'nullable|string',
                 'notes' => 'nullable|string',
                 'status' => 'nullable|in:active,cancelled,conditional',
+                'marriage_bride_full_name' => 'nullable|string|max:255',
+                'marriage_bride_father_name' => 'nullable|string|max:255',
+                'marriage_bride_mother_name' => 'nullable|string|max:255',
+                'marriage_bride_address' => 'nullable|string',
+                'marriage_bride_church_type' => 'nullable|in:home_parish,other',
+                'marriage_bride_church_name' => 'nullable|string|max:255',
+                'marriage_bride_church_address' => 'nullable|string',
+                'marriage_groom_full_name' => 'nullable|string|max:255',
+                'marriage_groom_father_name' => 'nullable|string|max:255',
+                'marriage_groom_mother_name' => 'nullable|string|max:255',
+                'marriage_groom_address' => 'nullable|string',
+                'marriage_groom_church_type' => 'nullable|in:home_parish,other',
+                'marriage_groom_church_name' => 'nullable|string|max:255',
+                'marriage_groom_church_address' => 'nullable|string',
             ];
             
             $validated = validator($data, $validationRules)->validate();
@@ -284,7 +312,12 @@ class SacramentController extends Controller
                 'recipient_birth_place', 'recipient_gender', 'place_administered', 'minister_name', 
                 'minister_title', 'certificate_number', 'book_number', 'page_number',
                 'father_name', 'mother_name', 'godparent1_name', 'godparent2_name',
-                'witnesses', 'notes', 'status'
+                'witnesses', 'notes', 'status',
+                'marriage_bride_full_name', 'marriage_bride_father_name', 'marriage_bride_mother_name',
+                'marriage_bride_address', 'marriage_bride_church_type', 'marriage_bride_church_name',
+                'marriage_bride_church_address', 'marriage_groom_full_name', 'marriage_groom_father_name',
+                'marriage_groom_mother_name', 'marriage_groom_address', 'marriage_groom_church_type',
+                'marriage_groom_church_name', 'marriage_groom_church_address',
             ];
 
             foreach ($nullableFields as $field) {
@@ -319,7 +352,10 @@ class SacramentController extends Controller
                     'nullable',
                     'string',
                     'max:255',
-                    Rule::unique('sacraments', 'certificate_number')->ignore($id)
+                    Rule::unique('sacraments', 'certificate_number')
+                        ->where('tenant_id', $tenantId)
+                        ->whereNull('deleted_at')
+                        ->ignore($id)
                 ],
                 'book_number' => 'nullable|string|max:255',
                 'page_number' => 'nullable|string|max:255',
@@ -330,6 +366,20 @@ class SacramentController extends Controller
                 'witnesses' => 'nullable|string',
                 'notes' => 'nullable|string',
                 'status' => 'nullable|in:active,cancelled,conditional',
+                'marriage_bride_full_name' => 'nullable|string|max:255',
+                'marriage_bride_father_name' => 'nullable|string|max:255',
+                'marriage_bride_mother_name' => 'nullable|string|max:255',
+                'marriage_bride_address' => 'nullable|string',
+                'marriage_bride_church_type' => 'nullable|in:home_parish,other',
+                'marriage_bride_church_name' => 'nullable|string|max:255',
+                'marriage_bride_church_address' => 'nullable|string',
+                'marriage_groom_full_name' => 'nullable|string|max:255',
+                'marriage_groom_father_name' => 'nullable|string|max:255',
+                'marriage_groom_mother_name' => 'nullable|string|max:255',
+                'marriage_groom_address' => 'nullable|string',
+                'marriage_groom_church_type' => 'nullable|in:home_parish,other',
+                'marriage_groom_church_name' => 'nullable|string|max:255',
+                'marriage_groom_church_address' => 'nullable|string',
             ];
 
             $validated = validator($data, $validationRules)->validate();
@@ -566,6 +616,144 @@ class SacramentController extends Controller
     {
         $existingMembers = FamilyMember::where('family_id', $familyId)->count();
         return $existingMembers === 0 ? 'self' : 'other';
+    }
+
+    /**
+     * Bulk update status for multiple sacraments (tenant-isolated)
+     */
+    public function bulkUpdateStatus(Request $request): JsonResponse
+    {
+        try {
+            // Verify tenant user
+            if ($error = $this->verifyTenantUser($request)) {
+                return $error;
+            }
+
+            $user = $request->user();
+            
+            $validated = $request->validate([
+                'ids' => 'required|array|min:1',
+                'ids.*' => 'required|integer|exists:sacraments,id',
+                'status' => 'required|in:active,cancelled,conditional'
+            ]);
+
+            $ids = $validated['ids'];
+            $status = $validated['status'];
+            $tenantId = $user->tenant_id;
+
+            // Verify all sacraments belong to user's tenant
+            $sacraments = $this->service->getByIds($ids);
+            $unauthorized = $sacraments->filter(fn($sacrament) => $sacrament->tenant_id !== $tenantId);
+            
+            if ($unauthorized->isNotEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Some sacraments do not belong to your tenant.',
+                ], 403);
+            }
+
+            // Update all sacraments
+            $updated = $this->service->bulkUpdateStatus($ids, $status, $user->id);
+
+            Log::info('Bulk status update performed', [
+                'count' => count($ids),
+                'status' => $status,
+                'updated_by' => $user->id
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Successfully updated {$updated} sacrament(s) to {$status}",
+                'data' => [
+                    'updated_count' => $updated,
+                    'status' => $status
+                ]
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Error in bulk status update', [
+                'error' => $e->getMessage(),
+                'user_id' => $request->user()->id ?? null
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update sacraments',
+                'error' => config('app.debug') ? $e->getMessage() : 'An error occurred'
+            ], 500);
+        }
+    }
+
+    /**
+     * Bulk delete multiple sacraments (tenant-isolated)
+     */
+    public function bulkDelete(Request $request): JsonResponse
+    {
+        try {
+            // Verify tenant user
+            if ($error = $this->verifyTenantUser($request)) {
+                return $error;
+            }
+
+            $user = $request->user();
+            
+            $validated = $request->validate([
+                'ids' => 'required|array|min:1',
+                'ids.*' => 'required|integer|exists:sacraments,id'
+            ]);
+
+            $ids = $validated['ids'];
+            $tenantId = $user->tenant_id;
+
+            // Verify all sacraments belong to user's tenant
+            $sacraments = $this->service->getByIds($ids);
+            $unauthorized = $sacraments->filter(fn($sacrament) => $sacrament->tenant_id !== $tenantId);
+            
+            if ($unauthorized->isNotEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Some sacraments do not belong to your tenant.',
+                ], 403);
+            }
+
+            // Delete all sacraments
+            $deleted = $this->service->bulkDelete($ids);
+
+            Log::info('Bulk delete performed', [
+                'count' => count($ids),
+                'deleted_by' => $user->id
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Successfully deleted {$deleted} sacrament(s)",
+                'data' => [
+                    'deleted_count' => $deleted
+                ]
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Error in bulk delete', [
+                'error' => $e->getMessage(),
+                'user_id' => $request->user()->id ?? null
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to delete sacraments',
+                'error' => config('app.debug') ? $e->getMessage() : 'An error occurred'
+            ], 500);
+        }
     }
 }
 

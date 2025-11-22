@@ -46,6 +46,44 @@ class SacramentService
 
         return $this->repository->delete($sacrament);
     }
+
+    /**
+     * Get multiple sacraments by IDs
+     */
+    public function getByIds(array $ids)
+    {
+        return $this->repository->findByIds($ids);
+    }
+
+    /**
+     * Bulk update status for multiple sacraments
+     */
+    public function bulkUpdateStatus(array $ids, string $status, ?int $updatedBy = null): int
+    {
+        $updatedBy = $updatedBy ?? auth()->id();
+        
+        return Sacrament::whereIn('id', $ids)
+            ->update([
+                'status' => $status,
+                'updated_by' => $updatedBy,
+                'updated_at' => now()
+            ]);
+    }
+
+    /**
+     * Bulk delete multiple sacraments
+     */
+    public function bulkDelete(array $ids): int
+    {
+        $deleted = 0;
+        foreach ($ids as $id) {
+            $sacrament = $this->repository->findById($id);
+            if ($sacrament && $this->repository->delete($sacrament)) {
+                $deleted++;
+            }
+        }
+        return $deleted;
+    }
 }
 
 

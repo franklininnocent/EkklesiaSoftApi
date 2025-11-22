@@ -40,3 +40,8 @@ Route::middleware(['auth:api'])->prefix('families')->group(function () {
     Route::put('/{familyId}/members/{memberId}', [FamilyController::class, 'updateMember'])->name('families.members.update');
     Route::delete('/{familyId}/members/{memberId}', [FamilyController::class, 'deleteMember'])->name('families.members.destroy');
 });
+
+// Members Routes - Get all members across all families for a tenant
+Route::middleware(['auth:api'])->prefix('members')->group(function () {
+    Route::get('/', [FamilyController::class, 'allMembers'])->name('members.index');
+});

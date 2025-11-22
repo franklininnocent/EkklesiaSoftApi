@@ -849,4 +849,55 @@ class FamilyController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Get all members across all families for the current tenant
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function allMembers(Request $request): JsonResponse
+    {
+        try {
+            $tenantId = Auth::user()->tenant_id;
+            
+            if (!$tenantId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tenant ID is required'
+                ], 403);
+            }
+
+            $filters = [
+                'search' => $request->input('search'),
+                'status' => $request->input('status'),
+                'bcc_id' => $request->input('bcc_id'),
+                'is_head' => $request->input('is_head'),
+                'sort_by' => $request->input('sort_by', 'last_name'),
+                'sort_order' => $request->input('sort_order', 'asc'),
+            ];
+
+            $perPage = max(1, min(100, (int) $request->input('per_page', 10))); // Clamp between 1 and 100
+            $page = max(1, (int) $request->input('page', 1)); // Ensure page is at least 1
+            $members = $this->familyService->getAllMembers($tenantId, $filters, $perPage, $page);
+
+            return response()->json([
+                'success' => true,
+                'data' => $members->items(),
+                'total' => $members->total(),
+                'current_page' => $members->currentPage(),
+                'last_page' => $members->lastPage(),
+                'per_page' => $members->perPage(),
+                'from' => $members->firstItem(),
+                'to' => $members->lastItem(),
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve members',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
 }

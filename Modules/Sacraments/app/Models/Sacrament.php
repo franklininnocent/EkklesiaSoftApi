@@ -50,6 +50,20 @@ class Sacrament extends Model
         'mother_name',
         'godparent1_name',
         'godparent2_name',
+        'marriage_bride_full_name',
+        'marriage_bride_father_name',
+        'marriage_bride_mother_name',
+        'marriage_bride_address',
+        'marriage_bride_church_type',
+        'marriage_bride_church_name',
+        'marriage_bride_church_address',
+        'marriage_groom_full_name',
+        'marriage_groom_father_name',
+        'marriage_groom_mother_name',
+        'marriage_groom_address',
+        'marriage_groom_church_type',
+        'marriage_groom_church_name',
+        'marriage_groom_church_address',
         'witnesses',
         'notes',
         'document_path',
@@ -159,6 +173,46 @@ class Sacrament extends Model
     public function scopeDateRange($query, $startDate, $endDate)
     {
         return $query->whereBetween('date_administered', [$startDate, $endDate]);
+    }
+
+    /**
+     * Scope: Filter by minister name
+     */
+    public function scopeByMinisterName($query, string $ministerName)
+    {
+        return $query->where('minister_name', 'ILIKE', "%{$ministerName}%");
+    }
+
+    /**
+     * Scope: Filter by certificate number
+     */
+    public function scopeByCertificateNumber($query, string $certificateNumber)
+    {
+        return $query->where('certificate_number', 'ILIKE', "%{$certificateNumber}%");
+    }
+
+    /**
+     * Scope: Filter by book number
+     */
+    public function scopeByBookNumber($query, string $bookNumber)
+    {
+        return $query->where('book_number', 'ILIKE', "%{$bookNumber}%");
+    }
+
+    /**
+     * Scope: Filter by family ID
+     */
+    public function scopeByFamily($query, string $familyId)
+    {
+        return $query->where('family_id', $familyId);
+    }
+
+    /**
+     * Scope: Filter by BCC ID
+     */
+    public function scopeByBCC($query, string $bccId)
+    {
+        return $query->where('bcc_id', $bccId);
     }
 
     /**

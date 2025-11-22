@@ -180,34 +180,34 @@ class BCCRepository
      */
     public function getStatistics(string $tenantId): array
     {
-        $totalBCCs = BCC::where('tenant_id', $tenantId)->count();
-        $activeBCCs = BCC::where('tenant_id', $tenantId)->where('status', 'active')->count();
+        // Convert tenant_id to integer if it's numeric (for compatibility)
+        $tenantIdValue = is_numeric($tenantId) ? (int) $tenantId : $tenantId;
         
-        $bccsWithSpace = BCC::where('tenant_id', $tenantId)
+        $totalBCCs = BCC::where('tenant_id', $tenantIdValue)->count();
+        $activeBCCs = BCC::where('tenant_id', $tenantIdValue)->where('status', 'active')->count();
+        
+        // Since max_families column doesn't exist, all active BCCs are considered to have space
+        $bccsWithSpace = BCC::where('tenant_id', $tenantIdValue)
             ->where('status', 'active')
-            ->hasSpace()
             ->count();
 
-        $totalFamiliesInBCC = Family::where('tenant_id', $tenantId)
+        $totalFamiliesInBCC = Family::where('tenant_id', $tenantIdValue)
             ->whereNotNull('bcc_id')
             ->count();
 
         // Parish Zone removed; keep empty for compatibility
         $bccsByZone = collect();
 
-        $capacityUtilization = BCC::where('tenant_id', $tenantId)
-            ->selectRaw('
-                SUM(max_families) as total_capacity
-            ')
-            ->first();
+        // Capacity utilization removed since max_families column doesn't exist
+        $capacityUtilization = null;
 
-        $totalLeaders = BCCLeader::whereHas('bcc', function ($query) use ($tenantId) {
-            $query->where('tenant_id', $tenantId);
+        $totalLeaders = BCCLeader::whereHas('bcc', function ($query) use ($tenantIdValue) {
+            $query->where('tenant_id', $tenantIdValue);
         })
         ->where('is_active', true)
         ->count();
 
-        $totalFamiliesInBCCs = Family::where('tenant_id', $tenantId)
+        $totalFamiliesInBCCs = Family::where('tenant_id', $tenantIdValue)
             ->whereNotNull('bcc_id')
             ->count();
 
@@ -220,11 +220,9 @@ class BCCRepository
             'total_families_in_bccs' => $totalFamiliesInBCCs,
             'total_leaders' => $totalLeaders,
             'bccs_by_zone' => $bccsByZone,
-            'total_capacity' => $capacityUtilization->total_capacity ?? 0,
+            'total_capacity' => 0, // Capacity feature removed
             'current_utilization' => $totalFamiliesInBCC,
-            'utilization_percentage' => $capacityUtilization && $capacityUtilization->total_capacity > 0
-                ? round(($totalFamiliesInBCC / $capacityUtilization->total_capacity) * 100, 2)
-                : 0,
+            'utilization_percentage' => 0, // Capacity feature removed
         ];
     }
 

@@ -26,6 +26,7 @@ class ChurchLeadership extends Model
         'email',
         'phone',
         'appointed_date',
+        'relieved_date',
         'start_date',
         'end_date',
         'biography',
@@ -37,6 +38,7 @@ class ChurchLeadership extends Model
 
     protected $casts = [
         'appointed_date' => 'date',
+        'relieved_date' => 'date',
         'start_date' => 'date',
         'end_date' => 'date',
         'is_primary' => 'integer',
@@ -83,10 +85,12 @@ class ChurchLeadership extends Model
 
     /**
      * Scope: Order by display order
+     * Active records first, then inactive
      */
     public function scopeOrdered($query)
     {
-        return $query->orderBy('is_primary', 'desc')
+        return $query->orderBy('active', 'desc') // Active (1) first, then inactive (0)
+                     ->orderBy('is_primary', 'desc')
                      ->orderBy('display_order')
                      ->orderBy('appointed_date', 'desc');
     }

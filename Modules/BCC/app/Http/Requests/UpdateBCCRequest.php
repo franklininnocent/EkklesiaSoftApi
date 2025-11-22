@@ -28,6 +28,7 @@ class UpdateBCCRequest extends FormRequest
             'description' => ['nullable', 'string'],
 
             // Location
+            'location' => ['nullable', 'string', 'max:255'],
             'meeting_place' => ['nullable', 'string', 'max:255'],
 
             // Meeting Schedule
