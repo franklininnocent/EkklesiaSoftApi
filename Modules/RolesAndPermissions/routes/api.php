@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use Modules\RolesAndPermissions\Http\Controllers\RolesAndPermissionsController;
 use Modules\RolesAndPermissions\Http\Controllers\PermissionsController;
+use Modules\RolesAndPermissions\Http\Middleware\RateLimitPermissionChecks;
 
 /*
  *--------------------------------------------------------------------------
@@ -41,7 +42,8 @@ Route::prefix('roles')->middleware('auth:api')->group(function () {
 });
 
 // PERMISSIONS ENDPOINTS
-Route::prefix('permissions')->middleware('auth:api')->group(function () {
+// PERFORMANCE: Apply rate limiting to permission check endpoints
+Route::prefix('permissions')->middleware(['auth:api', RateLimitPermissionChecks::class])->group(function () {
     // List all permissions
     Route::get('/', [PermissionsController::class, 'index']);
     

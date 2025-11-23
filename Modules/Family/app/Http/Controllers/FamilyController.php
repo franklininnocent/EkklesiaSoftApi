@@ -224,6 +224,8 @@ class FamilyController extends Controller
 
     /**
      * Remove the specified family
+     * 
+     * SECURITY: Only Tenant Admins can delete families
      *
      * @param string $id
      * @return JsonResponse
@@ -231,8 +233,9 @@ class FamilyController extends Controller
     public function destroy(string $id): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
-            $userId = Auth::id();
+            $user = Auth::user();
+            $tenantId = $user->tenant_id;
+            $userId = $user->id;
             
             if (!$tenantId) {
                 return response()->json([
@@ -241,12 +244,20 @@ class FamilyController extends Controller
                 ], 403);
             }
 
+            // SECURITY: Only Tenant Admins can delete families
+            if (!$user->isTenantAdmin() && !$user->isSuperAdmin() && !$user->isEkklesiaAdmin()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Only Tenant Administrators can delete families.',
+                ], 403);
+            }
+
             $result = $this->familyService->deleteFamily($id, $tenantId, $userId);
 
             if (!$result) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Family not found'
+                    'message' => 'Family not found or does not belong to your tenant'
                 ], 404);
             }
 

@@ -9,10 +9,18 @@ use Illuminate\Support\Facades\Validator;
 use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Authentication\Models\Role;
 use Modules\Authentication\Models\User;
+use Modules\RolesAndPermissions\Services\PermissionAuditService;
 use Illuminate\Support\Facades\Log;
 
 class PermissionsController extends Controller
 {
+    protected PermissionAuditService $auditService;
+
+    public function __construct(PermissionAuditService $auditService)
+    {
+        $this->auditService = $auditService;
+    }
+
     /**
      * List all permissions (with pagination and filters).
      */
@@ -411,7 +419,28 @@ class PermissionsController extends Controller
                 ], 403);
             }
 
+            // SECURITY: Validate tenant isolation - permission and role must belong to same tenant
+            // System permissions (tenant_id = null) can be assigned to any role
+            // Tenant-specific permissions can only be assigned to roles from the same tenant
+            if (!is_null($permission->tenant_id)) {
+                if (is_null($role->tenant_id)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Cannot assign tenant-specific permission to global role',
+                    ], 422);
+                }
+                if ($permission->tenant_id !== $role->tenant_id) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Cannot assign permission from different tenant to role',
+                    ], 422);
+                }
+            }
+
             $permission->assignToRole($role);
+
+            // AUDIT: Log permission assignment
+            $this->auditService->logPermissionAssignedToRole($permission, $role, auth()->user());
 
             Log::info('Permission assigned to role', [
                 'permission_id' => $permission->id,
@@ -477,6 +506,9 @@ class PermissionsController extends Controller
 
             $permission->removeFromRole($role);
 
+            // AUDIT: Log permission removal from role
+            $this->auditService->logPermissionRemovedFromRole($permission, $role, auth()->user());
+
             Log::info('Permission removed from role', [
                 'permission_id' => $permission->id,
                 'role_id' => $role->id,
@@ -539,7 +571,28 @@ class PermissionsController extends Controller
                 ], 403);
             }
 
+            // SECURITY: Validate tenant isolation - permission and user must belong to same tenant
+            // System permissions (tenant_id = null) can be assigned to any user
+            // Tenant-specific permissions can only be assigned to users from the same tenant
+            if (!is_null($permission->tenant_id)) {
+                if (is_null($user->tenant_id)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Cannot assign tenant-specific permission to user without tenant',
+                    ], 422);
+                }
+                if ($permission->tenant_id !== $user->tenant_id) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Cannot assign permission from different tenant to user',
+                    ], 422);
+                }
+            }
+
             $permission->assignToUser($user);
+
+            // AUDIT: Log permission assignment to user
+            $this->auditService->logPermissionAssignedToUser($permission, $user, auth()->user());
 
             Log::info('Permission assigned to user', [
                 'permission_id' => $permission->id,
@@ -603,7 +656,22 @@ class PermissionsController extends Controller
                 ], 403);
             }
 
+            // SECURITY: Validate tenant isolation - permission and user must belong to same tenant
+            // System permissions (tenant_id = null) can be removed from any user
+            // Tenant-specific permissions can only be removed from users from the same tenant
+            if (!is_null($permission->tenant_id) && !is_null($user->tenant_id)) {
+                if ($permission->tenant_id !== $user->tenant_id) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Cannot remove permission from different tenant from user',
+                    ], 422);
+                }
+            }
+
             $permission->removeFromUser($user);
+
+            // AUDIT: Log permission removal from user
+            $this->auditService->logPermissionRemovedFromUser($permission, $user, auth()->user());
 
             Log::info('Permission removed from user', [
                 'permission_id' => $permission->id,
@@ -684,12 +752,41 @@ class PermissionsController extends Controller
                 }
             }
 
-            // Use Laravel's sync method to replace all permissions atomically
-            $role->permissions()->sync($request->permission_ids);
+            // SECURITY: Validate tenant isolation for all permissions before assignment
+            $permissionIds = $request->permission_ids;
+            $permissions = Permission::whereIn('id', $permissionIds)->get();
+            
+            foreach ($permissions as $permission) {
+                // System permissions (tenant_id = null) can be assigned to any role
+                // Tenant-specific permissions can only be assigned to roles from the same tenant
+                if (!is_null($permission->tenant_id)) {
+                    if (is_null($role->tenant_id)) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => "Cannot assign tenant-specific permission '{$permission->name}' to global role",
+                        ], 422);
+                    }
+                    if ($permission->tenant_id !== $role->tenant_id) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => "Cannot assign permission '{$permission->name}' from different tenant to role",
+                        ], 422);
+                    }
+                }
+            }
+
+            // PERFORMANCE & SECURITY: Wrap in transaction for atomicity
+            \DB::transaction(function () use ($role, $permissionIds) {
+                // Use Laravel's sync method to replace all permissions atomically
+                $role->permissions()->sync($permissionIds);
+                
+                // Clear permission cache for all users with this role
+                $role->clearUsersPermissionCache();
+            });
 
             Log::info('Bulk permissions assigned to role', [
                 'role_id' => $role->id,
-                'permission_count' => count($request->permission_ids),
+                'permission_count' => count($permissionIds),
                 'assigned_by' => auth()->id(),
             ]);
 

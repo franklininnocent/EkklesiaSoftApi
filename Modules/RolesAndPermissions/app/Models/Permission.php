@@ -182,38 +182,50 @@ class Permission extends Model
 
     /**
      * Assign this permission to a role.
+     * 
+     * PERFORMANCE: Uses Role's givePermissionTo() which handles cache invalidation
      */
     public function assignToRole(Role $role): void
     {
-        if (!$this->roles->contains($role->id)) {
-            $this->roles()->attach($role->id);
-        }
+        // Use Role's method to ensure proper validation and cache invalidation
+        $role->givePermissionTo($this);
     }
 
     /**
      * Remove this permission from a role.
+     * 
+     * PERFORMANCE: Uses Role's revokePermissionTo() which handles cache invalidation
      */
     public function removeFromRole(Role $role): void
     {
-        $this->roles()->detach($role->id);
+        // Use Role's method to ensure proper cache invalidation
+        $role->revokePermissionTo($this);
     }
 
     /**
      * Assign this permission directly to a user.
+     * 
+     * PERFORMANCE: Clears user's permission cache after assignment
      */
     public function assignToUser(User $user): void
     {
         if (!$this->users->contains($user->id)) {
             $this->users()->attach($user->id);
+            // Clear user's permission cache
+            $user->clearPermissionsCache();
         }
     }
 
     /**
      * Remove this permission from a user.
+     * 
+     * PERFORMANCE: Clears user's permission cache after removal
      */
     public function removeFromUser(User $user): void
     {
         $this->users()->detach($user->id);
+        // Clear user's permission cache
+        $user->clearPermissionsCache();
     }
 }
 

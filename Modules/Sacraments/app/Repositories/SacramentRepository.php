@@ -11,7 +11,8 @@ class SacramentRepository
 
     public function getPaginated(array $params = []): LengthAwarePaginator
     {
-        $query = $this->model->with(['sacramentType', 'tenant']);
+        // Only eager load sacramentType - tenant is not needed for list view
+        $query = $this->model->with(['sacramentType']);
 
         if (!empty($params['tenant_id'])) {
             $query->forTenant($params['tenant_id']);
@@ -60,6 +61,9 @@ class SacramentRepository
         $perPage = $params['per_page'] ?? 20;
         $sortBy = $params['sort_by'] ?? 'date_administered';
         $sortDir = $params['sort_dir'] ?? 'desc';
+
+        // Ensure we're only getting non-deleted records
+        $query->whereNull('deleted_at');
 
         return $query->orderBy($sortBy, $sortDir)->paginate($perPage);
     }

@@ -212,6 +212,8 @@ class BCCController extends Controller
 
     /**
      * Remove the specified BCC
+     * 
+     * SECURITY: Only Tenant Admins can delete BCCs
      *
      * @param string $id
      * @return JsonResponse
@@ -219,8 +221,9 @@ class BCCController extends Controller
     public function destroy(string $id): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
-            $userId = Auth::id();
+            $user = Auth::user();
+            $tenantId = $user->tenant_id;
+            $userId = $user->id;
             
             if (!$tenantId) {
                 return response()->json([
@@ -229,12 +232,20 @@ class BCCController extends Controller
                 ], 403);
             }
 
+            // SECURITY: Only Tenant Admins can delete BCCs
+            if (!$user->isTenantAdmin() && !$user->isSuperAdmin() && !$user->isEkklesiaAdmin()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Only Tenant Administrators can delete BCCs.',
+                ], 403);
+            }
+
             $result = $this->bccService->deleteBCC($id, $tenantId, $userId);
 
             if (!$result) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'BCC not found'
+                    'message' => 'BCC not found or does not belong to your tenant'
                 ], 404);
             }
 

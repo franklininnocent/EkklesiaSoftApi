@@ -5,6 +5,7 @@ namespace Modules\Authentication\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Support\Facades\Cache;
 use Modules\RolesAndPermissions\Models\Permission;
 
 class Role extends Model
@@ -191,10 +192,14 @@ class Role extends Model
 
     /**
      * Give permission to this role.
+     * 
+     * SECURITY: Validates tenant isolation - permissions must belong to role's tenant or be system-wide
+     * 
+     * @throws \RuntimeException If permission doesn't belong to role's tenant
      */
     public function givePermissionTo(...$permissions): self
     {
-        $permissions = collect($permissions)
+        $permissionObjects = collect($permissions)
             ->flatten()
             ->map(function ($permission) {
                 if ($permission instanceof Permission) {
@@ -203,8 +208,34 @@ class Role extends Model
                 return Permission::where('name', $permission)->firstOrFail();
             })
             ->each(function ($permission) {
+                // SECURITY: Validate tenant isolation
+                // Permission must be active and not deleted
+                if ($permission->active !== 1 || $permission->deleted_at !== null) {
+                    throw new \RuntimeException("Cannot assign inactive or deleted permission: {$permission->name}");
+                }
+                
+                // Permission must be system-wide (tenant_id = null) OR belong to role's tenant
+                if (!is_null($permission->tenant_id)) {
+                    // Permission is tenant-specific
+                    if (is_null($this->tenant_id)) {
+                        // Role is global, cannot assign tenant-specific permission
+                        throw new \RuntimeException(
+                            "Cannot assign tenant-specific permission to global role. Permission: {$permission->name} (tenant_id: {$permission->tenant_id})"
+                        );
+                    }
+                    if ($permission->tenant_id !== $this->tenant_id) {
+                        // Permission belongs to different tenant
+                        throw new \RuntimeException(
+                            "Cannot assign permission from different tenant. Permission: {$permission->name} (tenant_id: {$permission->tenant_id}), Role tenant_id: {$this->tenant_id}"
+                        );
+                    }
+                }
+                
                 $this->permissions()->syncWithoutDetaching([$permission->id]);
             });
+        
+        // PERFORMANCE: Clear permission cache for all users with this role
+        $this->clearUsersPermissionCache();
 
         return $this;
     }
@@ -225,6 +256,9 @@ class Role extends Model
             ->each(function ($permission) {
                 $this->permissions()->detach($permission->id);
             });
+        
+        // PERFORMANCE: Clear permission cache for all users with this role
+        $this->clearUsersPermissionCache();
 
         return $this;
     }
@@ -257,6 +291,28 @@ class Role extends Model
     public function getPermissionNames(): array
     {
         return $this->permissions->pluck('name')->toArray();
+    }
+    
+    /**
+     * Clear permission cache for all users with this role.
+     * 
+     * PERFORMANCE: Called when role permissions are modified to ensure
+     * users get updated permissions immediately instead of waiting for cache expiry.
+     * 
+     * Note: Since cache keys include role hash, we need to clear all possible
+     * cache keys for users. The most reliable approach is to load users and
+     * call their clearPermissionsCache() method, which will regenerate the
+     * correct cache key based on current roles.
+     */
+    public function clearUsersPermissionCache(): void
+    {
+        // Get all users with this role (chunked for memory efficiency)
+        $this->users()->chunk(100, function ($users) {
+            foreach ($users as $user) {
+                // Clear cache using the user's method which knows the correct cache key
+                $user->clearPermissionsCache();
+            }
+        });
     }
 }
 

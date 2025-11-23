@@ -7,10 +7,17 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Validator;
 use Modules\Authentication\Models\Role;
+use Modules\RolesAndPermissions\Services\PermissionAuditService;
 use Illuminate\Support\Facades\Log;
 
 class RolesAndPermissionsController extends Controller
 {
+    protected PermissionAuditService $auditService;
+
+    public function __construct(PermissionAuditService $auditService)
+    {
+        $this->auditService = $auditService;
+    }
     /**
      * List all roles (with pagination and filters).
      * - SuperAdmin sees all roles (global + all tenant roles)
@@ -36,15 +43,24 @@ class RolesAndPermissionsController extends Controller
                     'user_email' => $user->email,
                 ]);
             } else if ($user->isEkklesiaAdmin() || $user->isEkklesiaManager()) {
-                // System-level Ekklesia roles see global roles + all tenant-specific roles
-                $query->where(function ($q) use ($user) {
-                    $q->whereNull('tenant_id') // Global system roles
-                      ->orWhereNotNull('tenant_id'); // All tenant roles (for management purposes)
-                });
+                // SECURITY FIX: EkklesiaAdmin/Manager should only see:
+                // 1. Global system roles (tenant_id = null)
+                // 2. Roles from their own tenant (if they have tenant_id)
+                // NOT all tenant roles across all tenants
+                if ($user->tenant_id) {
+                    $query->where(function ($q) use ($user) {
+                        $q->whereNull('tenant_id') // Global system roles
+                          ->orWhere('tenant_id', $user->tenant_id); // Only their tenant's roles
+                    });
+                } else {
+                    // EkklesiaAdmin/Manager without tenant can only see global roles
+                    $query->whereNull('tenant_id');
+                }
                 
-                Log::debug('Roles query: Ekklesia Admin/Manager - viewing global + tenant roles', [
+                Log::debug('Roles query: Ekklesia Admin/Manager - viewing global + own tenant roles only', [
                     'user_id' => $user->id,
                     'user_email' => $user->email,
+                    'tenant_id' => $user->tenant_id,
                 ]);
             } else if ($user->tenant_id) {
                 // TENANT ADMINISTRATORS AND USERS - STRICT ISOLATION
@@ -226,6 +242,9 @@ class RolesAndPermissionsController extends Controller
 
             $role = Role::create($data);
 
+            // AUDIT: Log role creation
+            $this->auditService->logRoleCreated($role, auth()->user());
+
             Log::info('Role created', ['role_id' => $role->id, 'created_by' => auth()->id()]);
 
             return response()->json([
@@ -286,6 +305,14 @@ class RolesAndPermissionsController extends Controller
                 'level' => 'sometimes|required|integer|min:1|max:10',
                 'active' => 'nullable|boolean',
             ]);
+            
+            // SECURITY: Prevent level modification for system roles (even if somehow passed validation)
+            // Level changes can break role hierarchy and permission inheritance
+            if ($request->has('level') && !$role->isCustom()) {
+                return response()->json([
+                    'message' => 'Cannot modify level of system roles',
+                ], 403);
+            }
 
             if ($validator->fails()) {
                 return response()->json([
@@ -295,6 +322,10 @@ class RolesAndPermissionsController extends Controller
             }
 
             $role->update($request->only(['name', 'description', 'level', 'active']));
+            
+            // PERFORMANCE: Clear permission cache for all users with this role
+            // This ensures users get updated permissions immediately
+            $role->clearUsersPermissionCache();
 
             Log::info('Role updated', ['role_id' => $role->id, 'updated_by' => auth()->id()]);
 
@@ -350,6 +381,12 @@ class RolesAndPermissionsController extends Controller
                 ], 422);
             }
 
+            // PERFORMANCE: Clear permission cache for all users with this role before deletion
+            $role->clearUsersPermissionCache();
+            
+            // AUDIT: Log role deletion (before deletion so we have the data)
+            $this->auditService->logRoleDeleted($role, auth()->user());
+            
             $role->delete();
 
             Log::warning('Role deleted', ['role_id' => $id, 'deleted_by' => auth()->id()]);
@@ -523,9 +560,21 @@ class RolesAndPermissionsController extends Controller
             return true;
         }
 
-        // System-level Ekklesia roles can view global roles + all tenant roles
+        // SECURITY FIX: System-level Ekklesia roles can view:
+        // 1. Global roles (tenant_id = null)
+        // 2. Roles from their own tenant (if they have tenant_id)
+        // NOT all tenant roles
         if ($user->isEkklesiaAdmin() || $user->isEkklesiaManager()) {
-            return true; // Full access to view all roles
+            // If role is global, allow access
+            if (is_null($role->tenant_id)) {
+                return true;
+            }
+            // If role belongs to user's tenant, allow access
+            if ($user->tenant_id && $role->tenant_id === $user->tenant_id) {
+                return true;
+            }
+            // Otherwise, deny access
+            return false;
         }
 
         // CRITICAL SECURITY: Tenant users can ONLY view their own tenant's roles

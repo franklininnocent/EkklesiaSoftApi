@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 use Modules\Tenants\Models\ChurchLeadership;
 
 /**
@@ -34,24 +35,36 @@ class ChurchLeadershipController extends Controller
                 ], 404);
             }
 
-            $query = ChurchLeadership::where('tenant_id', $user->tenant_id);
+            // Build cache key based on filters
+            $cacheKey = 'church_leadership_' . $user->tenant_id . '_' . md5(json_encode([
+                'active' => $request->get('active'),
+                'role' => $request->get('role'),
+                'current' => $request->get('current'),
+            ]));
 
-            // Filter by active status
-            if ($request->has('active')) {
-                $query->where('active', $request->active);
-            }
+            // Try to get from cache first (cache for 5 minutes)
+            $leaders = Cache::remember($cacheKey, 300, function () use ($user, $request) {
+                $query = ChurchLeadership::where('tenant_id', $user->tenant_id);
 
-            // Filter by role
-            if ($request->has('role')) {
-                $query->where('role', $request->role);
-            }
+                // Filter by active status
+                if ($request->has('active')) {
+                    $query->where('active', $request->active);
+                }
 
-            // Filter current leaders only
-            if ($request->has('current') && $request->current) {
-                $query->current();
-            }
+                // Filter by role
+                if ($request->has('role')) {
+                    $query->where('role', $request->role);
+                }
 
-            $leaders = $query->ordered()->get();
+                // Filter current leaders only
+                if ($request->has('current') && $request->current) {
+                    $query->current();
+                }
+
+                // Use ordered() scope which applies proper sorting at database level
+                // This is more efficient than client-side sorting
+                return $query->ordered()->get();
+            });
 
             return response()->json([
                 'success' => true,
@@ -162,6 +175,10 @@ class ChurchLeadershipController extends Controller
 
                 DB::commit();
 
+                // Clear cache for this tenant's leadership
+                Cache::forget('church_leadership_' . $user->tenant_id . '_*');
+                $this->clearLeadershipCache($user->tenant_id);
+
                 Log::info('Church leader created', [
                     'leader_id' => $leader->id,
                     'tenant_id' => $user->tenant_id,
@@ -254,6 +271,9 @@ class ChurchLeadershipController extends Controller
 
                 DB::commit();
 
+                // Clear cache for this tenant's leadership
+                $this->clearLeadershipCache($user->tenant_id);
+
                 Log::info('Church leader updated', [
                     'leader_id' => $leader->id,
                     'tenant_id' => $user->tenant_id,
@@ -323,6 +343,9 @@ class ChurchLeadershipController extends Controller
 
                 DB::commit();
 
+                // Clear cache for this tenant's leadership
+                $this->clearLeadershipCache($user->tenant_id);
+
                 Log::info('Church leader deleted', [
                     'leader_id' => $id,
                     'tenant_id' => $user->tenant_id,
@@ -348,6 +371,40 @@ class ChurchLeadershipController extends Controller
                 'message' => 'Error deleting church leader',
                 'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
             ], 500);
+        }
+    }
+
+    /**
+     * Clear all leadership cache entries for a tenant
+     * 
+     * @param int $tenantId
+     * @return void
+     */
+    private function clearLeadershipCache(int $tenantId): void
+    {
+        // Clear common cache key patterns
+        // Since we can't easily pattern-match cache keys, we'll clear the most common ones
+        $commonFilters = [
+            ['active' => null, 'role' => null, 'current' => null],
+            ['active' => 1, 'role' => null, 'current' => null],
+            ['active' => 0, 'role' => null, 'current' => null],
+            ['active' => 1, 'role' => null, 'current' => 1],
+            ['active' => null, 'role' => null, 'current' => 1],
+        ];
+        
+        foreach ($commonFilters as $filters) {
+            $cacheKey = 'church_leadership_' . $tenantId . '_' . md5(json_encode($filters));
+            Cache::forget($cacheKey);
+        }
+        
+        // Try to use cache tags if the driver supports it (Redis, Memcached)
+        try {
+            if (method_exists(Cache::getStore(), 'tags')) {
+                Cache::tags(['church_leadership', 'tenant_' . $tenantId])->flush();
+            }
+        } catch (\Exception $e) {
+            // Cache driver doesn't support tags, that's okay
+            // We've already cleared the common keys above
         }
     }
 }

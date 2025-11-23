@@ -431,6 +431,14 @@ class SacramentController extends Controller
 
             $user = $request->user();
 
+            // SECURITY: Only Tenant Admins can delete sacraments
+            if (!$user->isTenantAdmin() && !$user->isSuperAdmin() && !$user->isEkklesiaAdmin()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Only Tenant Administrators can delete sacrament records.',
+                ], 403);
+            }
+
             // Check if sacrament exists and belongs to user's tenant
             $sacrament = $this->service->getById($id);
             
@@ -452,6 +460,7 @@ class SacramentController extends Controller
 
             Log::info('Sacrament record deleted', [
                 'sacrament_id' => $id,
+                'deleted_by' => $user->id,
                 'deleted_by' => $user->id
             ]);
 
