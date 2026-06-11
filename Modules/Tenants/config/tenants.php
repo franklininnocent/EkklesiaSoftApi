@@ -81,9 +81,9 @@ return [
     |
     */
     'default_settings' => [
-        'timezone' => 'America/Chicago',
+        'timezone' => 'Asia/Kolkata',
         'language' => 'en',
-        'currency' => 'USD',
+        'currency' => 'INR',
         'date_format' => 'Y-m-d',
         'time_format' => 'H:i',
     ],

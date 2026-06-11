@@ -31,14 +31,31 @@ class BishopController extends Controller
                 'is_active',
                 'sort_by',
                 'sort_dir',
-                'per_page'
+                'per_page',
+                'page'
             ]);
+            $params['page'] = $params['page'] ?? (int) $request->input('page', 1);
 
             $bishops = $this->service->getPaginated($params);
 
+            // Convert paginator to array format expected by frontend
             return response()->json([
                 'success' => true,
-                'data' => $bishops,
+                'data' => [
+                    'data' => $bishops->items(),
+                    'current_page' => $bishops->currentPage(),
+                    'last_page' => $bishops->lastPage(),
+                    'per_page' => $bishops->perPage(),
+                    'total' => $bishops->total(),
+                    'from' => $bishops->firstItem(),
+                    'to' => $bishops->lastItem(),
+                    'first_page_url' => $bishops->url(1),
+                    'last_page_url' => $bishops->url($bishops->lastPage()),
+                    'next_page_url' => $bishops->nextPageUrl(),
+                    'prev_page_url' => $bishops->previousPageUrl(),
+                    'path' => $bishops->path(),
+                    'links' => $bishops->linkCollection()->toArray()
+                ],
                 'message' => 'Bishops retrieved successfully'
             ]);
         } catch (\Exception $e) {

@@ -70,6 +70,29 @@ Route::middleware('auth:api')->group(function () {
     Route::delete('/tenant/{id}/logo', [TenantsController::class, 'deleteLogo'])
         ->where('id', '[0-9]+');
     
+    // Subscription management
+    Route::get('/tenant/subscription/plans', [TenantsController::class, 'getSubscriptionPlans']);
+    Route::post('/tenant/{id}/subscription/upgrade', [TenantsController::class, 'upgradeSubscription'])
+        ->where('id', '[0-9]+');
+    Route::post('/tenant/{id}/subscription/renew', [TenantsController::class, 'renewSubscription'])
+        ->where('id', '[0-9]+');
+    
+    // Subscription duration options management (SuperAdmin/EkklesiaAdmin only)
+    Route::get('/subscription/duration-options', [TenantsController::class, 'getDurationOptions']);
+    Route::post('/subscription/duration-options', [TenantsController::class, 'createDurationOption']);
+    Route::put('/subscription/duration-options/{id}', [TenantsController::class, 'updateDurationOption'])
+        ->where('id', '[0-9]+');
+    Route::delete('/subscription/duration-options/{id}', [TenantsController::class, 'deleteDurationOption'])
+        ->where('id', '[0-9]+');
+    
+    // Subscription plans management (SuperAdmin/EkklesiaAdmin only)
+    Route::get('/subscription/plans', [TenantsController::class, 'getPlans']);
+    Route::post('/subscription/plans', [TenantsController::class, 'createPlan']);
+    Route::put('/subscription/plans/{id}', [TenantsController::class, 'updatePlan'])
+        ->where('id', '[0-9]+');
+    Route::delete('/subscription/plans/{id}', [TenantsController::class, 'deletePlan'])
+        ->where('id', '[0-9]+');
+    
     // Secure file access with signed URLs
     Route::post('/tenant/files/signed-url', [SecureFileController::class, 'generateSignedUrl'])
         ->name('tenants.files.signed-url');

@@ -48,8 +48,9 @@ class BishopRepository extends BaseRepository
         $query->orderBy($sortBy, $sortDir);
 
         $perPage = $params['per_page'] ?? 15;
+        $page = $params['page'] ?? null;
         
-        return $query->paginate($perPage);
+        return $query->paginate($perPage, ['*'], 'page', $page);
     }
 
     /**
@@ -105,8 +106,8 @@ class BishopRepository extends BaseRepository
     {
         return [
             'total_bishops' => $this->model->newQuery()->count(),
-            'active_bishops' => $this->model->newQuery()->active()->count(),
-            'inactive_bishops' => $this->model->newQuery()->where('status', 'inactive')->count(),
+            'active_bishops' => $this->model->newQuery()->where('status', 'active')->count(),
+            'inactive_bishops' => $this->model->newQuery()->whereIn('status', ['inactive', 'suspended', 'removed'])->count(),
             'retired_bishops' => $this->model->newQuery()->where('status', 'retired')->count(),
             'by_title' => $this->model->newQuery()
                 ->with('ecclesiasticalTitle:id,title')

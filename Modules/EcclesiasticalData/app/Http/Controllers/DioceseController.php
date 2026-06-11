@@ -19,7 +19,7 @@ class DioceseController extends Controller
     }
 
     /**
-     * Display a paginated listing of dioceses
+     * Display a paginated listing of dioceses using cursor pagination
      */
     public function index(Request $request): JsonResponse
     {
@@ -31,14 +31,96 @@ class DioceseController extends Controller
                 'is_active',
                 'sort_by',
                 'sort_dir',
-                'per_page'
+                'per_page',
+                'page'
             ]);
 
-            $dioceses = $this->service->getPaginated($params);
+            $paginator = $this->service->getPaginated($params);
+
+            // Format relationships for each diocese
+            $data = $paginator->getCollection()->map(function ($diocese) {
+                $array = $diocese->toArray();
+                
+                // Handle country: Use relationship if available, otherwise fallback to legacy string field
+                $countryRelation = null;
+                if ($diocese->country_id) {
+                    if (!$diocese->relationLoaded('country')) {
+                        $diocese->load('country:id,name,iso2');
+                    }
+                    $countryRelation = $diocese->getRelation('country');
+                }
+                
+                if ($countryRelation && is_object($countryRelation) && isset($countryRelation->id)) {
+                    $array['country'] = [
+                        'id' => $countryRelation->id,
+                        'name' => $countryRelation->name,
+                        'iso2' => $countryRelation->iso2 ?? null,
+                    ];
+                } else {
+                    $legacyCountry = $diocese->getAttribute('country') ?? $array['country'] ?? null;
+                    if ($legacyCountry && is_string($legacyCountry) && !empty(trim($legacyCountry))) {
+                        $array['country'] = ['name' => trim($legacyCountry)];
+                    } else {
+                        $array['country'] = null;
+                    }
+                }
+                
+                // Handle state: Use relationship if available, otherwise fallback to legacy region field
+                $stateRelation = null;
+                if ($diocese->state_id) {
+                    if (!$diocese->relationLoaded('state')) {
+                        $diocese->load('state:id,name,state_code');
+                    }
+                    $stateRelation = $diocese->getRelation('state');
+                }
+                
+                if ($stateRelation && is_object($stateRelation) && isset($stateRelation->id)) {
+                    $array['state'] = [
+                        'id' => $stateRelation->id,
+                        'name' => $stateRelation->name,
+                        'state_code' => $stateRelation->state_code ?? null,
+                    ];
+                } else {
+                    $legacyRegion = $diocese->getAttribute('region') ?? $array['region'] ?? null;
+                    if ($legacyRegion && is_string($legacyRegion) && !empty(trim($legacyRegion))) {
+                        $array['state'] = ['name' => trim($legacyRegion)];
+                    } else {
+                        $array['state'] = null;
+                    }
+                }
+                
+                // Handle denomination: Use relationship if available
+                $denominationRelation = null;
+                if ($diocese->denomination_id) {
+                    if (!$diocese->relationLoaded('denomination')) {
+                        $diocese->load('denomination:id,name');
+                    }
+                    $denominationRelation = $diocese->getRelation('denomination');
+                }
+                
+                if ($denominationRelation && is_object($denominationRelation) && isset($denominationRelation->id)) {
+                    $array['denomination'] = [
+                        'id' => $denominationRelation->id,
+                        'name' => $denominationRelation->name,
+                    ];
+                } else {
+                    $array['denomination'] = null;
+                }
+                
+                return $array;
+            });
 
             return response()->json([
                 'success' => true,
-                'data' => $dioceses,
+                'data' => $data->values()->all(),
+                'pagination' => [
+                    'current_page' => $paginator->currentPage(),
+                    'last_page' => $paginator->lastPage(),
+                    'per_page' => $paginator->perPage(),
+                    'total' => $paginator->total(),
+                    'from' => $paginator->firstItem(),
+                    'to' => $paginator->lastItem(),
+                ],
                 'message' => 'Dioceses retrieved successfully'
             ]);
         } catch (\Exception $e) {

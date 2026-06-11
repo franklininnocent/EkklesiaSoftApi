@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\ValidationException;
 use Modules\Family\app\Http\Requests\StoreFamilyRequest;
 use Modules\Family\app\Http\Requests\UpdateFamilyRequest;
 use Modules\Family\app\Http\Requests\StoreFamilyMemberRequest;
@@ -458,6 +459,12 @@ class FamilyController extends Controller
                 'data' => $member
             ], 201);
 
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,

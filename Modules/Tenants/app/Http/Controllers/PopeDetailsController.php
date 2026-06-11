@@ -28,6 +28,7 @@ class PopeDetailsController extends Controller
     public function show(): JsonResponse
     {
         try {
+            // getCurrent() now uses caching internally for better performance
             $popeDetails = PopeDetails::getCurrent();
 
             if (!$popeDetails) {
@@ -252,6 +253,7 @@ class PopeDetailsController extends Controller
                 $popeDetails->updated_by = $user->id;
                 $popeDetails->save();
 
+                // Cache is automatically cleared by model boot method
                 DB::commit();
 
                 // Generate full URL
@@ -335,6 +337,7 @@ class PopeDetailsController extends Controller
                     $popeDetails->pope_image_path = null;
                     $popeDetails->updated_by = $user->id;
                     $popeDetails->save();
+                    // Cache is automatically cleared by model boot method
                 }
 
                 DB::commit();

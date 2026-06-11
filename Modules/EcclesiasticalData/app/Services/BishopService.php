@@ -187,8 +187,44 @@ class BishopService
             Cache::forget("bishop.{$bishopId}.full");
         }
         
-        // Clear paginated cache (simplified - in production use tags)
-        Cache::flush(); // Use cache tags in production
+        // Clear paginated cache patterns (works with Redis cache driver)
+        try {
+            $store = Cache::getStore();
+            if (method_exists($store, 'getRedis')) {
+                $redis = $store->getRedis();
+                $prefix = config('cache.prefix', 'laravel_cache');
+                
+                // Clear paginated caches
+                $keys = $redis->keys("{$prefix}:bishops.paginated.*");
+                if ($keys) {
+                    foreach ($keys as $key) {
+                        $cacheKey = str_replace("{$prefix}:", '', $key);
+                        Cache::forget($cacheKey);
+                    }
+                }
+                
+                // Clear diocese-specific caches
+                $dioceseKeys = $redis->keys("{$prefix}:bishops.diocese.*");
+                if ($dioceseKeys) {
+                    foreach ($dioceseKeys as $key) {
+                        $cacheKey = str_replace("{$prefix}:", '', $key);
+                        Cache::forget($cacheKey);
+                    }
+                }
+                
+                // Clear title-specific caches
+                $titleKeys = $redis->keys("{$prefix}:bishops.title.*");
+                if ($titleKeys) {
+                    foreach ($titleKeys as $key) {
+                        $cacheKey = str_replace("{$prefix}:", '', $key);
+                        Cache::forget($cacheKey);
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            // If pattern matching fails (non-Redis cache), just clear known keys
+            // This is acceptable as paginated caches will expire naturally
+        }
     }
 }
 

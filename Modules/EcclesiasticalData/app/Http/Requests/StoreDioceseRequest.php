@@ -11,7 +11,15 @@ class StoreDioceseRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return $this->user()->can('create', 'Modules\EcclesiasticalData\Models\DioceseManagement');
+        $user = $this->user();
+        
+        // Only Ekklesia users (SuperAdmin, EkklesiaAdmin, EkklesiaManager, EkklesiaUser) can create dioceses
+        // This matches the EnsureUserIsEkklesia middleware, but we check here as well for FormRequest authorization
+        if (!$user) {
+            return false;
+        }
+        
+        return $user->hasEkklesiaRole();
     }
 
     /**

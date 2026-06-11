@@ -9,6 +9,7 @@ use Illuminate\Support\Str;
 
 class DioceseService
 {
+    protected const PAGINATION_CACHE_KEY_SET = 'dioceses.paginated.keys';
     protected DioceseRepository $repository;
 
     public function __construct(DioceseRepository $repository)
@@ -17,15 +18,21 @@ class DioceseService
     }
 
     /**
-     * Get paginated dioceses with filters
+     * Get paginated dioceses with filters using traditional Laravel pagination
+     * Cache TTL reduced to 2 minutes for list queries to ensure fresh data
      */
     public function getPaginated(array $params)
     {
+        // Use traditional pagination (simpler and more maintainable)
         $cacheKey = 'dioceses.paginated.' . md5(json_encode($params));
         
-        return Cache::remember($cacheKey, 300, function () use ($params) {
-            return $this->repository->getDiocesesPaginated($params);
+        $paginator = Cache::remember($cacheKey, 120, function () use ($params) {
+            return $this->repository->getDiocesesPaginatedLegacy($params);
         });
+
+        $this->rememberPaginationKey($cacheKey);
+
+        return $paginator;
     }
 
     /**
@@ -73,6 +80,13 @@ class DioceseService
         
         try {
             $diocese = $this->repository->update($id, $data);
+            
+            // Load relationships after update
+            $diocese->load([
+                'country:id,name,iso2',
+                'state:id,name,state_code',
+                'denomination:id,name'
+            ]);
             
             $this->clearCache($id);
             
@@ -179,9 +193,11 @@ class DioceseService
 
     /**
      * Clear diocese cache
+     * Simplified cache clearing - removes all pagination caches
      */
     protected function clearCache(?string $dioceseId = null): void
     {
+        // Clear statistics and archdioceses cache
         Cache::forget('dioceses.statistics');
         Cache::forget('archdioceses.list');
         
@@ -189,8 +205,68 @@ class DioceseService
             Cache::forget("diocese.{$dioceseId}.full");
         }
         
-        // Clear paginated cache (simplified - in production use tags)
-        Cache::flush(); // Use cache tags in production
+        // Clear paginated cache patterns (works with Redis cache driver)
+        try {
+            $store = Cache::getStore();
+            $this->forgetStoredPaginationKeys();
+            if (method_exists($store, 'getRedis')) {
+                $redis = $store->getRedis();
+                $prefix = config('cache.prefix', 'laravel_cache');
+                
+                // Clear all paginated caches
+                $keys = $redis->keys("{$prefix}:dioceses.paginated.*");
+                if ($keys) {
+                    foreach ($keys as $key) {
+                        $cacheKey = str_replace("{$prefix}:", '', $key);
+                        Cache::forget($cacheKey);
+                    }
+                }
+                
+                // Clear country-specific caches
+                $countryKeys = $redis->keys("{$prefix}:dioceses.country.*");
+                if ($countryKeys) {
+                    foreach ($countryKeys as $key) {
+                        $cacheKey = str_replace("{$prefix}:", '', $key);
+                        Cache::forget($cacheKey);
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            $this->forgetStoredPaginationKeys();
+            // If pattern matching fails (non-Redis cache), cache will expire naturally
+            // This is acceptable as paginated caches have short TTL (2 minutes)
+        }
+    }
+
+    /**
+     * Track paginated cache keys so they can be flushed even when pattern deletion is unavailable
+     */
+    protected function rememberPaginationKey(string $cacheKey): void
+    {
+        $keys = Cache::get(self::PAGINATION_CACHE_KEY_SET, []);
+
+        if (!in_array($cacheKey, $keys, true)) {
+            $keys[] = $cacheKey;
+
+            // Avoid unbounded growth
+            if (count($keys) > 50) {
+                $keys = array_slice($keys, -50);
+            }
+
+            Cache::forever(self::PAGINATION_CACHE_KEY_SET, $keys);
+        }
+    }
+
+    /**
+     * Remove all stored pagination cache keys
+     */
+    protected function forgetStoredPaginationKeys(): void
+    {
+        $keys = Cache::pull(self::PAGINATION_CACHE_KEY_SET, []);
+
+        foreach ($keys as $key) {
+            Cache::forget($key);
+        }
     }
 }
 

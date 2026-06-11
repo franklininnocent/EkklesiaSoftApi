@@ -9,7 +9,15 @@ class UpdateDioceseRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return $this->user()->can('update', $this->route('diocese'));
+        $user = $this->user();
+        
+        // Only Ekklesia users (SuperAdmin, EkklesiaAdmin, EkklesiaManager, EkklesiaUser) can update dioceses
+        // This matches the EnsureUserIsEkklesia middleware, but we check here as well for FormRequest authorization
+        if (!$user) {
+            return false;
+        }
+        
+        return $user->hasEkklesiaRole();
     }
 
     public function rules(): array
