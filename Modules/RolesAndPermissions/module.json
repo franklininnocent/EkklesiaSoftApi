@@ -1,0 +1,11 @@
+{
+    "name": "RolesAndPermissions",
+    "alias": "rolesandpermissions",
+    "description": "Comprehensive role and permission management for global and tenant-specific access control",
+    "keywords": ["roles", "permissions", "access control", "authorization", "RBAC"],
+    "priority": 0,
+    "providers": [
+        "Modules\\RolesAndPermissions\\Providers\\RolesAndPermissionsServiceProvider"
+    ],
+    "files": []
+}

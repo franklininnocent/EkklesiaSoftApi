@@ -1,0 +1,124 @@
+{
+    "$schema": "https://getcomposer.org/schema.json",
+    "name": "laravel/laravel",
+    "type": "project",
+    "description": "The skeleton application for the Laravel framework.",
+    "keywords": ["laravel", "framework"],
+    "license": "MIT",
+    "require": {
+        "php": "^8.3",
+        "endroid/qr-code": "^6.1",
+        "firebase/php-jwt": "*",
+        "giggsey/libphonenumber-for-php": "^9.0",
+        "laravel/framework": "^13.0",
+        "laravel/passport": "^13.0",
+        "laravel/tinker": "^3.0",
+        "nwidart/laravel-modules": "^12.0",
+        "nyholm/psr7": "^1.8",
+        "symfony/psr-http-message-bridge": "^7.3"
+    },
+    "require-dev": {
+        "fakerphp/faker": "^1.23",
+        "laravel/pail": "^1.2.2",
+        "laravel/pint": "^1.24",
+        "laravel/sail": "^1.41",
+        "mockery/mockery": "^1.6",
+        "nunomaduro/collision": "^8.6",
+        "phpunit/phpunit": "^12.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "app/",
+            "Database\\Factories\\": "database/factories/",
+            "Database\\Seeders\\": "database/seeders/",
+            "Modules\\Authentication\\": "Modules/Authentication/app/",
+            "Modules\\Authentication\\Database\\Factories\\": "Modules/Authentication/database/factories/",
+            "Modules\\Authentication\\Database\\Seeders\\": "Modules/Authentication/database/seeders/",
+            "Modules\\BCC\\": "Modules/BCC/app/",
+            "Modules\\BCC\\Database\\Factories\\": "Modules/BCC/database/factories/",
+            "Modules\\BCC\\Database\\Seeders\\": "Modules/BCC/database/seeders/",
+            "Modules\\Donations\\": "Modules/Donations/app/",
+            "Modules\\Donations\\Database\\Factories\\": "Modules/Donations/database/factories/",
+            "Modules\\Donations\\Database\\Seeders\\": "Modules/Donations/database/seeders/",
+            "Modules\\EcclesiasticalData\\": "Modules/EcclesiasticalData/app/",
+            "Modules\\EcclesiasticalData\\Database\\Factories\\": "Modules/EcclesiasticalData/database/factories/",
+            "Modules\\EcclesiasticalData\\Database\\Seeders\\": "Modules/EcclesiasticalData/database/seeders/",
+            "Modules\\Family\\": "Modules/Family/app/",
+            "Modules\\Family\\Database\\Factories\\": "Modules/Family/database/factories/",
+            "Modules\\Family\\Database\\Seeders\\": "Modules/Family/database/seeders/",
+            "Modules\\RolesAndPermissions\\": "Modules/RolesAndPermissions/app/",
+            "Modules\\RolesAndPermissions\\Database\\Factories\\": "Modules/RolesAndPermissions/database/factories/",
+            "Modules\\RolesAndPermissions\\Database\\Seeders\\": "Modules/RolesAndPermissions/database/seeders/",
+            "Modules\\Sacraments\\": "Modules/Sacraments/app/",
+            "Modules\\Sacraments\\Database\\Factories\\": "Modules/Sacraments/database/factories/",
+            "Modules\\Sacraments\\Database\\Seeders\\": "Modules/Sacraments/database/seeders/",
+            "Modules\\Tenants\\": "Modules/Tenants/app/",
+            "Modules\\Tenants\\Database\\Factories\\": "Modules/Tenants/database/factories/",
+            "Modules\\Tenants\\Database\\Seeders\\": "Modules/Tenants/database/seeders/",
+            "Modules\\": "Modules/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "setup": [
+            "composer install",
+            "@php -r \"file_exists('.env') || copy('.env.example', '.env');\"",
+            "@php artisan key:generate",
+            "@php artisan migrate --force",
+            "npm install",
+            "npm run build"
+        ],
+        "dev": [
+            "Composer\\Config::disableProcessTimeout",
+            "npx concurrently -c \"#93c5fd,#c4b5fd,#fb7185,#fdba74\" \"bash -c 'unset PHP_CLI_SERVER_WORKERS && php artisan serve'\" \"php artisan queue:listen --tries=1\" \"php artisan pail --timeout=0\" \"npm run dev\" --names=server,queue,logs,vite --kill-others"
+        ],
+        "test": [
+            "@php artisan config:clear --ansi",
+            "@php artisan test"
+        ],
+        "post-autoload-dump": [
+            "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
+            "@php artisan package:discover --ansi"
+        ],
+        "post-update-cmd": [
+            "@php artisan vendor:publish --tag=laravel-assets --ansi --force"
+        ],
+        "post-root-package-install": [
+            "@php -r \"file_exists('.env') || copy('.env.example', '.env');\""
+        ],
+        "post-create-project-cmd": [
+            "@php artisan key:generate --ansi",
+            "@php -r \"file_exists('database/database.sqlite') || touch('database/database.sqlite');\"",
+            "@php artisan migrate --graceful --ansi"
+        ],
+        "pre-package-uninstall": [
+            "Illuminate\\Foundation\\ComposerScripts::prePackageUninstall"
+        ]
+    },
+    "extra": {
+        "laravel": {
+            "dont-discover": []
+        },
+        "merge-plugin": {
+            "include": [
+                "Modules/*/composer.json"
+            ]
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "preferred-install": "dist",
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true,
+            "php-http/discovery": true,
+            "wikimedia/composer-merge-plugin": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

@@ -1,0 +1,11 @@
+{
+    "name": "BCC",
+    "alias": "bcc",
+    "description": "",
+    "keywords": [],
+    "priority": 0,
+    "providers": [
+        "Modules\\BCC\\Providers\\BCCServiceProvider"
+    ],
+    "files": []
+}

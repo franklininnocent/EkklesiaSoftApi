@@ -1,0 +1,30 @@
+{
+    "name": "nwidart/donations",
+    "description": "",
+    "authors": [
+        {
+            "name": "Nicolas Widart",
+            "email": "n.widart@gmail.com"
+        }
+    ],
+    "extra": {
+        "laravel": {
+            "providers": [],
+            "aliases": {
+
+            }
+        }
+    },
+    "autoload": {
+        "psr-4": {
+            "Modules\\Donations\\": "app/",
+            "Modules\\Donations\\Database\\Factories\\": "database/factories/",
+            "Modules\\Donations\\Database\\Seeders\\": "database/seeders/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Modules\\Donations\\Tests\\": "tests/"
+        }
+    }
+}

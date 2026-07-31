@@ -1,0 +1,239 @@
+<?php
+
+namespace Modules\Sacraments\Models;
+
+use App\Models\User;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Modules\Tenants\Models\Tenant;
+use Modules\Family\Models\Family;
+use Modules\BCC\Models\BCC;
+
+/**
+ * Sacrament Model
+ * 
+ * Represents individual sacrament administration records
+ */
+class Sacrament extends Model
+{
+    use HasFactory, SoftDeletes;
+
+    /**
+     * Create a new factory instance for the model.
+     */
+    protected static function newFactory()
+    {
+        return \Modules\Sacraments\Database\Factories\SacramentFactory::new();
+    }
+
+    protected $table = 'sacraments';
+
+    protected $fillable = [
+        'tenant_id',
+        'family_id',
+        'bcc_id',
+        'sacrament_type_id',
+        'recipient_name',
+        'date_administered',
+        'place_administered',
+        'minister_name',
+        'minister_title',
+        'certificate_number',
+        'book_number',
+        'page_number',
+        'recipient_birth_date',
+        'recipient_birth_place',
+        'recipient_gender',
+        'father_name',
+        'mother_name',
+        'godparent1_name',
+        'godparent2_name',
+        'marriage_bride_full_name',
+        'marriage_bride_father_name',
+        'marriage_bride_mother_name',
+        'marriage_bride_address',
+        'marriage_bride_church_type',
+        'marriage_bride_church_name',
+        'marriage_bride_church_address',
+        'marriage_groom_full_name',
+        'marriage_groom_father_name',
+        'marriage_groom_mother_name',
+        'marriage_groom_address',
+        'marriage_groom_church_type',
+        'marriage_groom_church_name',
+        'marriage_groom_church_address',
+        'witnesses',
+        'notes',
+        'document_path',
+        'status',
+        'conditional_date',
+        'conditional_reason',
+        'created_by',
+        'updated_by',
+    ];
+
+    protected $casts = [
+        'date_administered' => 'date',
+        'recipient_birth_date' => 'date',
+        'conditional_date' => 'date',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+        'deleted_at' => 'datetime',
+    ];
+
+    protected $hidden = [
+        'deleted_at',
+    ];
+
+    /**
+     * Get the tenant (church) this sacrament belongs to
+     */
+    public function tenant(): BelongsTo
+    {
+        return $this->belongsTo(Tenant::class);
+    }
+
+    /**
+     * Get the sacrament type
+     */
+    public function sacramentType(): BelongsTo
+    {
+        return $this->belongsTo(SacramentType::class, 'sacrament_type_id');
+    }
+
+    /**
+     * Get the family this sacrament belongs to
+     */
+    public function family(): BelongsTo
+    {
+        return $this->belongsTo(Family::class);
+    }
+
+    /**
+     * Get the BCC this sacrament belongs to
+     */
+    public function bcc(): BelongsTo
+    {
+        return $this->belongsTo(BCC::class);
+    }
+
+    /**
+     * Get the user who created this record
+     */
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    /**
+     * Get the user who last updated this record
+     */
+    public function updater(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'updated_by');
+    }
+
+    /**
+     * Scope: Filter by tenant
+     */
+    public function scopeForTenant($query, int $tenantId)
+    {
+        return $query->where('tenant_id', $tenantId);
+    }
+
+    /**
+     * Scope: Filter by sacrament type
+     */
+    public function scopeBySacramentType($query, int $typeId)
+    {
+        return $query->where('sacrament_type_id', $typeId);
+    }
+
+    /**
+     * Scope: Filter by status
+     */
+    public function scopeByStatus($query, string $status)
+    {
+        return $query->where('status', $status);
+    }
+
+    /**
+     * Scope: Search by recipient name
+     */
+    public function scopeSearchRecipient($query, string $search)
+    {
+        return $query->where('recipient_name', 'ILIKE', "%{$search}%");
+    }
+
+    /**
+     * Scope: Filter by date range
+     */
+    public function scopeDateRange($query, $startDate, $endDate)
+    {
+        return $query->whereBetween('date_administered', [$startDate, $endDate]);
+    }
+
+    /**
+     * Scope: Filter by minister name
+     */
+    public function scopeByMinisterName($query, string $ministerName)
+    {
+        return $query->where('minister_name', 'ILIKE', "%{$ministerName}%");
+    }
+
+    /**
+     * Scope: Filter by certificate number
+     */
+    public function scopeByCertificateNumber($query, string $certificateNumber)
+    {
+        return $query->where('certificate_number', 'ILIKE', "%{$certificateNumber}%");
+    }
+
+    /**
+     * Scope: Filter by book number
+     */
+    public function scopeByBookNumber($query, string $bookNumber)
+    {
+        return $query->where('book_number', 'ILIKE', "%{$bookNumber}%");
+    }
+
+    /**
+     * Scope: Filter by family ID
+     */
+    public function scopeByFamily($query, string $familyId)
+    {
+        return $query->where('family_id', $familyId);
+    }
+
+    /**
+     * Scope: Filter by BCC ID
+     */
+    public function scopeByBCC($query, string $bccId)
+    {
+        return $query->where('bcc_id', $bccId);
+    }
+
+    /**
+     * Check if sacrament is active
+     */
+    public function isActive(): bool
+    {
+        return $this->status === 'active';
+    }
+
+    /**
+     * Get full certificate reference
+     */
+    public function getCertificateReferenceAttribute(): string
+    {
+        $parts = array_filter([
+            $this->book_number ? "Book: {$this->book_number}" : null,
+            $this->page_number ? "Page: {$this->page_number}" : null,
+            $this->certificate_number ? "Cert: {$this->certificate_number}" : null,
+        ]);
+        
+        return !empty($parts) ? implode(' | ', $parts) : 'No reference';
+    }
+}

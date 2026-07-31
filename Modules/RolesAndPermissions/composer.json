@@ -1,0 +1,30 @@
+{
+    "name": "nwidart/rolesandpermissions",
+    "description": "Comprehensive role and permission management for global and tenant-specific access control",
+    "authors": [
+        {
+            "name": "Nicolas Widart",
+            "email": "n.widart@gmail.com"
+        }
+    ],
+    "extra": {
+        "laravel": {
+            "providers": [],
+            "aliases": {
+
+            }
+        }
+    },
+    "autoload": {
+        "psr-4": {
+            "Modules\\RolesAndPermissions\\": "app/",
+            "Modules\\RolesAndPermissions\\Database\\Factories\\": "database/factories/",
+            "Modules\\RolesAndPermissions\\Database\\Seeders\\": "database/seeders/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Modules\\RolesAndPermissions\\Tests\\": "tests/"
+        }
+    }
+}
