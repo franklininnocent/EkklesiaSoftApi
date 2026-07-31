@@ -1,8 +1,11 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Authentication\Http\Controllers\UserController;
 use Modules\RolesAndPermissions\Http\Controllers\RolesAndPermissionsController;
 use Modules\RolesAndPermissions\Http\Controllers\PermissionsController;
+use Modules\RolesAndPermissions\Http\Middleware\EnsureTenant;
+use Modules\RolesAndPermissions\Http\Middleware\EnsureTenantAdmin;
 use Modules\RolesAndPermissions\Http\Middleware\RateLimitPermissionChecks;
 
 /*
@@ -74,3 +77,28 @@ Route::prefix('permissions')->middleware(['auth:api', RateLimitPermissionChecks:
     Route::post('/assign-to-user', [PermissionsController::class, 'assignToUser']);
     Route::post('/remove-from-user', [PermissionsController::class, 'removeFromUser']);
 });
+
+// TENANT-SCOPED RBAC ENDPOINTS
+Route::prefix('tenant')
+    ->middleware(['auth:api', EnsureTenant::class])
+    ->group(function () {
+        // Roles
+        Route::get('/roles', [RolesAndPermissionsController::class, 'index'])->middleware('tenant.permission:roles.view');
+        Route::get('/roles/{id}', [RolesAndPermissionsController::class, 'show'])->middleware('tenant.permission:roles.view');
+        Route::post('/roles', [RolesAndPermissionsController::class, 'tenantStore'])->middleware([EnsureTenantAdmin::class, 'tenant.permission:roles.create']);
+        Route::put('/roles/{id}', [RolesAndPermissionsController::class, 'tenantUpdate'])->middleware([EnsureTenantAdmin::class, 'tenant.permission:roles.update']);
+        Route::delete('/roles/{id}', [RolesAndPermissionsController::class, 'tenantDestroy'])->middleware([EnsureTenantAdmin::class, 'tenant.permission:roles.delete']);
+        Route::post('/roles/{id}/activate', [RolesAndPermissionsController::class, 'tenantActivate'])->middleware([EnsureTenantAdmin::class, 'tenant.permission:roles.update']);
+        Route::post('/roles/{id}/deactivate', [RolesAndPermissionsController::class, 'tenantDeactivate'])->middleware([EnsureTenantAdmin::class, 'tenant.permission:roles.update']);
+
+        // Permissions
+        Route::get('/permissions', [PermissionsController::class, 'tenantIndex'])->middleware('tenant.permission:permissions.view');
+
+        // Role permissions
+        Route::get('/roles/{roleId}/permissions', [PermissionsController::class, 'getPermissionsForRole'])->middleware('tenant.permission:permissions.view');
+        Route::put('/roles/{roleId}/permissions', [PermissionsController::class, 'syncPermissionsForRole'])->middleware([EnsureTenantAdmin::class, 'tenant.permission:permissions.assign']);
+
+        // User roles
+        Route::get('/users/{id}/roles', [UserController::class, 'getRoles'])->middleware('tenant.permission:users.view');
+        Route::put('/users/{id}/roles', [UserController::class, 'syncTenantRoles'])->middleware([EnsureTenantAdmin::class, 'tenant.permission:roles.assign']);
+    });

@@ -4,10 +4,14 @@ namespace Modules\Tenants\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use Modules\Authentication\Models\User;
 use Modules\Tenants\Models\ChurchLeadership;
 
 /**
@@ -35,12 +39,12 @@ class ChurchLeadershipController extends Controller
                 ], 404);
             }
 
-            // Build cache key based on filters
-            $cacheKey = 'church_leadership_' . $user->tenant_id . '_' . md5(json_encode([
+            $filters = [
                 'active' => $request->get('active'),
                 'role' => $request->get('role'),
                 'current' => $request->get('current'),
-            ]));
+            ];
+            $cacheKey = $this->leadershipCacheKey($user->tenant_id, $filters);
 
             // Try to get from cache first (cache for 5 minutes)
             $leaders = Cache::remember($cacheKey, 300, function () use ($user, $request) {
@@ -133,8 +137,7 @@ class ChurchLeadershipController extends Controller
                 ], 404);
             }
 
-            // Check permission
-            if (!$user->is_primary_admin && !$user->hasPermissionTo('manage_tenants')) {
+            if (!$this->canManageChurchSettings($user, 'create')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Only church administrators can manage leadership.',
@@ -175,8 +178,6 @@ class ChurchLeadershipController extends Controller
 
                 DB::commit();
 
-                // Clear cache for this tenant's leadership
-                Cache::forget('church_leadership_' . $user->tenant_id . '_*');
                 $this->clearLeadershipCache($user->tenant_id);
 
                 Log::info('Church leader created', [
@@ -231,8 +232,7 @@ class ChurchLeadershipController extends Controller
                 ], 404);
             }
 
-            // Check permission
-            if (!$user->is_primary_admin && !$user->hasPermissionTo('manage_tenants')) {
+            if (!$this->canManageChurchSettings($user, 'edit')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Only church administrators can manage leadership.',
@@ -265,6 +265,11 @@ class ChurchLeadershipController extends Controller
                 $validated['active'] = 0;
             }
 
+            if (array_key_exists('photo_url', $validated) && empty($validated['photo_url'])) {
+                $this->deleteLeaderPhotoFile($leader->photo_url);
+                $validated['photo_url'] = null;
+            }
+
             DB::beginTransaction();
             try {
                 $leader->update($validated);
@@ -283,7 +288,7 @@ class ChurchLeadershipController extends Controller
                 return response()->json([
                     'success' => true,
                     'message' => 'Church leader updated successfully',
-                    'data' => $leader,
+                    'data' => $leader->fresh(),
                 ]);
             } catch (\Exception $e) {
                 DB::rollBack();
@@ -310,6 +315,102 @@ class ChurchLeadershipController extends Controller
     }
 
     /**
+     * Upload or replace a leader profile photo.
+     *
+     * @route POST /api/church-leadership/{id}/upload-photo
+     */
+    public function uploadPhoto(Request $request, $id): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+
+            if (!$user || !$user->tenant_id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User is not associated with a tenant/church',
+                ], 404);
+            }
+
+            if (!$this->canManageChurchSettings($user, 'edit')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Only church administrators can manage leadership.',
+                ], 403);
+            }
+
+            $leader = ChurchLeadership::where('tenant_id', $user->tenant_id)
+                ->findOrFail($id);
+
+            $validated = $request->validate([
+                'image' => 'required|image|mimes:jpeg,jpg,png,webp|max:2048',
+            ]);
+
+            $file = $request->file('image');
+            if (!$file instanceof UploadedFile) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid file upload',
+                ], 422);
+            }
+
+            DB::beginTransaction();
+            try {
+                $this->deleteLeaderPhotoFile($leader->photo_url);
+
+                $filename = $this->generateLeaderPhotoFilename($file, $user->tenant_id, (int) $leader->id);
+                $directory = "tenants/{$user->tenant_id}/leadership";
+                $storedPath = Storage::disk('public')->putFileAs(
+                    $directory,
+                    $file,
+                    $filename,
+                    ['visibility' => 'public']
+                );
+
+                if (!$storedPath) {
+                    DB::rollBack();
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Failed to upload leader photo',
+                    ], 500);
+                }
+
+                $leader->photo_url = $storedPath;
+                $leader->save();
+
+                DB::commit();
+                $this->clearLeadershipCache($user->tenant_id);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Leader photo uploaded successfully',
+                    'data' => $leader->fresh(),
+                ]);
+            } catch (\Exception $e) {
+                DB::rollBack();
+                throw $e;
+            }
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Error uploading church leader photo: ' . $e->getMessage(), [
+                'leader_id' => $id,
+                'user_id' => auth()->id(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error uploading leader photo',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
+        }
+    }
+
+    /**
      * Delete a church leader.
      * 
      * @route DELETE /api/church-leadership/{id}
@@ -326,8 +427,7 @@ class ChurchLeadershipController extends Controller
                 ], 404);
             }
 
-            // Check permission
-            if (!$user->is_primary_admin && !$user->hasPermissionTo('manage_tenants')) {
+            if (!$this->canManageChurchSettings($user, 'delete')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Only church administrators can manage leadership.',
@@ -339,6 +439,7 @@ class ChurchLeadershipController extends Controller
 
             DB::beginTransaction();
             try {
+                $this->deleteLeaderPhotoFile($leader->photo_url);
                 $leader->delete();
 
                 DB::commit();
@@ -375,36 +476,68 @@ class ChurchLeadershipController extends Controller
     }
 
     /**
-     * Clear all leadership cache entries for a tenant
-     * 
-     * @param int $tenantId
-     * @return void
+     * Build a versioned cache key so all filter variants invalidate together.
+     */
+    private function leadershipCacheKey(int $tenantId, array $filters): string
+    {
+        return 'church_leadership_' . $tenantId
+            . '_v' . $this->leadershipCacheVersion($tenantId)
+            . '_' . md5(json_encode($filters));
+    }
+
+    private function leadershipCacheVersion(int $tenantId): int
+    {
+        return (int) Cache::get('church_leadership_version_' . $tenantId, 0);
+    }
+
+    /**
+     * Invalidate all leadership list cache entries for a tenant.
      */
     private function clearLeadershipCache(int $tenantId): void
     {
-        // Clear common cache key patterns
-        // Since we can't easily pattern-match cache keys, we'll clear the most common ones
-        $commonFilters = [
-            ['active' => null, 'role' => null, 'current' => null],
-            ['active' => 1, 'role' => null, 'current' => null],
-            ['active' => 0, 'role' => null, 'current' => null],
-            ['active' => 1, 'role' => null, 'current' => 1],
-            ['active' => null, 'role' => null, 'current' => 1],
-        ];
-        
-        foreach ($commonFilters as $filters) {
-            $cacheKey = 'church_leadership_' . $tenantId . '_' . md5(json_encode($filters));
-            Cache::forget($cacheKey);
+        $versionKey = 'church_leadership_version_' . $tenantId;
+
+        if (Cache::has($versionKey)) {
+            Cache::increment($versionKey);
+            return;
         }
-        
-        // Try to use cache tags if the driver supports it (Redis, Memcached)
-        try {
-            if (method_exists(Cache::getStore(), 'tags')) {
-                Cache::tags(['church_leadership', 'tenant_' . $tenantId])->flush();
-            }
-        } catch (\Exception $e) {
-            // Cache driver doesn't support tags, that's okay
-            // We've already cleared the common keys above
+
+        Cache::put($versionKey, 1, 86400 * 30);
+    }
+
+    private function generateLeaderPhotoFilename(UploadedFile $file, int $tenantId, int $leaderId): string
+    {
+        $extension = strtolower($file->getClientOriginalExtension());
+        $allowedExtensions = ['jpg', 'jpeg', 'png', 'webp'];
+
+        if (!in_array($extension, $allowedExtensions, true)) {
+            $extension = 'jpg';
         }
+
+        $timestamp = now()->format('YmdHis');
+        $random = Str::random(12);
+
+        return "leader_t{$tenantId}_{$leaderId}_{$timestamp}_{$random}.{$extension}";
+    }
+
+    private function deleteLeaderPhotoFile(?string $photoPath): void
+    {
+        if (!$photoPath || str_starts_with($photoPath, 'http://') || str_starts_with($photoPath, 'https://')) {
+            return;
+        }
+
+        if (Storage::disk('public')->exists($photoPath)) {
+            Storage::disk('public')->delete($photoPath);
+        }
+    }
+
+    private function canManageChurchSettings(User $user, string $action): bool
+    {
+        if ($user->isTenantAdmin() || $user->is_primary_admin) {
+            return true;
+        }
+
+        $actionPermission = "church.settings.{$action}";
+        return $user->hasPermission($actionPermission) || $user->hasPermission('church.settings.edit');
     }
 }

@@ -46,11 +46,35 @@ class BCCRepository
         }
 
         // Sorting
-        $sortBy = $filters['sort_by'] ?? 'created_at';
-        $sortOrder = $filters['sort_order'] ?? 'desc';
+        $sortBy = $this->resolveSortColumn($filters['sort_by'] ?? 'created_at');
+        $sortOrder = strtolower($filters['sort_order'] ?? 'desc') === 'asc' ? 'asc' : 'desc';
         $query->orderBy($sortBy, $sortOrder);
 
         return $query->paginate($perPage);
+    }
+
+    /**
+     * Map API sort keys to query-safe columns.
+     */
+    private function resolveSortColumn(string $sortBy): string
+    {
+        $aliases = [
+            'current_family_count' => 'families_count',
+            'families_count' => 'families_count',
+        ];
+
+        $sortBy = $aliases[$sortBy] ?? $sortBy;
+
+        $allowed = [
+            'created_at',
+            'updated_at',
+            'name',
+            'bcc_code',
+            'status',
+            'families_count',
+        ];
+
+        return in_array($sortBy, $allowed, true) ? $sortBy : 'created_at';
     }
 
     /**

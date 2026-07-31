@@ -26,6 +26,8 @@ class Role extends Model
         'active',
         'tenant_id',
         'is_custom',
+        'role_type',
+        'role_classification',
     ];
 
     /**
@@ -38,10 +40,19 @@ class Role extends Model
         'level' => 'integer',
         'tenant_id' => 'integer',
         'is_custom' => 'boolean',
+        'role_type' => 'string',
+        'role_classification' => 'string',
         'deleted_at' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
+
+    const ROLE_TYPE_PLATFORM = 'platform';
+    const ROLE_TYPE_TENANT = 'tenant';
+    const TENANT_ADMINISTRATOR = 'Administrator';
+    const CLASSIFICATION_PROTECTED_SYSTEM = 'protected_system';
+    const CLASSIFICATION_DEFAULT_TEMPLATE = 'default_template';
+    const CLASSIFICATION_CUSTOM = 'custom';
 
     /**
      * Role level constants
@@ -61,10 +72,45 @@ class Role extends Model
 
     /**
      * Get the users for the role.
+     *
+     * Legacy relationship via users.role_id.
      */
     public function users()
     {
         return $this->hasMany(User::class, 'role_id');
+    }
+
+    /**
+     * Get users assigned through the role_user pivot.
+     */
+    public function usersViaPivot()
+    {
+        return $this->belongsToMany(User::class, 'role_user')
+            ->withTimestamps();
+    }
+
+    /**
+     * Query all users assigned to this role (legacy role_id + role_user pivot).
+     */
+    public function assignedUsersQuery()
+    {
+        return User::query()
+            ->where(function ($query) {
+                $query->where('role_id', $this->id)
+                    ->orWhereHas('roles', function ($rolesQuery) {
+                        $rolesQuery->where('roles.id', $this->id);
+                    });
+            });
+    }
+
+    /**
+     * Count all users assigned to this role (legacy role_id + role_user pivot).
+     */
+    public function assignedUsersCount(): int
+    {
+        return (int) $this->assignedUsersQuery()
+            ->distinct('users.id')
+            ->count('users.id');
     }
 
     /**
@@ -117,6 +163,22 @@ class Role extends Model
     }
 
     /**
+     * Scope a query to only include platform roles.
+     */
+    public function scopePlatform($query)
+    {
+        return $query->where('role_type', self::ROLE_TYPE_PLATFORM);
+    }
+
+    /**
+     * Scope a query to only include tenant roles.
+     */
+    public function scopeTenant($query)
+    {
+        return $query->where('role_type', self::ROLE_TYPE_TENANT);
+    }
+
+    /**
      * Scope a query to only include custom roles.
      */
     public function scopeCustom($query)
@@ -165,10 +227,67 @@ class Role extends Model
     }
 
     /**
+     * Check if role is a platform role.
+     */
+    public function isPlatformRole(): bool
+    {
+        return $this->role_type === self::ROLE_TYPE_PLATFORM;
+    }
+
+    /**
+     * Check if role is a tenant role.
+     */
+    public function isTenantRole(): bool
+    {
+        return $this->role_type === self::ROLE_TYPE_TENANT;
+    }
+
+    /**
+     * Check if role is the protected tenant administrator role.
+     */
+    public function isTenantAdministratorRole(): bool
+    {
+        return $this->isTenantRole() && $this->name === self::TENANT_ADMINISTRATOR;
+    }
+
+    /**
+     * Check if role is protected and immutable.
+     */
+    public function isProtectedSystemRole(): bool
+    {
+        if ($this->role_classification === self::CLASSIFICATION_PROTECTED_SYSTEM) {
+            return true;
+        }
+
+        // Backward compatibility for pre-classification records.
+        return $this->isTenantAdministratorRole() || $this->isGlobal();
+    }
+
+    /**
+     * Check if role is a seeded tenant template.
+     */
+    public function isDefaultTemplateRole(): bool
+    {
+        return $this->isTenantRole() && $this->role_classification === self::CLASSIFICATION_DEFAULT_TEMPLATE;
+    }
+
+    /**
+     * Check if role can be managed by tenant administrators.
+     */
+    public function isTenantManageableRole(): bool
+    {
+        return $this->isTenantRole() && !$this->isProtectedSystemRole();
+    }
+
+    /**
      * Check if role is a custom role
      */
     public function isCustom(): bool
     {
+        if (!empty($this->role_classification)) {
+            return $this->role_classification === self::CLASSIFICATION_CUSTOM;
+        }
+
         return $this->is_custom === true;
     }
 
@@ -306,8 +425,17 @@ class Role extends Model
      */
     public function clearUsersPermissionCache(): void
     {
-        // Get all users with this role (chunked for memory efficiency)
-        $this->users()->chunk(100, function ($users) {
+        $assignedUserIds = $this->assignedUsersQuery()
+            ->distinct('users.id')
+            ->pluck('users.id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        if (empty($assignedUserIds)) {
+            return;
+        }
+
+        User::whereIn('id', $assignedUserIds)->chunk(100, function ($users) {
             foreach ($users as $user) {
                 // Clear cache using the user's method which knows the correct cache key
                 $user->clearPermissionsCache();

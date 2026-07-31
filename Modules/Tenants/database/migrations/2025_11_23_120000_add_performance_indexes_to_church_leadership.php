@@ -19,14 +19,19 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('church_leadership', function (Blueprint $table) {
+            $driver = Schema::getConnection()->getDriverName();
             // Composite index for the ordered() scope query
             // This covers: active DESC, is_primary DESC, display_order ASC, appointed_date DESC
             // The index will significantly speed up the default ordering query
             try {
-                DB::statement('
-                    CREATE INDEX IF NOT EXISTS idx_church_leadership_ordering 
-                    ON church_leadership(tenant_id, active DESC, is_primary DESC, display_order ASC, appointed_date DESC NULLS LAST)
-                ');
+                if ($driver === 'pgsql') {
+                    DB::statement('
+                        CREATE INDEX IF NOT EXISTS idx_church_leadership_ordering 
+                        ON church_leadership(tenant_id, active DESC, is_primary DESC, display_order ASC, appointed_date DESC NULLS LAST)
+                    ');
+                } else {
+                    $table->index(['tenant_id', 'active', 'is_primary', 'display_order', 'appointed_date'], 'idx_church_leadership_ordering');
+                }
             } catch (\Exception $e) {
                 // Index might already exist, continue
                 \Log::warning('Index idx_church_leadership_ordering might already exist: ' . $e->getMessage());
@@ -34,10 +39,14 @@ return new class extends Migration
             
             // Index for active status filtering (if not already covered)
             try {
-                DB::statement('
-                    CREATE INDEX IF NOT EXISTS idx_church_leadership_active 
-                    ON church_leadership(tenant_id, active)
-                ');
+                if ($driver === 'pgsql') {
+                    DB::statement('
+                        CREATE INDEX IF NOT EXISTS idx_church_leadership_active 
+                        ON church_leadership(tenant_id, active)
+                    ');
+                } else {
+                    $table->index(['tenant_id', 'active'], 'idx_church_leadership_active');
+                }
             } catch (\Exception $e) {
                 \Log::warning('Index idx_church_leadership_active might already exist: ' . $e->getMessage());
             }
@@ -50,14 +59,23 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('church_leadership', function (Blueprint $table) {
+            $driver = Schema::getConnection()->getDriverName();
             try {
-                DB::statement('DROP INDEX IF EXISTS idx_church_leadership_ordering');
+                if ($driver === 'pgsql') {
+                    DB::statement('DROP INDEX IF EXISTS idx_church_leadership_ordering');
+                } else {
+                    $table->dropIndex('idx_church_leadership_ordering');
+                }
             } catch (\Exception $e) {
                 // Ignore if index doesn't exist
             }
             
             try {
-                DB::statement('DROP INDEX IF EXISTS idx_church_leadership_active');
+                if ($driver === 'pgsql') {
+                    DB::statement('DROP INDEX IF EXISTS idx_church_leadership_active');
+                } else {
+                    $table->dropIndex('idx_church_leadership_active');
+                }
             } catch (\Exception $e) {
                 // Ignore if index doesn't exist
             }

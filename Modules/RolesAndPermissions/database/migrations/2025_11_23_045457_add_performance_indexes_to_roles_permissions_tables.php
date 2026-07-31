@@ -33,8 +33,8 @@ return new class extends Migration
                      AND indexname = ?",
                     [$table, $indexName]
                 );
-            } else {
-                // MySQL
+            } elseif (in_array($driver, ['mysql', 'mariadb'], true)) {
+                // MySQL/MariaDB
                 $databaseName = $connection->getDatabaseName();
                 $result = $connection->select(
                     "SELECT COUNT(*) as count 
@@ -44,6 +44,14 @@ return new class extends Migration
                      AND index_name = ?",
                     [$databaseName, $table, $indexName]
                 );
+            } elseif ($driver === 'sqlite') {
+                $result = $connection->select(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND name = ?",
+                    [$table, $indexName]
+                );
+                return !empty($result);
+            } else {
+                return false;
             }
             return $result[0]->count > 0;
         };

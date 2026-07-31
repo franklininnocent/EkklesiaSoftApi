@@ -16,6 +16,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::getConnection()->getDriverName() !== 'pgsql') {
+            return;
+        }
+
         // Drop the old check constraint
         DB::statement('ALTER TABLE addresses DROP CONSTRAINT IF EXISTS check_addressable_type');
         
@@ -39,6 +43,10 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (Schema::getConnection()->getDriverName() !== 'pgsql') {
+            return;
+        }
+
         // Drop the new constraint
         DB::statement('ALTER TABLE addresses DROP CONSTRAINT IF EXISTS check_addressable_type');
         

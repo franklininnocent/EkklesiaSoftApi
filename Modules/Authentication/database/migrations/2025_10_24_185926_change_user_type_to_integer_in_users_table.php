@@ -16,6 +16,20 @@ return new class extends Migration
      */
     public function up(): void
     {
+        $driver = Schema::getConnection()->getDriverName();
+
+        if ($driver !== 'pgsql') {
+            // Portable fallback for sqlite/mysql test environments.
+            DB::table('users')
+                ->where('user_type', 'primary_contact')
+                ->update(['user_type' => '1']);
+
+            DB::table('users')
+                ->where('user_type', 'secondary_contact')
+                ->update(['user_type' => '2']);
+            return;
+        }
+
         // Step 1: Drop the existing check constraint
         DB::statement("
             ALTER TABLE users DROP CONSTRAINT IF EXISTS check_user_type
@@ -56,6 +70,17 @@ return new class extends Migration
      */
     public function down(): void
     {
+        $driver = Schema::getConnection()->getDriverName();
+        if ($driver !== 'pgsql') {
+            DB::table('users')
+                ->where('user_type', '1')
+                ->update(['user_type' => 'primary_contact']);
+            DB::table('users')
+                ->where('user_type', '2')
+                ->update(['user_type' => 'secondary_contact']);
+            return;
+        }
+
         // Step 1: Drop the integer check constraint
         DB::statement("
             ALTER TABLE users DROP CONSTRAINT IF EXISTS check_user_type

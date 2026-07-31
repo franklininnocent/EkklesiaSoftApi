@@ -256,6 +256,9 @@ class User extends Authenticatable
                 }
                 
                 if (is_null($permission->tenant_id)) {
+                    if (($permission->scope ?? null) === Permission::SCOPE_PLATFORM) {
+                        return false;
+                    }
                     return true; // System permissions are allowed
                 }
                 
@@ -273,7 +276,7 @@ class User extends Authenticatable
             $directPermissionsQuery->where(function ($q) {
                 $q->whereNull('tenant_id') // System permissions
                   ->orWhere('tenant_id', $this->tenant_id); // User's tenant permissions
-            });
+            })->where('scope', '!=', Permission::SCOPE_PLATFORM);
         }
         
         $directPermissions = $directPermissionsQuery->get();

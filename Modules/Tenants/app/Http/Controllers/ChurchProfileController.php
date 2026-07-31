@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\UploadedFile;
+use Modules\Authentication\Models\User;
 use Modules\Tenants\Models\ChurchProfile;
 
 /**
@@ -95,13 +96,7 @@ class ChurchProfileController extends Controller
                 ], 404);
             }
 
-            // Check if user has permission to edit church profile
-            // Allow: primary admin, tenant admin (user_type = 2), or users with manage_tenants permission
-            $hasPermission = $user->is_primary_admin || 
-                           $user->user_type == 2 || 
-                           ($user->permissions && $user->permissions->contains('name', 'manage_tenants'));
-            
-            if (!$hasPermission) {
+            if (!$this->canManageChurchSettings($user, 'edit')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Only church administrators can update church profile.',
@@ -205,12 +200,7 @@ class ChurchProfileController extends Controller
                 ], 404);
             }
 
-            // Check permission
-            $hasPermission = $user->is_primary_admin || 
-                           $user->user_type == 2 || 
-                           ($user->permissions && $user->permissions->contains('name', 'manage_tenants'));
-            
-            if (!$hasPermission) {
+            if (!$this->canManageChurchSettings($user, 'edit')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Only church administrators can upload patron image.',
@@ -319,12 +309,7 @@ class ChurchProfileController extends Controller
                 ], 404);
             }
 
-            // Check permission
-            $hasPermission = $user->is_primary_admin || 
-                           $user->user_type == 2 || 
-                           ($user->permissions && $user->permissions->contains('name', 'manage_tenants'));
-            
-            if (!$hasPermission) {
+            if (!$this->canManageChurchSettings($user, 'edit')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Only church administrators can delete patron image.',
@@ -540,5 +525,15 @@ class ChurchProfileController extends Controller
         } catch (\Exception $e) {
             Log::error('Error deleting patron image: ' . $e->getMessage());
         }
+    }
+
+    private function canManageChurchSettings(User $user, string $action): bool
+    {
+        if ($user->isTenantAdmin() || $user->is_primary_admin) {
+            return true;
+        }
+
+        $actionPermission = "church.settings.{$action}";
+        return $user->hasPermission($actionPermission) || $user->hasPermission('church.settings.edit');
     }
 }

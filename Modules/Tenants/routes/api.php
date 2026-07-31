@@ -43,7 +43,8 @@ Route::middleware('auth:api')->group(function () {
     
     // Church Profile endpoints - for tenant users to view/edit their own church
     Route::get('/tenant/church-profile', [TenantsController::class, 'getChurchProfile']);
-    Route::put('/tenant/church-profile', [TenantsController::class, 'updateChurchProfile']);
+    Route::put('/tenant/church-profile', [TenantsController::class, 'updateChurchProfile'])
+        ->middleware('tenant.permission:church.settings.edit');
     
     // Create a new tenant
     Route::post('/tenant', [TenantsController::class, 'store']);
@@ -116,11 +117,11 @@ Route::middleware('auth:api')->group(function () {
     // Church Profile Management
     Route::prefix('church-profile')->group(function () {
         Route::get('/', [ChurchProfileController::class, 'show']);
-        Route::put('/', [ChurchProfileController::class, 'update']);
+        Route::put('/', [ChurchProfileController::class, 'update'])->middleware('tenant.permission:church.settings.edit');
         
         // Patron Image Management (tenant-specific)
-        Route::post('/upload-patron-image', [ChurchProfileController::class, 'uploadPatronImage']);
-        Route::delete('/patron-image', [ChurchProfileController::class, 'deletePatronImage']);
+        Route::post('/upload-patron-image', [ChurchProfileController::class, 'uploadPatronImage'])->middleware('tenant.permission:church.settings.edit');
+        Route::delete('/patron-image', [ChurchProfileController::class, 'deletePatronImage'])->middleware('tenant.permission:church.settings.delete');
         
         // Pope Details Management (requires manage_pope_details permission)
         Route::prefix('pope')->group(function () {
@@ -134,28 +135,29 @@ Route::middleware('auth:api')->group(function () {
     // Church Leadership Management (Full CRUD)
     Route::prefix('church-leadership')->group(function () {
         Route::get('/', [ChurchLeadershipController::class, 'index']);
-        Route::post('/', [ChurchLeadershipController::class, 'store']);
+        Route::post('/', [ChurchLeadershipController::class, 'store'])->middleware('tenant.permission:church.settings.create');
         Route::get('/{id}', [ChurchLeadershipController::class, 'show'])->where('id', '[0-9]+');
-        Route::put('/{id}', [ChurchLeadershipController::class, 'update'])->where('id', '[0-9]+');
-        Route::delete('/{id}', [ChurchLeadershipController::class, 'destroy'])->where('id', '[0-9]+');
+        Route::post('/{id}/upload-photo', [ChurchLeadershipController::class, 'uploadPhoto'])->where('id', '[0-9]+')->middleware('tenant.permission:church.settings.edit');
+        Route::put('/{id}', [ChurchLeadershipController::class, 'update'])->where('id', '[0-9]+')->middleware('tenant.permission:church.settings.edit');
+        Route::delete('/{id}', [ChurchLeadershipController::class, 'destroy'])->where('id', '[0-9]+')->middleware('tenant.permission:church.settings.delete');
     });
     
     // Church Statistics Management (Full CRUD)
     Route::prefix('church-statistics')->group(function () {
         Route::get('/', [ChurchStatisticsController::class, 'index']);
-        Route::post('/', [ChurchStatisticsController::class, 'store']);
+        Route::post('/', [ChurchStatisticsController::class, 'store'])->middleware('tenant.permission:church.settings.create');
         Route::get('/{id}', [ChurchStatisticsController::class, 'show'])->where('id', '[0-9]+');
-        Route::put('/{id}', [ChurchStatisticsController::class, 'update'])->where('id', '[0-9]+');
-        Route::delete('/{id}', [ChurchStatisticsController::class, 'destroy'])->where('id', '[0-9]+');
+        Route::put('/{id}', [ChurchStatisticsController::class, 'update'])->where('id', '[0-9]+')->middleware('tenant.permission:church.settings.edit');
+        Route::delete('/{id}', [ChurchStatisticsController::class, 'destroy'])->where('id', '[0-9]+')->middleware('tenant.permission:church.settings.delete');
     });
     
     // Church Social Media Management (Full CRUD)
     Route::prefix('church-social-media')->group(function () {
         Route::get('/', [ChurchSocialMediaController::class, 'index']);
-        Route::post('/', [ChurchSocialMediaController::class, 'store']);
+        Route::post('/', [ChurchSocialMediaController::class, 'store'])->middleware('tenant.permission:church.settings.create');
         Route::get('/{id}', [ChurchSocialMediaController::class, 'show'])->where('id', '[0-9]+');
-        Route::put('/{id}', [ChurchSocialMediaController::class, 'update'])->where('id', '[0-9]+');
-        Route::delete('/{id}', [ChurchSocialMediaController::class, 'destroy'])->where('id', '[0-9]+');
+        Route::put('/{id}', [ChurchSocialMediaController::class, 'update'])->where('id', '[0-9]+')->middleware('tenant.permission:church.settings.edit');
+        Route::delete('/{id}', [ChurchSocialMediaController::class, 'destroy'])->where('id', '[0-9]+')->middleware('tenant.permission:church.settings.delete');
     });
 });
 

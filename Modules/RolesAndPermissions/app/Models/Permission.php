@@ -30,6 +30,7 @@ class Permission extends Model
         'display_name',
         'description',
         'module',
+        'scope',
         'category',
         'tenant_id',
         'is_custom',
@@ -45,10 +46,15 @@ class Permission extends Model
         'active' => 'integer',
         'tenant_id' => 'integer',
         'is_custom' => 'boolean',
+        'scope' => 'string',
         'deleted_at' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
+
+    const SCOPE_PLATFORM = 'platform';
+    const SCOPE_TENANT = 'tenant';
+    const SCOPE_BOTH = 'both';
 
     /**
      * Get the roles that have this permission.
@@ -117,6 +123,22 @@ class Permission extends Model
     }
 
     /**
+     * Scope a query to only include platform-only permissions.
+     */
+    public function scopePlatform($query)
+    {
+        return $query->where('scope', self::SCOPE_PLATFORM);
+    }
+
+    /**
+     * Scope a query to only include permissions assignable in tenant context.
+     */
+    public function scopeTenantAssignable($query)
+    {
+        return $query->whereIn('scope', [self::SCOPE_TENANT, self::SCOPE_BOTH]);
+    }
+
+    /**
      * Scope a query by category.
      */
     public function scopeByCategory($query, $category)
@@ -162,6 +184,14 @@ class Permission extends Model
     public function isCustom(): bool
     {
         return $this->is_custom === true;
+    }
+
+    /**
+     * Check if permission can be assigned in tenant context.
+     */
+    public function isTenantAssignable(): bool
+    {
+        return in_array($this->scope, [self::SCOPE_TENANT, self::SCOPE_BOTH], true);
     }
 
     /**

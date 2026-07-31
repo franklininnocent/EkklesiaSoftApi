@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Modules\Authentication\Models\User;
 use Modules\Tenants\Models\ChurchStatistic;
 
 /**
@@ -128,8 +129,7 @@ class ChurchStatisticsController extends Controller
                 ], 404);
             }
 
-            // Check permission
-            if (!$user->is_primary_admin && !$user->hasPermissionTo('manage_tenants')) {
+            if (!$this->canManageChurchSettings($user, 'create')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Only church administrators can manage statistics.',
@@ -224,8 +224,7 @@ class ChurchStatisticsController extends Controller
                 ], 404);
             }
 
-            // Check permission
-            if (!$user->is_primary_admin && !$user->hasPermissionTo('manage_tenants')) {
+            if (!$this->canManageChurchSettings($user, 'edit')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Only church administrators can manage statistics.',
@@ -327,8 +326,7 @@ class ChurchStatisticsController extends Controller
                 ], 404);
             }
 
-            // Check permission
-            if (!$user->is_primary_admin && !$user->hasPermissionTo('manage_tenants')) {
+            if (!$this->canManageChurchSettings($user, 'delete')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Only church administrators can manage statistics.',
@@ -372,5 +370,14 @@ class ChurchStatisticsController extends Controller
                 'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
             ], 500);
         }
+    }
+    private function canManageChurchSettings(User $user, string $action): bool
+    {
+        if ($user->isTenantAdmin() || $user->is_primary_admin) {
+            return true;
+        }
+
+        $actionPermission = "church.settings.{$action}";
+        return $user->hasPermission($actionPermission) || $user->hasPermission('church.settings.edit');
     }
 }

@@ -47,6 +47,10 @@ class AssignPermissionsToAdministrators extends Command
             $systemPermissions = Permission::where('active', 1)
                 ->where('is_custom', false)
                 ->whereNull('tenant_id')
+                ->where(function ($query) {
+                    $query->whereNull('scope')
+                        ->orWhereIn('scope', [Permission::SCOPE_TENANT, Permission::SCOPE_BOTH]);
+                })
                 ->get();
 
             if ($systemPermissions->isEmpty()) {
@@ -101,6 +105,7 @@ class AssignPermissionsToAdministrators extends Command
                         // Assign all permissions
                         $permissionIds = $systemPermissions->pluck('id')->toArray();
                         $role->permissions()->sync($permissionIds);
+                        $role->clearUsersPermissionCache();
                         
                         $this->line("  Status: <fg=green>✅ Successfully assigned {$systemPermissions->count()} permissions</>");
                         

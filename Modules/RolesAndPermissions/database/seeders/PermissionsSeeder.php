@@ -16,6 +16,7 @@ class PermissionsSeeder extends Seeder
         $permissions = $this->getStandardPermissions();
 
         foreach ($permissions as $permission) {
+            $permission['scope'] = $this->resolveScope($permission['module']);
             Permission::updateOrCreate(
                 ['name' => $permission['name']], // Check if permission exists by name
                 $permission
@@ -157,6 +158,13 @@ class PermissionsSeeder extends Seeder
         ];
 
         return $categories[$action] ?? 'Other';
+    }
+
+    private function resolveScope(string $module): string
+    {
+        return in_array($module, ['Tenants', 'Pope'], true)
+            ? Permission::SCOPE_PLATFORM
+            : Permission::SCOPE_TENANT;
     }
 }
 

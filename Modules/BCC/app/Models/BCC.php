@@ -230,7 +230,14 @@ class BCC extends Model
      */
     public function getCurrentFamilyCountAttribute(): int
     {
-        // Use eager loaded count if available, otherwise query
+        if (array_key_exists('families_count', $this->attributes)) {
+            return (int) $this->attributes['families_count'];
+        }
+
+        if ($this->relationLoaded('families')) {
+            return $this->families->count();
+        }
+
         return $this->families()->count();
     }
 

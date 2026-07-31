@@ -13,14 +13,19 @@ use Modules\Authentication\Http\Controllers\UserController;
 
 // Authentication routes
 Route::prefix('auth')->group(function () {
+    // CORS preflight support for auth endpoints.
+    Route::options('{any}', function () {
+        return response()->noContent();
+    })->where('any', '.*');
+
     // Public routes (no authentication required)
     Route::post('register', [AuthenticationController::class, 'register']);
     Route::post('login', [AuthenticationController::class, 'login']);
     Route::post('refresh', [AuthenticationController::class, 'refresh']); // Refresh token doesn't need auth
+    Route::post('logout', [AuthenticationController::class, 'logout']);
 
     // Protected routes (require authentication)
     Route::middleware('auth:api')->group(function () {
-        Route::post('logout', [AuthenticationController::class, 'logout']);
         Route::get('user', [AuthenticationController::class, 'user']);
         Route::get('get-user', [AuthenticationController::class, 'getUser']);
     });

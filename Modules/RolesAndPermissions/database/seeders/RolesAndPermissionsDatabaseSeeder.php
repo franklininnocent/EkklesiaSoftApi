@@ -19,6 +19,7 @@ class RolesAndPermissionsDatabaseSeeder extends Seeder
         // Seed permissions
         $this->call([
             PermissionsTableSeeder::class,
+            TenantPermissionCatalogSeeder::class,
         ]);
 
         $this->command->line('');

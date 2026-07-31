@@ -103,7 +103,7 @@ class TenantsTableSeeder extends Seeder
                         'language' => 'en',
                         'currency' => 'USD',
                     ]),
-                    'features' => json_encode(['events']),
+                    'features' => json_encode(['donations', 'events']),
                     'primary_color' => '#3B82F6',
                     'secondary_color' => '#10B981',
                     'created_at' => $now,

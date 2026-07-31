@@ -14,6 +14,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (config('database.default') !== 'pgsql') {
+            return;
+        }
+
         // Drop the check constraint entirely
         DB::statement('ALTER TABLE addresses DROP CONSTRAINT IF EXISTS check_addressable_type');
     }
@@ -23,6 +27,10 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (config('database.default') !== 'pgsql') {
+            return;
+        }
+
         // Restore a basic constraint (allowing both short and long names)
         // This is a best-effort restoration - adjust based on your needs
         DB::statement("

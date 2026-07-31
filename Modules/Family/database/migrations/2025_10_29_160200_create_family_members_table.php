@@ -11,7 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('family_members', function (Blueprint $table) {
+        $driver = Schema::getConnection()->getDriverName();
+        $supportsFullText = in_array($driver, ['mysql', 'mariadb', 'pgsql'], true);
+
+        Schema::create('family_members', function (Blueprint $table) use ($supportsFullText) {
             // Primary Key
             $table->uuid('id')->primary();
             
@@ -81,7 +84,11 @@ return new class extends Migration
             $table->index('date_of_birth');
             $table->index('relationship_to_head');
             $table->index('is_primary_contact');
-            $table->fullText(['first_name', 'middle_name', 'last_name']); // Full-text search
+            if ($supportsFullText) {
+                $table->fullText(['first_name', 'middle_name', 'last_name']); // Full-text search
+            } else {
+                $table->index(['first_name', 'middle_name', 'last_name'], 'family_members_name_index');
+            }
         });
     }
 

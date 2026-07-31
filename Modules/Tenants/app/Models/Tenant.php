@@ -48,6 +48,10 @@ class Tenant extends Model
         'slogan',
         'slug',
         'domain',
+        'parent_tenant_id',
+        'tenant_tier',
+        'hierarchy_path',
+        'currency_code',
         'plan',
         'max_users',
         'max_storage_mb',
@@ -207,6 +211,16 @@ class Tenant extends Model
         return $this->hasMany(ChurchStatistic::class);
     }
 
+    public function parentTenant(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'parent_tenant_id');
+    }
+
+    public function childTenants(): HasMany
+    {
+        return $this->hasMany(self::class, 'parent_tenant_id');
+    }
+
     /**
      * Get the social media accounts for this tenant.
      */
@@ -349,11 +363,26 @@ class Tenant extends Model
      */
     public function hasFeature(string $feature): bool
     {
-        if (is_null($this->features)) {
+        if (is_null($this->features) || !is_array($this->features) || count($this->features) === 0) {
             return false;
         }
 
-        return in_array($feature, $this->features);
+        return in_array($feature, $this->features, true);
+    }
+
+    /**
+     * Whether the Stewardship & Donations module is enabled for this tenant.
+     */
+    public function supportsDonations(): bool
+    {
+        $features = $this->features;
+
+        // Backward-compatible default: allow when feature list is not configured.
+        if (!is_array($features) || count($features) === 0) {
+            return true;
+        }
+
+        return in_array('donations', $features, true);
     }
 
     /**
@@ -452,6 +481,28 @@ class Tenant extends Model
             if (empty($tenant->slug)) {
                 $tenant->slug = \Str::slug($tenant->name);
             }
+            if (empty($tenant->tenant_tier)) {
+                $tenant->tenant_tier = 'parish';
+            }
+            if (empty($tenant->currency_code)) {
+                $tenant->currency_code = 'INR';
+            }
+        });
+
+        static::created(function (Tenant $tenant): void {
+            if (!empty($tenant->hierarchy_path)) {
+                return;
+            }
+
+            if ($tenant->parent_tenant_id) {
+                $parent = self::query()->find($tenant->parent_tenant_id);
+                $prefix = $parent?->hierarchy_path ?: (string) $tenant->parent_tenant_id;
+                $path = $prefix . '.' . $tenant->id;
+            } else {
+                $path = (string) $tenant->id;
+            }
+
+            $tenant->updateQuietly(['hierarchy_path' => $path]);
         });
 
         // Set created_by and updated_by

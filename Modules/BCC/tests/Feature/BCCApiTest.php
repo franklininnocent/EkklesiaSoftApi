@@ -1114,5 +1114,35 @@ class BCCApiTest extends TestCase
         // Should be sorted alphabetically
         $this->assertGreaterThanOrEqual(2, count($data));
     }
+
+    /** @test */
+    public function it_can_sort_bccs_by_current_family_count_descending()
+    {
+        $bccWithFamilies = BCC::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+        ]);
+
+        BCC::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+        ]);
+
+        \Modules\Family\Models\Family::factory()->count(2)->create([
+            'tenant_id' => $this->tenant->id,
+            'bcc_id' => $bccWithFamilies->id,
+        ]);
+
+        $response = $this->getJson('/api/bccs?status=active&sort_by=current_family_count&sort_order=desc&per_page=50');
+
+        $response->assertStatus(200)
+            ->assertJson(['success' => true]);
+
+        $data = $response->json('data');
+        $targetIndex = collect($data)->search(fn ($item) => $item['id'] === $bccWithFamilies->id);
+
+        $this->assertNotFalse($targetIndex);
+        $this->assertSame(2, $data[$targetIndex]['current_family_count']);
+    }
 }
 

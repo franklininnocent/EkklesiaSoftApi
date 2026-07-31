@@ -28,7 +28,17 @@ class FamilyRepository
             $query->where(function ($q) use ($search) {
                 $q->where('family_name', 'ILIKE', "%{$search}%")
                     ->orWhere('family_code', 'ILIKE', "%{$search}%")
-                    ->orWhere('head_of_family', 'ILIKE', "%{$search}%");
+                    ->orWhere('head_of_family', 'ILIKE', "%{$search}%")
+                    ->orWhereHas('members', function ($memberQuery) use ($search) {
+                        $memberQuery->where(function ($mq) use ($search) {
+                            $mq->whereRaw(
+                                "CONCAT(first_name, ' ', COALESCE(middle_name, ''), ' ', last_name) ILIKE ?",
+                                ["%{$search}%"]
+                            )
+                                ->orWhere('phone', 'ILIKE', "%{$search}%")
+                                ->orWhere('email', 'ILIKE', "%{$search}%");
+                        });
+                    });
             });
         }
 

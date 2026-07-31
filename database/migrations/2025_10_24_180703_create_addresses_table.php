@@ -77,27 +77,35 @@ return new class extends Migration
             $table->index(['active', 'deleted_at'], 'idx_addresses_active');
         });
         
-        // Add check constraint for addressable_type (PostgreSQL)
-        DB::statement("
-            ALTER TABLE addresses 
-            ADD CONSTRAINT check_addressable_type 
-            CHECK (addressable_type IN ('User', 'Tenant', 'Organization'))
-        ");
-        
-        // Add partial unique constraint for default addresses (only one default per entity/type)
-        DB::statement("
-            CREATE UNIQUE INDEX idx_addresses_unique_default 
-            ON addresses (addressable_id, addressable_type, address_type) 
-            WHERE is_default = true AND deleted_at IS NULL
-        ");
-        
-        // Add comment to table
-        DB::statement("COMMENT ON TABLE addresses IS 'Polymorphic addresses table for Users, Tenants, and other entities'");
-        
-        // Add comments to key columns
-        DB::statement("COMMENT ON COLUMN addresses.addressable_id IS 'ID of the related entity (user_id, tenant_id, etc.)'");
-        DB::statement("COMMENT ON COLUMN addresses.addressable_type IS 'Type of entity this address belongs to'");
-        DB::statement("COMMENT ON COLUMN addresses.address_type IS 'Type of address: primary, secondary, billing, shipping, etc.'");
+        $driver = Schema::getConnection()->getDriverName();
+
+        // PostgreSQL-specific constraints and comments.
+        if ($driver === 'pgsql') {
+            DB::statement("
+                ALTER TABLE addresses 
+                ADD CONSTRAINT check_addressable_type 
+                CHECK (addressable_type IN ('User', 'Tenant', 'Organization'))
+            ");
+
+            DB::statement("
+                CREATE UNIQUE INDEX idx_addresses_unique_default 
+                ON addresses (addressable_id, addressable_type, address_type) 
+                WHERE is_default = true AND deleted_at IS NULL
+            ");
+
+            DB::statement("COMMENT ON TABLE addresses IS 'Polymorphic addresses table for Users, Tenants, and other entities'");
+            DB::statement("COMMENT ON COLUMN addresses.addressable_id IS 'ID of the related entity (user_id, tenant_id, etc.)'");
+            DB::statement("COMMENT ON COLUMN addresses.addressable_type IS 'Type of entity this address belongs to'");
+            DB::statement("COMMENT ON COLUMN addresses.address_type IS 'Type of address: primary, secondary, billing, shipping, etc.'");
+        } else {
+            // Generic unique index fallback for non-PostgreSQL test databases.
+            Schema::table('addresses', function (Blueprint $table) {
+                $table->unique(
+                    ['addressable_id', 'addressable_type', 'address_type', 'is_default'],
+                    'idx_addresses_unique_default'
+                );
+            });
+        }
     }
 
     /**

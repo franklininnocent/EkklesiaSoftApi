@@ -4,6 +4,7 @@ namespace Modules\RolesAndPermissions\Services;
 
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Modules\Authentication\Models\User;
 use Modules\Authentication\Models\Role;
 use Modules\RolesAndPermissions\Models\Permission;
@@ -230,19 +231,37 @@ class PermissionAuditService
 
         // Store in database (migration already created and executed)
         try {
-            DB::table('permission_audit_logs')->insert([
-                'action' => $data['action'],
-                'permission_id' => $data['permission_id'] ?? null,
-                'role_id' => $data['role_id'] ?? null,
-                'user_id' => $data['user_id'] ?? null,
-                'assigned_by' => $data['assigned_by'] ?? $data['created_by'] ?? $data['updated_by'] ?? $data['deleted_by'] ?? null,
-                'tenant_id' => $data['tenant_id'] ?? null,
-                'metadata' => json_encode($data),
-                'ip_address' => request()->ip(),
-                'user_agent' => request()->userAgent(),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
+            // Use a nested transaction so audit insert failures don't poison
+            // the parent transaction in PostgreSQL-backed test runs.
+            DB::transaction(function () use ($data) {
+                $permissionId = isset($data['permission_id']) && Str::isUuid((string) $data['permission_id'])
+                    ? (string) $data['permission_id']
+                    : null;
+                $roleId = isset($data['role_id']) && Str::isUuid((string) $data['role_id'])
+                    ? (string) $data['role_id']
+                    : null;
+                $userId = isset($data['user_id']) && Str::isUuid((string) $data['user_id'])
+                    ? (string) $data['user_id']
+                    : null;
+                $assignedBy = $data['assigned_by'] ?? $data['created_by'] ?? $data['updated_by'] ?? $data['deleted_by'] ?? null;
+                $assignedById = !is_null($assignedBy) && Str::isUuid((string) $assignedBy)
+                    ? (string) $assignedBy
+                    : null;
+
+                DB::table('permission_audit_logs')->insert([
+                    'action' => $data['action'],
+                    'permission_id' => $permissionId,
+                    'role_id' => $roleId,
+                    'user_id' => $userId,
+                    'assigned_by' => $assignedById,
+                    'tenant_id' => $data['tenant_id'] ?? null,
+                    'metadata' => json_encode($data),
+                    'ip_address' => request()->ip(),
+                    'user_agent' => request()->userAgent(),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            });
         } catch (\Exception $e) {
             // If table doesn't exist or error occurs, just log to file
             Log::warning('Could not write to audit_logs table: ' . $e->getMessage());

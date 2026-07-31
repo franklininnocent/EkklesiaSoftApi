@@ -25,7 +25,7 @@ abstract class TestCase extends BaseTestCase
     /**
      * Authenticate as a user for API testing
      */
-    protected function actingAsUser(User $user = null): self
+    protected function actingAsUser(?User $user = null): self
     {
         $user = $user ?? User::factory()->create();
         Passport::actingAs($user, ['*']);
@@ -68,7 +68,7 @@ abstract class TestCase extends BaseTestCase
     /**
      * Get authentication headers with bearer token
      */
-    protected function getAuthHeaders(User $user = null): array
+    protected function getAuthHeaders(?User $user = null): array
     {
         if ($user) {
             Passport::actingAs($user, ['*']);

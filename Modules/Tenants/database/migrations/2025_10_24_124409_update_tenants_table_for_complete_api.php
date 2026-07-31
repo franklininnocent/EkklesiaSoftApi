@@ -61,8 +61,24 @@ return new class extends Migration
             }
         });
         
-        // Add index for primary user email if it doesn't exist
-        if (!DB::select("SELECT 1 FROM pg_indexes WHERE indexname = 'tenants_primary_user_email_index'")) {
+        // Add index for primary user email.
+        // Use DB-aware index existence checks so tests can run on sqlite.
+        $connection = Schema::getConnection();
+        $driver = $connection->getDriverName();
+        $indexExists = false;
+
+        if ($driver === 'pgsql') {
+            $indexExists = !empty(DB::select(
+                "SELECT 1 FROM pg_indexes WHERE indexname = 'tenants_primary_user_email_index'"
+            ));
+        } elseif (in_array($driver, ['mysql', 'mariadb'], true)) {
+            $indexExists = !empty(DB::select(
+                "SELECT 1 FROM information_schema.statistics WHERE table_schema = ? AND table_name = ? AND index_name = ?",
+                [$connection->getDatabaseName(), 'tenants', 'tenants_primary_user_email_index']
+            ));
+        }
+
+        if (!$indexExists) {
             Schema::table('tenants', function (Blueprint $table) {
                 $table->index('primary_user_email');
             });

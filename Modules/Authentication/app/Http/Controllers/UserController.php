@@ -10,8 +10,10 @@ use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\Controller;
 use Modules\Authentication\Models\User;
 use Modules\Authentication\Models\Role;
+use Modules\Authentication\Http\Requests\SyncTenantUserRolesRequest;
 use Modules\Authentication\Http\Requests\StoreUserRequest;
 use Modules\Authentication\Http\Requests\UpdateUserRequest;
+use Modules\RolesAndPermissions\Services\TenantRoleAssignmentService;
 
 /**
  * UserController - Tenant User Management
@@ -31,6 +33,10 @@ use Modules\Authentication\Http\Requests\UpdateUserRequest;
  */
 class UserController extends Controller
 {
+    public function __construct(private TenantRoleAssignmentService $tenantRoleAssignmentService)
+    {
+    }
+
     /**
      * Display a listing of users for the authenticated user's tenant.
      *
@@ -284,7 +290,8 @@ class UserController extends Controller
             $invalidRoles = Role::whereIn('id', $roleIds)
                 ->where(function ($query) use ($authUser) {
                     $query->where('tenant_id', '!=', $authUser->tenant_id)
-                        ->whereNotNull('tenant_id'); // Allow global/system roles
+                        ->whereNotNull('tenant_id')
+                        ->orWhere('role_type', Role::ROLE_TYPE_PLATFORM);
                 })
                 ->exists();
 
@@ -632,6 +639,58 @@ class UserController extends Controller
     }
 
     /**
+     * Get roles for a specific user inside current tenant scope.
+     */
+    public function getRoles(Request $request, int $id): JsonResponse
+    {
+        try {
+            $authUser = $request->user();
+            $canView = $authUser->hasPermission('users.view') ||
+                $authUser->isTenantAdmin() ||
+                $authUser->isSuperAdmin() ||
+                $authUser->isEkklesiaAdmin();
+
+            if (!$canView) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. You do not have permission to view user roles.',
+                ], 403);
+            }
+
+            $user = $this->tenantRoleAssignmentService->getUserRoles($authUser, $id);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'user_id' => $user->id,
+                    'roles' => $user->roles,
+                ],
+            ]);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User not found or does not belong to your tenant.',
+            ], 404);
+        } catch (\RuntimeException $e) {
+            $status = in_array($e->getCode(), [403, 404, 422], true) ? $e->getCode() : 422;
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $status);
+        } catch (\Exception $e) {
+            Log::error('Error fetching user roles: ' . $e->getMessage(), [
+                'user_id' => $id,
+                'exception' => $e,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An error occurred while fetching user roles.',
+            ], 500);
+        }
+    }
+
+    /**
      * Assign roles to a user.
      *
      * @param Request $request
@@ -640,8 +699,6 @@ class UserController extends Controller
      */
     public function assignRoles(Request $request, int $id): JsonResponse
     {
-        DB::beginTransaction();
-        
         try {
             $authUser = $request->user();
             
@@ -664,34 +721,34 @@ class UserController extends Controller
                 'role_ids.*' => 'required|integer|exists:roles,id',
             ]);
 
-            // Find user with tenant isolation
-            $user = User::where('tenant_id', $authUser->tenant_id)->findOrFail($id);
-
             $roleIds = $request->input('role_ids');
+            $targetUser = User::findOrFail($id);
 
-            // Validate that roles belong to the same tenant or are global
-            $invalidRoles = Role::whereIn('id', $roleIds)
-                ->where(function ($query) use ($authUser) {
-                    $query->where('tenant_id', '!=', $authUser->tenant_id)
-                        ->whereNotNull('tenant_id');
-                })
-                ->exists();
+            if ($authUser->tenant_id) {
+                // Tenant-context assignments must use strict tenant guardrails.
+                $user = $this->tenantRoleAssignmentService->syncUserRoles($authUser, $targetUser, $roleIds);
+            } else {
+                // Platform-context fallback for super/ekklesia operators.
+                $roles = Role::whereIn('id', $roleIds)
+                    ->where('active', 1)
+                    ->whereNull('deleted_at')
+                    ->get();
 
-            if ($invalidRoles) {
-                DB::rollBack();
-                return response()->json([
-                    'success' => false,
-                    'message' => 'One or more selected roles do not belong to your tenant.',
-                ], 422);
+                if ($roles->count() !== count($roleIds)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'One or more selected roles are invalid.',
+                    ], 422);
+                }
+
+                $targetUser->syncRoles($roleIds);
+                $primaryRoleId = $roles->sortBy('level')->pluck('id')->first();
+                if ($primaryRoleId) {
+                    $targetUser->role_id = $primaryRoleId;
+                    $targetUser->save();
+                }
+                $user = $targetUser->fresh('roles');
             }
-
-            // Sync roles (replace existing roles)
-            $user->syncRoles($roleIds);
-
-            // Load relationships for response
-            $user->load(['roles']);
-
-            DB::commit();
 
             Log::info('Roles assigned to user', [
                 'assigned_by' => $authUser->id,
@@ -709,14 +766,17 @@ class UserController extends Controller
             ]);
 
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            DB::rollBack();
             return response()->json([
                 'success' => false,
-                'message' => 'User not found or does not belong to your tenant.',
+                'message' => 'User not found.',
             ], 404);
+        } catch (\RuntimeException $e) {
+            $status = in_array($e->getCode(), [403, 404, 422], true) ? $e->getCode() : 422;
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $status);
         } catch (\Exception $e) {
-            DB::rollBack();
-            
             Log::error('Error assigning roles: ' . $e->getMessage(), [
                 'user_id' => $id,
                 'exception' => $e,
@@ -725,6 +785,49 @@ class UserController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'An error occurred while assigning roles.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Tenant endpoint: sync roles for a tenant user with guardrails.
+     */
+    public function syncTenantRoles(SyncTenantUserRolesRequest $request, int $id): JsonResponse
+    {
+        try {
+            $authUser = $request->user();
+            $roleIds = $request->validated()['role_ids'];
+            $user = User::findOrFail($id);
+            $user = $this->tenantRoleAssignmentService->syncUserRoles($authUser, $user, $roleIds);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'User roles updated successfully.',
+                'data' => [
+                    'user_id' => $user->id,
+                    'roles' => $user->roles,
+                ],
+            ]);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User not found or does not belong to your tenant.',
+            ], 404);
+        } catch (\RuntimeException $e) {
+            $status = in_array($e->getCode(), [403, 404, 422], true) ? $e->getCode() : 422;
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $status);
+        } catch (\Exception $e) {
+            Log::error('Error syncing tenant user roles: ' . $e->getMessage(), [
+                'user_id' => $id,
+                'exception' => $e,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An error occurred while updating user roles.',
             ], 500);
         }
     }

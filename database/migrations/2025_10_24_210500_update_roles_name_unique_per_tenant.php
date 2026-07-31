@@ -20,13 +20,22 @@ return new class extends Migration
             $table->dropUnique('roles_name_unique');
         });
 
+        $driver = Schema::getConnection()->getDriverName();
+
         // Add a composite unique constraint on (name, tenant_id)
-        // This allows different tenants to have roles with the same name
-        // For global roles (tenant_id = NULL), we use COALESCE to treat NULL as 0
-        DB::statement('
-            CREATE UNIQUE INDEX roles_name_tenant_id_unique 
-            ON roles (name, COALESCE(tenant_id, 0))
-        ');
+        // PostgreSQL uses COALESCE to enforce uniqueness for NULL tenant_id.
+        if ($driver === 'pgsql') {
+            DB::statement('
+                CREATE UNIQUE INDEX roles_name_tenant_id_unique 
+                ON roles (name, COALESCE(tenant_id, 0))
+            ');
+            return;
+        }
+
+        // sqlite/mysql fallback.
+        Schema::table('roles', function (Blueprint $table) {
+            $table->unique(['name', 'tenant_id'], 'roles_name_tenant_id_unique');
+        });
     }
 
     /**

@@ -6,17 +6,23 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use Modules\Authentication\Models\Role;
+use Modules\RolesAndPermissions\Http\Requests\StoreTenantRoleRequest;
+use Modules\RolesAndPermissions\Http\Requests\UpdateTenantRoleRequest;
 use Modules\RolesAndPermissions\Services\PermissionAuditService;
+use Modules\RolesAndPermissions\Services\TenantRoleService;
 use Illuminate\Support\Facades\Log;
 
 class RolesAndPermissionsController extends Controller
 {
     protected PermissionAuditService $auditService;
+    protected TenantRoleService $tenantRoleService;
 
-    public function __construct(PermissionAuditService $auditService)
+    public function __construct(PermissionAuditService $auditService, TenantRoleService $tenantRoleService)
     {
         $this->auditService = $auditService;
+        $this->tenantRoleService = $tenantRoleService;
     }
     /**
      * List all roles (with pagination and filters).
@@ -31,6 +37,7 @@ class RolesAndPermissionsController extends Controller
             }
 
             $user = auth()->user();
+
             $query = Role::query();
 
             // Apply role-based filtering
@@ -117,9 +124,14 @@ class RolesAndPermissionsController extends Controller
             // Handle 'all' case to return all records without pagination
             if ($perPage === 'all') {
                 $roles = $query->with('tenant')
+                    ->withCount(['permissions'])
                     ->orderBy('level')
                     ->orderBy('created_at', 'desc')
                     ->get();
+
+                $roles->each(function (Role $role): void {
+                    $role->users_count = $role->assignedUsersCount();
+                });
                 
                 return response()->json([
                     'success' => true,
@@ -129,9 +141,15 @@ class RolesAndPermissionsController extends Controller
             }
             
             $roles = $query->with('tenant')
+                ->withCount(['permissions'])
                 ->orderBy('level')
                 ->orderBy('created_at', 'desc')
                 ->paginate($perPage);
+
+            $roles->getCollection()->transform(function (Role $role): Role {
+                $role->users_count = $role->assignedUsersCount();
+                return $role;
+            });
 
             return response()->json([
                 'success' => true,
@@ -175,8 +193,8 @@ class RolesAndPermissionsController extends Controller
             return response()->json([
                 'role' => $role,
                 'stats' => [
-                    'total_users' => $role->users()->count(),
-                    'active_users' => $role->users()->where('active', 1)->count(),
+                    'total_users' => $role->assignedUsersCount(),
+                    'active_users' => $role->assignedUsersQuery()->where('active', 1)->distinct('users.id')->count('users.id'),
                 ],
             ]);
         } catch (\Exception $e) {
@@ -203,7 +221,7 @@ class RolesAndPermissionsController extends Controller
             $user = auth()->user();
 
             $validator = Validator::make($request->all(), [
-                'name' => 'required|string|max:255|unique:roles,name',
+                'name' => 'required|string|max:255',
                 'description' => 'nullable|string',
                 'level' => 'required|integer|min:1|max:10',
                 'tenant_id' => 'nullable|exists:tenants,id',
@@ -224,6 +242,8 @@ class RolesAndPermissionsController extends Controller
                 // Non-SuperAdmins can only create custom roles for their tenant
                 $data['tenant_id'] = $user->tenant_id;
                 $data['is_custom'] = true;
+                $data['role_type'] = Role::ROLE_TYPE_TENANT;
+                $data['role_classification'] = Role::CLASSIFICATION_CUSTOM;
 
                 if (!$user->tenant_id) {
                     return response()->json([
@@ -233,6 +253,25 @@ class RolesAndPermissionsController extends Controller
             } else {
                 // SuperAdmin creating a role
                 $data['is_custom'] = $request->get('is_custom', false);
+                $data['role_type'] = empty($data['tenant_id'])
+                    ? Role::ROLE_TYPE_PLATFORM
+                    : Role::ROLE_TYPE_TENANT;
+                $data['role_classification'] = $data['is_custom']
+                    ? Role::CLASSIFICATION_CUSTOM
+                    : (empty($data['tenant_id'])
+                        ? Role::CLASSIFICATION_PROTECTED_SYSTEM
+                        : Role::CLASSIFICATION_DEFAULT_TEMPLATE);
+            }
+
+            $existingRole = Role::where('name', $data['name'])
+                ->where('tenant_id', $data['tenant_id'] ?? null)
+                ->exists();
+
+            if ($existingRole) {
+                return response()->json([
+                    'message' => 'Validation failed',
+                    'errors' => ['name' => ['Role name must be unique within the tenant.']],
+                ], 422);
             }
 
             // Set default level if not a custom role
@@ -254,10 +293,48 @@ class RolesAndPermissionsController extends Controller
                     'role' => $role,
                 ],
             ], 201);
+        } catch (\RuntimeException $e) {
+            $status = in_array($e->getCode(), [403, 422], true) ? $e->getCode() : 422;
+            return response()->json([
+                'message' => $e->getMessage(),
+            ], $status);
         } catch (\Exception $e) {
             Log::error('Error creating role: ' . $e->getMessage());
             return response()->json([
                 'message' => 'Error creating role',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Tenant endpoint: create tenant-scoped role.
+     */
+    public function tenantStore(StoreTenantRoleRequest $request): JsonResponse
+    {
+        try {
+            if (!$this->canManageRoles()) {
+                return response()->json(['message' => 'Unauthorized'], 403);
+            }
+
+            $role = $this->tenantRoleService->createTenantRole($request->user(), $request->validated());
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Tenant role created successfully',
+                'data' => ['role' => $role],
+            ], 201);
+        } catch (\RuntimeException $e) {
+            $status = in_array($e->getCode(), [403, 422], true) ? $e->getCode() : 422;
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $status);
+        } catch (\Exception $e) {
+            Log::error('Error creating tenant role: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error creating tenant role',
                 'error' => $e->getMessage(),
             ], 500);
         }
@@ -278,6 +355,48 @@ class RolesAndPermissionsController extends Controller
 
             $user = auth()->user();
             $role = Role::findOrFail($id);
+
+            // Tenant-context path uses dedicated service guardrails.
+            if (
+                $user->tenant_id &&
+                !$user->isSuperAdmin() &&
+                !$user->isEkklesiaAdmin() &&
+                !$user->isEkklesiaManager()
+            ) {
+                $validator = Validator::make($request->all(), [
+                    'name' => [
+                        'sometimes',
+                        'required',
+                        'string',
+                        'max:255',
+                        Rule::unique('roles', 'name')
+                            ->where(function ($query) use ($user) {
+                                return $query->where('tenant_id', $user->tenant_id);
+                            })
+                            ->ignore($id),
+                    ],
+                    'description' => 'nullable|string',
+                    'level' => 'sometimes|required|integer|min:1|max:10',
+                    'active' => 'nullable|boolean',
+                ]);
+
+                if ($validator->fails()) {
+                    return response()->json([
+                        'message' => 'Validation failed',
+                        'errors' => $validator->errors(),
+                    ], 422);
+                }
+
+                $role = $this->tenantRoleService->updateTenantRole($user, $role, $validator->validated());
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Role updated successfully',
+                    'data' => [
+                        'role' => $role,
+                    ],
+                ]);
+            }
 
             // Check if role can be modified
             if ($role->isGlobal() && !$user->isSuperAdmin()) {
@@ -300,7 +419,17 @@ class RolesAndPermissionsController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'name' => 'sometimes|required|string|max:255|unique:roles,name,' . $id,
+                'name' => [
+                    'sometimes',
+                    'required',
+                    'string',
+                    'max:255',
+                    Rule::unique('roles', 'name')
+                        ->where(function ($query) use ($role) {
+                            return $query->where('tenant_id', $role->tenant_id);
+                        })
+                        ->ignore($id),
+                ],
                 'description' => 'nullable|string',
                 'level' => 'sometimes|required|integer|min:1|max:10',
                 'active' => 'nullable|boolean',
@@ -336,10 +465,49 @@ class RolesAndPermissionsController extends Controller
                     'role' => $role,
                 ],
             ]);
+        } catch (\RuntimeException $e) {
+            $status = in_array($e->getCode(), [403, 422], true) ? $e->getCode() : 422;
+            return response()->json([
+                'message' => $e->getMessage(),
+            ], $status);
         } catch (\Exception $e) {
             Log::error('Error updating role: ' . $e->getMessage());
             return response()->json([
                 'message' => 'Error updating role',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Tenant endpoint: update tenant role with protected-role guardrails.
+     */
+    public function tenantUpdate(UpdateTenantRoleRequest $request, $id): JsonResponse
+    {
+        try {
+            if (!$this->canManageRoles()) {
+                return response()->json(['message' => 'Unauthorized'], 403);
+            }
+
+            $role = Role::findOrFail($id);
+            $role = $this->tenantRoleService->updateTenantRole($request->user(), $role, $request->validated());
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Tenant role updated successfully',
+                'data' => ['role' => $role],
+            ]);
+        } catch (\RuntimeException $e) {
+            $status = in_array($e->getCode(), [403, 422], true) ? $e->getCode() : 422;
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $status);
+        } catch (\Exception $e) {
+            Log::error('Error updating tenant role: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error updating tenant role',
                 'error' => $e->getMessage(),
             ], 500);
         }
@@ -360,6 +528,20 @@ class RolesAndPermissionsController extends Controller
             $user = auth()->user();
             $role = Role::findOrFail($id);
 
+            // Tenant-context path uses dedicated service guardrails.
+            if (
+                $user->tenant_id &&
+                !$user->isSuperAdmin() &&
+                !$user->isEkklesiaAdmin() &&
+                !$user->isEkklesiaManager()
+            ) {
+                $this->tenantRoleService->deleteTenantRole($user, $role);
+
+                return response()->json([
+                    'message' => 'Role deleted successfully',
+                ]);
+            }
+
             // Prevent deletion of system roles
             if (!$role->isCustom()) {
                 return response()->json([
@@ -375,7 +557,7 @@ class RolesAndPermissionsController extends Controller
             }
 
             // Check if role has users
-            if ($role->users()->count() > 0) {
+            if ($role->assignedUsersCount() > 0) {
                 return response()->json([
                     'message' => 'Cannot delete role with assigned users. Please reassign users first.',
                 ], 422);
@@ -394,10 +576,116 @@ class RolesAndPermissionsController extends Controller
             return response()->json([
                 'message' => 'Role deleted successfully',
             ]);
+        } catch (\RuntimeException $e) {
+            $status = in_array($e->getCode(), [403, 422], true) ? $e->getCode() : 422;
+            return response()->json([
+                'message' => $e->getMessage(),
+            ], $status);
         } catch (\Exception $e) {
             Log::error('Error deleting role: ' . $e->getMessage());
             return response()->json([
                 'message' => 'Error deleting role',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Tenant endpoint: delete tenant custom role with protected-role guardrails.
+     */
+    public function tenantDestroy($id): JsonResponse
+    {
+        try {
+            if (!$this->canManageRoles()) {
+                return response()->json(['message' => 'Unauthorized'], 403);
+            }
+
+            $role = Role::findOrFail($id);
+            $this->tenantRoleService->deleteTenantRole(auth()->user(), $role);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Tenant role deleted successfully',
+            ]);
+        } catch (\RuntimeException $e) {
+            $status = in_array($e->getCode(), [403, 422], true) ? $e->getCode() : 422;
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $status);
+        } catch (\Exception $e) {
+            Log::error('Error deleting tenant role: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error deleting tenant role',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Tenant endpoint: activate tenant role with protected-role guardrails.
+     */
+    public function tenantActivate($id): JsonResponse
+    {
+        try {
+            if (!$this->canManageRoles()) {
+                return response()->json(['message' => 'Unauthorized'], 403);
+            }
+
+            $role = Role::findOrFail($id);
+            $role = $this->tenantRoleService->activateTenantRole(auth()->user(), $role);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Tenant role activated successfully',
+                'data' => ['role' => $role],
+            ]);
+        } catch (\RuntimeException $e) {
+            $status = in_array($e->getCode(), [403, 422], true) ? $e->getCode() : 422;
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $status);
+        } catch (\Exception $e) {
+            Log::error('Error activating tenant role: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error activating tenant role',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Tenant endpoint: deactivate tenant role with protected-role guardrails.
+     */
+    public function tenantDeactivate($id): JsonResponse
+    {
+        try {
+            if (!$this->canManageRoles()) {
+                return response()->json(['message' => 'Unauthorized'], 403);
+            }
+
+            $role = Role::findOrFail($id);
+            $role = $this->tenantRoleService->deactivateTenantRole(auth()->user(), $role);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Tenant role deactivated successfully',
+                'data' => ['role' => $role],
+            ]);
+        } catch (\RuntimeException $e) {
+            $status = in_array($e->getCode(), [403, 422], true) ? $e->getCode() : 422;
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $status);
+        } catch (\Exception $e) {
+            Log::error('Error deactivating tenant role: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error deactivating tenant role',
                 'error' => $e->getMessage(),
             ], 500);
         }
@@ -527,15 +815,8 @@ class RolesAndPermissionsController extends Controller
         }
         
         // Tenant Administrators can manage roles within their tenant
-        // Load role relationship if not already loaded
-        if ($user->tenant_id && $user->role_id) {
-            if (!$user->relationLoaded('role')) {
-                $user->load('role');
-            }
-            
-            if ($user->role && $user->role->name === 'Administrator') {
-                return true;
-            }
+        if ($user->isTenantAdmin()) {
+            return true;
         }
         
         // All other users cannot manage roles

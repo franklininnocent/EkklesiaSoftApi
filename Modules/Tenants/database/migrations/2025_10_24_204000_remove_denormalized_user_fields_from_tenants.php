@@ -14,6 +14,15 @@ return new class extends Migration
      */
     public function up(): void
     {
+        // Drop legacy email index first to keep sqlite column drops safe.
+        Schema::table('tenants', function (Blueprint $table) {
+            try {
+                $table->dropIndex('tenants_primary_user_email_index');
+            } catch (\Throwable $th) {
+                // Ignore if index does not exist.
+            }
+        });
+
         Schema::table('tenants', function (Blueprint $table) {
             // Drop denormalized user and address columns
             $columns = [

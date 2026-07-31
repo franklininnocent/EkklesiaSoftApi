@@ -39,65 +39,71 @@ return new class extends Migration
             }
         });
         
-        // Add foreign key constraint for tenant_id with CASCADE delete
-        // When a tenant is deleted, all associated users are also deleted
-        DB::statement('
-            ALTER TABLE users 
-            DROP CONSTRAINT IF EXISTS fk_users_tenant_id
-        ');
-        
-        DB::statement('
-            ALTER TABLE users 
-            ADD CONSTRAINT fk_users_tenant_id 
-            FOREIGN KEY (tenant_id) 
-            REFERENCES tenants(id) 
-            ON DELETE CASCADE 
-            ON UPDATE CASCADE
-        ');
-        
-        // Create composite index for tenant_id + user_type queries
-        DB::statement('
-            CREATE INDEX IF NOT EXISTS idx_users_tenant_type 
-            ON users(tenant_id, user_type) 
-            WHERE deleted_at IS NULL
-        ');
-        
-        // Create index for user_type
-        DB::statement('
-            CREATE INDEX IF NOT EXISTS idx_users_type 
-            ON users(user_type) 
-            WHERE deleted_at IS NULL
-        ');
-        
-        // Create index for contact_number
-        DB::statement('
-            CREATE INDEX IF NOT EXISTS idx_users_contact 
-            ON users(contact_number) 
-            WHERE contact_number IS NOT NULL
-        ');
-        
-        // Add check constraint for user_type (PostgreSQL)
-        DB::statement("
-            ALTER TABLE users 
-            DROP CONSTRAINT IF EXISTS check_user_type
-        ");
-        
-        DB::statement("
-            ALTER TABLE users 
-            ADD CONSTRAINT check_user_type 
-            CHECK (user_type IS NULL OR user_type IN (
-                'primary_contact', 
-                'secondary_contact', 
-                'admin', 
-                'manager', 
-                'member', 
-                'guest'
-            ))
-        ");
-        
-        // Add table comment
-        DB::statement("COMMENT ON COLUMN users.user_type IS 'Type of user: primary_contact, secondary_contact, admin, manager, member, guest'");
-        DB::statement("COMMENT ON COLUMN users.tenant_id IS 'Foreign key to tenant. NULL for super admin users.'");
+        $driver = Schema::getConnection()->getDriverName();
+
+        if ($driver === 'pgsql') {
+            // Add foreign key constraint for tenant_id with CASCADE delete
+            DB::statement('
+                ALTER TABLE users 
+                DROP CONSTRAINT IF EXISTS fk_users_tenant_id
+            ');
+            
+            DB::statement('
+                ALTER TABLE users 
+                ADD CONSTRAINT fk_users_tenant_id 
+                FOREIGN KEY (tenant_id) 
+                REFERENCES tenants(id) 
+                ON DELETE CASCADE 
+                ON UPDATE CASCADE
+            ');
+            
+            DB::statement('
+                CREATE INDEX IF NOT EXISTS idx_users_tenant_type 
+                ON users(tenant_id, user_type) 
+                WHERE deleted_at IS NULL
+            ');
+            
+            DB::statement('
+                CREATE INDEX IF NOT EXISTS idx_users_type 
+                ON users(user_type) 
+                WHERE deleted_at IS NULL
+            ');
+            
+            DB::statement('
+                CREATE INDEX IF NOT EXISTS idx_users_contact 
+                ON users(contact_number) 
+                WHERE contact_number IS NOT NULL
+            ');
+            
+            DB::statement("
+                ALTER TABLE users 
+                DROP CONSTRAINT IF EXISTS check_user_type
+            ");
+            
+            DB::statement("
+                ALTER TABLE users 
+                ADD CONSTRAINT check_user_type 
+                CHECK (user_type IS NULL OR user_type IN (
+                    'primary_contact', 
+                    'secondary_contact', 
+                    'admin', 
+                    'manager', 
+                    'member', 
+                    'guest'
+                ))
+            ");
+            
+            DB::statement("COMMENT ON COLUMN users.user_type IS 'Type of user: primary_contact, secondary_contact, admin, manager, member, guest'");
+            DB::statement("COMMENT ON COLUMN users.tenant_id IS 'Foreign key to tenant. NULL for super admin users.'");
+            return;
+        }
+
+        // Portable fallback for sqlite/mysql test environments.
+        Schema::table('users', function (Blueprint $table) {
+            $table->index(['tenant_id', 'user_type'], 'idx_users_tenant_type');
+            $table->index(['user_type'], 'idx_users_type');
+            $table->index(['contact_number'], 'idx_users_contact');
+        });
     }
 
     /**
@@ -110,15 +116,26 @@ return new class extends Migration
             $table->dropColumn('user_type');
         });
         
-        // Drop the foreign key constraint
-        DB::statement('ALTER TABLE users DROP CONSTRAINT IF EXISTS fk_users_tenant_id');
-        
-        // Drop indexes
-        DB::statement('DROP INDEX IF EXISTS idx_users_tenant_type');
-        DB::statement('DROP INDEX IF EXISTS idx_users_type');
-        DB::statement('DROP INDEX IF EXISTS idx_users_contact');
-        
-        // Drop check constraint
-        DB::statement('ALTER TABLE users DROP CONSTRAINT IF EXISTS check_user_type');
+        $driver = Schema::getConnection()->getDriverName();
+        if ($driver === 'pgsql') {
+            DB::statement('ALTER TABLE users DROP CONSTRAINT IF EXISTS fk_users_tenant_id');
+            DB::statement('DROP INDEX IF EXISTS idx_users_tenant_type');
+            DB::statement('DROP INDEX IF EXISTS idx_users_type');
+            DB::statement('DROP INDEX IF EXISTS idx_users_contact');
+            DB::statement('ALTER TABLE users DROP CONSTRAINT IF EXISTS check_user_type');
+            return;
+        }
+
+        Schema::table('users', function (Blueprint $table) {
+            try {
+                $table->dropIndex('idx_users_tenant_type');
+            } catch (\Throwable $th) {}
+            try {
+                $table->dropIndex('idx_users_type');
+            } catch (\Throwable $th) {}
+            try {
+                $table->dropIndex('idx_users_contact');
+            } catch (\Throwable $th) {}
+        });
     }
 };

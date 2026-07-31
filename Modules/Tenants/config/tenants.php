@@ -25,7 +25,7 @@ return [
             'name' => 'Free Plan',
             'max_users' => 10,
             'max_storage_mb' => 100,
-            'features' => ['events'],
+            'features' => ['events', 'donations'],
             'price' => 0,
         ],
         'basic' => [

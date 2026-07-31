@@ -19,6 +19,7 @@ use Modules\Tenants\Services\FileUploadService;
 use Modules\Tenants\Services\AddressService;
 use Modules\Authentication\Models\User;
 use Modules\Authentication\Models\Role;
+use Modules\RolesAndPermissions\Models\Permission;
 
 class TenantsController extends Controller
 {
@@ -279,6 +280,8 @@ class TenantsController extends Controller
                 'level' => 1,
                 'tenant_id' => $tenant->id,
                 'is_custom' => false, // System-level role for tenant administration
+                'role_type' => Role::ROLE_TYPE_TENANT,
+                'role_classification' => Role::CLASSIFICATION_PROTECTED_SYSTEM,
                 'active' => 1,
             ]);
 
@@ -288,13 +291,41 @@ class TenantsController extends Controller
                 'role_name' => $adminRole->name,
             ]);
 
+            // Step 2.1: Create default tenant role catalog.
+            $defaultRoles = [
+                ['name' => 'Parish Priest', 'description' => "{$tenant->name} Parish Priest", 'level' => 2],
+            ];
+
+            $defaultRoleMap = [];
+            foreach ($defaultRoles as $defaultRole) {
+                $role = Role::create([
+                    'name' => $defaultRole['name'],
+                    'description' => $defaultRole['description'],
+                    'level' => $defaultRole['level'],
+                    'tenant_id' => $tenant->id,
+                    'is_custom' => false,
+                    'role_type' => Role::ROLE_TYPE_TENANT,
+                    'role_classification' => Role::CLASSIFICATION_DEFAULT_TEMPLATE,
+                    'active' => 1,
+                ]);
+                $defaultRoleMap[$defaultRole['name']] = $role;
+            }
+
             // Step 2.1: Assign all tenant-relevant permissions to Administrator role
             // Get all active system permissions (excluding custom permissions)
-            $tenantPermissions = \Modules\RolesAndPermissions\Models\Permission::where('active', 1)
+            $tenantPermissionCatalog = Permission::where('active', 1)
                 ->where('is_custom', false)  // Only system permissions
                 ->whereNull('tenant_id')      // Global permissions
+                ->where(function ($query) {
+                    $query->whereNull('scope')
+                        ->orWhereIn('scope', [Permission::SCOPE_TENANT, Permission::SCOPE_BOTH]);
+                })
+                ->get(['id', 'name']);
+            $tenantPermissions = $tenantPermissionCatalog
                 ->pluck('id')
-                ->toArray();
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $parishPriestPermissions = $this->buildParishPriestPermissionIds($tenantPermissionCatalog);
 
             if (!empty($tenantPermissions)) {
                 // Assign all permissions to the Administrator role
@@ -312,6 +343,9 @@ class TenantsController extends Controller
                 ]);
             }
 
+            // Step 2.2: Seed operational permissions for default Parish Priest role.
+            $this->seedDefaultTemplateRolePermissions($defaultRoleMap, $parishPriestPermissions);
+
             // Step 3: Create primary contact user with Administrator role
             $primaryUser = User::create([
                 'tenant_id' => $tenant->id,
@@ -324,6 +358,9 @@ class TenantsController extends Controller
                 'password' => Hash::make('TempPassword123!'), // Temporary password
                 'active' => 1,
             ]);
+
+            // Keep legacy single-role field and new multi-role pivot in sync.
+            $primaryUser->roles()->syncWithoutDetaching([$adminRole->id]);
 
             Log::info('Primary user created and assigned Administrator role', [
                 'tenant_id' => $tenant->id,
@@ -405,6 +442,74 @@ class TenantsController extends Controller
                 'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
             ], 500);
         }
+    }
+
+    /**
+     * Seed baseline permissions for default template roles.
+     * These are starter templates and remain fully editable by tenant admins.
+     */
+    private function seedDefaultTemplateRolePermissions(array $defaultRoleMap, array $tenantPermissionIds): void
+    {
+        if (empty($defaultRoleMap) || empty($tenantPermissionIds)) {
+            return;
+        }
+
+        foreach ($defaultRoleMap as $role) {
+            if (!$role instanceof Role) {
+                continue;
+            }
+
+            // Don't overwrite if tenant has already customized role permissions.
+            if ($role->permissions()->count() > 0) {
+                continue;
+            }
+
+            $role->permissions()->sync($tenantPermissionIds);
+        }
+    }
+
+    /**
+     * Parish Priest is default operational leadership, not governance authority.
+     */
+    private function buildParishPriestPermissionIds($permissions): array
+    {
+        return $permissions
+            ->reject(function (Permission $permission) {
+                return $this->isGovernancePermissionName($permission->name);
+            })
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+    }
+
+    private function isGovernancePermissionName(string $permissionName): bool
+    {
+        $governancePrefixes = [
+            'roles.',
+            'permissions.',
+            'users.assign',
+            'users.create',
+            'users.update',
+            'users.delete',
+            'church.settings.',
+            'settings.',
+            'security.',
+            'integration.',
+            'integrations.',
+            'subscription.',
+            'billing.',
+            'tenants.',
+            'pope.',
+        ];
+
+        foreach ($governancePrefixes as $prefix) {
+            if (str_starts_with($permissionName, $prefix)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -1032,9 +1137,12 @@ class TenantsController extends Controller
                 ], 404);
             }
 
-            // Check if user has permission to edit church profile
-            // Primary admin or user with manage_tenants permission can edit
-            if (!$user->is_primary_admin && !$user->hasPermissionTo('manage_tenants')) {
+            // Check if user has permission to edit church profile.
+            if (
+                !$user->is_primary_admin &&
+                !$user->isTenantAdmin() &&
+                !$user->hasPermission('church.settings.edit')
+            ) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Only church administrators can update church profile.',

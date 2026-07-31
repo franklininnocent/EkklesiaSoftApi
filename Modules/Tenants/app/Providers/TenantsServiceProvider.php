@@ -30,12 +30,6 @@ class TenantsServiceProvider extends ServiceProvider
         // Load module migrations
         $this->loadMigrationsFrom(module_path($this->name, 'database/migrations'));
 
-        // Load API routes
-        $routesPath = module_path($this->name, 'routes/api.php');
-        if (file_exists($routesPath)) {
-            $this->loadRoutesFrom($routesPath);
-        }
-
         // Load module configuration
         $configPath = module_path($this->name, 'config/tenants.php');
         if (file_exists($configPath)) {
@@ -70,6 +64,7 @@ class TenantsServiceProvider extends ServiceProvider
         $this->commands([
             \Modules\Tenants\Console\Commands\CleanupAuditLogs::class,
             \Modules\Tenants\Console\Commands\AssignPermissionsToAdministrators::class,
+            \Modules\Tenants\Console\Commands\BackfillTenantRbac::class,
         ]);
     }
 
