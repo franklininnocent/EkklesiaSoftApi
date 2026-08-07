@@ -34,7 +34,7 @@ class SacramentController extends Controller
         $user = $request->user();
         
         // Check if user has tenant_id (tenant users must have this)
-        if (!$user->tenant_id) {
+        if (app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized. Only tenant users can manage sacrament records.',
@@ -74,7 +74,7 @@ class SacramentController extends Controller
             ]);
             
             // Force tenant_id to current user's tenant
-            $params['tenant_id'] = $user->tenant_id;
+            $params['tenant_id'] = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
 
             $sacraments = $this->service->getAll($params);
 
@@ -119,7 +119,7 @@ class SacramentController extends Controller
             }
 
             // Verify sacrament belongs to user's tenant
-            if ($sacrament->tenant_id !== $user->tenant_id) {
+            if ($sacrament->tenant_id !== app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. You can only access sacraments from your own tenant.',
@@ -179,7 +179,7 @@ class SacramentController extends Controller
             }
 
             // Build validation rules with tenant isolation
-            $tenantId = $user->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $validationRules = [
                 'sacrament_type_id' => 'required|exists:sacrament_types,id',
                 'family_id' => [
@@ -237,7 +237,7 @@ class SacramentController extends Controller
             $validated = validator($data, $validationRules)->validate();
 
             // Auto-set tenant_id from authenticated user
-            $validated['tenant_id'] = $user->tenant_id;
+            $validated['tenant_id'] = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $validated['created_by'] = $user->id;
 
             $sacrament = $this->service->create($validated);
@@ -245,7 +245,7 @@ class SacramentController extends Controller
 
             Log::info('Sacrament record created', [
                 'sacrament_id' => $sacrament->id,
-                'tenant_id' => $user->tenant_id,
+                'tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                 'created_by' => $user->id
             ]);
 
@@ -299,7 +299,7 @@ class SacramentController extends Controller
                 ], 404);
             }
 
-            if ($existingSacrament->tenant_id !== $user->tenant_id) {
+            if ($existingSacrament->tenant_id !== app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. You can only update sacraments from your own tenant.',
@@ -326,7 +326,7 @@ class SacramentController extends Controller
                 }
             }
 
-            $tenantId = $user->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
 
             $validationRules = [
                 'family_id' => [
@@ -449,7 +449,7 @@ class SacramentController extends Controller
                 ], 404);
             }
 
-            if ($sacrament->tenant_id !== $user->tenant_id) {
+            if ($sacrament->tenant_id !== app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. You can only delete sacraments from your own tenant.',
@@ -648,7 +648,7 @@ class SacramentController extends Controller
 
             $ids = $validated['ids'];
             $status = $validated['status'];
-            $tenantId = $user->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
 
             // Verify all sacraments belong to user's tenant
             $sacraments = $this->service->getByIds($ids);
@@ -717,7 +717,7 @@ class SacramentController extends Controller
             ]);
 
             $ids = $validated['ids'];
-            $tenantId = $user->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
 
             // Verify all sacraments belong to user's tenant
             $sacraments = $this->service->getByIds($ids);

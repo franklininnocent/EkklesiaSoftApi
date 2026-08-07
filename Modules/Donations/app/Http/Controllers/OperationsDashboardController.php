@@ -23,7 +23,10 @@ class OperationsDashboardController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $this->operationsDashboardService->build((int) $user->tenant_id, $user),
+            'data' => $this->operationsDashboardService->build(
+                app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
+                $user
+            ),
         ]);
     }
 
@@ -38,7 +41,7 @@ class OperationsDashboardController extends Controller
         return response()->json([
             'success' => true,
             'data' => $this->timelineService->build(
-                (int) Auth::user()->tenant_id,
+                app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                 $validated['subject_type'],
                 $validated['subject_id'],
                 (int) ($validated['limit'] ?? 30)

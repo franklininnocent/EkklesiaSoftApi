@@ -20,6 +20,7 @@ use Modules\Tenants\Services\AddressService;
 use Modules\Authentication\Models\User;
 use Modules\Authentication\Models\Role;
 use Modules\RolesAndPermissions\Models\Permission;
+use Modules\MinistriesAssociations\Database\Seeders\MinistriesAssociationsDefaultSeeder;
 
 class TenantsController extends Controller
 {
@@ -408,6 +409,18 @@ class TenantsController extends Controller
                 'primaryContact.addresses',
                 'secondaryContact.addresses'
             ])->find($tenant->id);
+
+            // Seed default Ministries & Associations taxonomy + Youth Association (idempotent).
+            if (class_exists(MinistriesAssociationsDefaultSeeder::class)) {
+                (new MinistriesAssociationsDefaultSeeder())->run(
+                    (int) $tenant->id,
+                    (int) $primaryUser->id,
+                );
+
+                Log::info('Ministries & Associations defaults seeded for tenant', [
+                    'tenant_id' => $tenant->id,
+                ]);
+            }
 
             Log::info('Tenant created successfully with normalized structure', [
                 'tenant_id' => $tenant->id,

@@ -30,7 +30,7 @@ class ChurchProfileController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -43,7 +43,7 @@ class ChurchProfileController extends Controller
                 'archdiocese.denomination',
                 'bishop.archdiocese'
             ])->firstOrCreate(
-                ['tenant_id' => $user->tenant_id],
+                ['tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId()],
                 [
                     'founded_year' => null,
                     'country' => null,
@@ -89,7 +89,7 @@ class ChurchProfileController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -125,7 +125,7 @@ class ChurchProfileController extends Controller
             DB::beginTransaction();
             try {
                 $churchProfile = ChurchProfile::updateOrCreate(
-                    ['tenant_id' => $user->tenant_id],
+                    ['tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId()],
                     $validated
                 );
 
@@ -149,7 +149,7 @@ class ChurchProfileController extends Controller
                 $churchProfileData['patron_image_url'] = $patronImageUrl;
 
                 Log::info('Church profile updated', [
-                    'tenant_id' => $user->tenant_id,
+                    'tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                     'updated_by' => $user->id,
                 ]);
 
@@ -193,7 +193,7 @@ class ChurchProfileController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -225,17 +225,17 @@ class ChurchProfileController extends Controller
             try {
                 // Get or create church profile
                 $churchProfile = ChurchProfile::firstOrCreate(
-                    ['tenant_id' => $user->tenant_id],
+                    ['tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId()],
                     []
                 );
 
                 // Delete existing patron image if it exists
                 if ($churchProfile->patron_image_path) {
-                    $this->deletePatronImageFile($churchProfile->patron_image_path, $user->tenant_id);
+                    $this->deletePatronImageFile($churchProfile->patron_image_path, app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId());
                 }
 
                 // Upload new image (tenant-specific)
-                $imagePath = $this->uploadPatronImageFile($file, $user->tenant_id);
+                $imagePath = $this->uploadPatronImageFile($file, app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId());
 
                 if (!$imagePath) {
                     DB::rollBack();
@@ -255,7 +255,7 @@ class ChurchProfileController extends Controller
                 $patronImageUrl = Storage::disk('public')->url($imagePath);
 
                 Log::info('Patron image uploaded', [
-                    'tenant_id' => $user->tenant_id,
+                    'tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                     'updated_by' => $user->id,
                     'image_path' => $imagePath,
                 ]);
@@ -302,7 +302,7 @@ class ChurchProfileController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -318,10 +318,10 @@ class ChurchProfileController extends Controller
 
             DB::beginTransaction();
             try {
-                $churchProfile = ChurchProfile::where('tenant_id', $user->tenant_id)->first();
+                $churchProfile = ChurchProfile::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId())->first();
 
                 if ($churchProfile && $churchProfile->patron_image_path) {
-                    $this->deletePatronImageFile($churchProfile->patron_image_path, $user->tenant_id);
+                    $this->deletePatronImageFile($churchProfile->patron_image_path, app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId());
                     $churchProfile->patron_image_path = null;
                     $churchProfile->save();
                 }
@@ -329,7 +329,7 @@ class ChurchProfileController extends Controller
                 DB::commit();
 
                 Log::info('Patron image deleted', [
-                    'tenant_id' => $user->tenant_id,
+                    'tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                     'updated_by' => $user->id,
                 ]);
 

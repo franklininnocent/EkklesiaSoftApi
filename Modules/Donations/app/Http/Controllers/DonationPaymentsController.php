@@ -20,7 +20,7 @@ class DonationPaymentsController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $query = DonationPayment::forTenant($tenantId)->with(['allocations', 'receipt'])->orderByDesc('payment_date');
 
         if ($request->filled('status')) {
@@ -41,7 +41,7 @@ class DonationPaymentsController extends Controller
 
     public function store(StorePaymentRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
 
         $payment = $this->ledgerService->createPayment($tenantId, $userId, $request->validated());
@@ -55,7 +55,7 @@ class DonationPaymentsController extends Controller
 
     public function reverse(string $id, ReversePaymentRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
 
         $payment = $this->ledgerService->reversePayment($tenantId, $userId, $id, $request->string('reason')->toString());
@@ -69,7 +69,7 @@ class DonationPaymentsController extends Controller
 
     public function requestRefund(string $id, RequestRefundRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
 
         $refund = $this->ledgerService->requestRefund($tenantId, $userId, $id, $request->validated());

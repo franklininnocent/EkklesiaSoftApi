@@ -55,7 +55,7 @@ class SecureFileController
                 
                 // Only enforce tenant isolation for non-SuperAdmin/EkklesiaAdmin
                 if (!$user->isSuperAdmin() && !$user->isEkklesiaAdmin()) {
-                    $tenantId = $user->tenant_id;
+                    $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
                     
                     // Verify tenant ownership for tenant-specific files
                     if (preg_match('/tenants\/(\d+)\//', $filePath, $matches)) {
@@ -146,7 +146,7 @@ class SecureFileController
                 
                 // Only enforce tenant isolation for non-SuperAdmin/EkklesiaAdmin
                 if (!$user->isSuperAdmin() && !$user->isEkklesiaAdmin()) {
-                    $tenantId = $user->tenant_id;
+                    $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
                     
                     // Verify tenant ownership
                     if (preg_match('/tenants\/(\d+)\//', $filePath, $matches)) {

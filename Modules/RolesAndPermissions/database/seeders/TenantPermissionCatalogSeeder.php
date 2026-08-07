@@ -46,9 +46,22 @@ class TenantPermissionCatalogSeeder extends Seeder
             ['name' => 'donations.edit', 'display_name' => 'Edit Donations', 'description' => 'Edit donations', 'module' => 'Donations', 'category' => 'donations'],
             ['name' => 'donations.delete', 'display_name' => 'Delete Donations', 'description' => 'Delete donations', 'module' => 'Donations', 'category' => 'donations'],
 
+            // Ministries & Associations
+            ['name' => 'ministries.view', 'display_name' => 'View Ministries & Associations', 'description' => 'View organizations and ministry data', 'module' => 'MinistriesAssociations', 'category' => 'ministries'],
+            ['name' => 'ministries.create', 'display_name' => 'Create Organizations', 'description' => 'Create ministries and associations', 'module' => 'MinistriesAssociations', 'category' => 'ministries'],
+            ['name' => 'ministries.edit', 'display_name' => 'Edit Organizations', 'description' => 'Update organization profiles and status', 'module' => 'MinistriesAssociations', 'category' => 'ministries'],
+            ['name' => 'ministries.delete', 'display_name' => 'Delete Organizations', 'description' => 'Archive and restore organizations', 'module' => 'MinistriesAssociations', 'category' => 'ministries'],
+            ['name' => 'ministries.manage_members', 'display_name' => 'Manage Ministry Members', 'description' => 'Enroll members, manage guests, and parishioner lookup', 'module' => 'MinistriesAssociations', 'category' => 'ministries'],
+            ['name' => 'ministries.manage_leadership', 'display_name' => 'Manage Ministry Leadership', 'description' => 'Assign, terminate, and hand over leadership terms', 'module' => 'MinistriesAssociations', 'category' => 'ministries'],
+            ['name' => 'ministries.configure', 'display_name' => 'Configure Ministries Taxonomies', 'description' => 'Manage categories, types, positions, and seed defaults', 'module' => 'MinistriesAssociations', 'category' => 'ministries'],
+
             // Reports
             ['name' => 'reports.view', 'display_name' => 'View Reports', 'description' => 'View reports', 'module' => 'Reports', 'category' => 'reports'],
             ['name' => 'reports.export', 'display_name' => 'Export Reports', 'description' => 'Export reports', 'module' => 'Reports', 'category' => 'reports'],
+
+            // Support Access (parish self-serve windows)
+            ['name' => 'support.grants.parish.view', 'display_name' => 'View Support Access Windows', 'description' => 'View customer-granted support access windows for this parish', 'module' => 'SupportAccess', 'category' => 'support'],
+            ['name' => 'support.grants.parish.manage', 'display_name' => 'Manage Support Access Windows', 'description' => 'Create and revoke support access windows for this parish', 'module' => 'SupportAccess', 'category' => 'support'],
         ];
 
         foreach ($permissions as $permission) {

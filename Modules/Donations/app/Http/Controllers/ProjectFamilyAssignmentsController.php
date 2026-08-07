@@ -19,7 +19,7 @@ class ProjectFamilyAssignmentsController extends Controller
 
     public function index(string $projectId, Request $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         DonationProject::forTenant($tenantId)->findOrFail($projectId);
 
         $assignments = ProjectFamilyAssignment::forTenant($tenantId)
@@ -37,7 +37,7 @@ class ProjectFamilyAssignmentsController extends Controller
 
     public function store(string $projectId, StoreProjectAssignmentRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $project = DonationProject::forTenant($tenantId)->findOrFail($projectId);
         $payload = $request->validated();

@@ -32,7 +32,7 @@ class ChurchLeadershipController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -44,11 +44,11 @@ class ChurchLeadershipController extends Controller
                 'role' => $request->get('role'),
                 'current' => $request->get('current'),
             ];
-            $cacheKey = $this->leadershipCacheKey($user->tenant_id, $filters);
+            $cacheKey = $this->leadershipCacheKey(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(), $filters);
 
             // Try to get from cache first (cache for 5 minutes)
             $leaders = Cache::remember($cacheKey, 300, function () use ($user, $request) {
-                $query = ChurchLeadership::where('tenant_id', $user->tenant_id);
+                $query = ChurchLeadership::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId());
 
                 // Filter by active status
                 if ($request->has('active')) {
@@ -99,7 +99,7 @@ class ChurchLeadershipController extends Controller
         try {
             $user = auth()->user();
             
-            $leader = ChurchLeadership::where('tenant_id', $user->tenant_id)
+            $leader = ChurchLeadership::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId())
                 ->findOrFail($id);
 
             return response()->json([
@@ -130,7 +130,7 @@ class ChurchLeadershipController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -162,7 +162,7 @@ class ChurchLeadershipController extends Controller
                 'active' => 'nullable|boolean',
             ]);
 
-            $validated['tenant_id'] = $user->tenant_id;
+            $validated['tenant_id'] = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $validated['is_primary'] = $validated['is_primary'] ?? 0;
             // If relieved_date is set, automatically set active to 0
             if (!empty($validated['relieved_date'])) {
@@ -178,11 +178,11 @@ class ChurchLeadershipController extends Controller
 
                 DB::commit();
 
-                $this->clearLeadershipCache($user->tenant_id);
+                $this->clearLeadershipCache(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId());
 
                 Log::info('Church leader created', [
                     'leader_id' => $leader->id,
-                    'tenant_id' => $user->tenant_id,
+                    'tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                     'created_by' => $user->id,
                 ]);
 
@@ -225,7 +225,7 @@ class ChurchLeadershipController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -239,7 +239,7 @@ class ChurchLeadershipController extends Controller
                 ], 403);
             }
 
-            $leader = ChurchLeadership::where('tenant_id', $user->tenant_id)
+            $leader = ChurchLeadership::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId())
                 ->findOrFail($id);
 
             // Validation
@@ -277,11 +277,11 @@ class ChurchLeadershipController extends Controller
                 DB::commit();
 
                 // Clear cache for this tenant's leadership
-                $this->clearLeadershipCache($user->tenant_id);
+                $this->clearLeadershipCache(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId());
 
                 Log::info('Church leader updated', [
                     'leader_id' => $leader->id,
-                    'tenant_id' => $user->tenant_id,
+                    'tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                     'updated_by' => $user->id,
                 ]);
 
@@ -324,7 +324,7 @@ class ChurchLeadershipController extends Controller
         try {
             $user = auth()->user();
 
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -338,7 +338,7 @@ class ChurchLeadershipController extends Controller
                 ], 403);
             }
 
-            $leader = ChurchLeadership::where('tenant_id', $user->tenant_id)
+            $leader = ChurchLeadership::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId())
                 ->findOrFail($id);
 
             $validated = $request->validate([
@@ -357,8 +357,8 @@ class ChurchLeadershipController extends Controller
             try {
                 $this->deleteLeaderPhotoFile($leader->photo_url);
 
-                $filename = $this->generateLeaderPhotoFilename($file, $user->tenant_id, (int) $leader->id);
-                $directory = "tenants/{$user->tenant_id}/leadership";
+                $filename = $this->generateLeaderPhotoFilename($file, app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(), (int) $leader->id);
+                $directory = "tenants/{app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId()}/leadership";
                 $storedPath = Storage::disk('public')->putFileAs(
                     $directory,
                     $file,
@@ -378,7 +378,7 @@ class ChurchLeadershipController extends Controller
                 $leader->save();
 
                 DB::commit();
-                $this->clearLeadershipCache($user->tenant_id);
+                $this->clearLeadershipCache(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId());
 
                 return response()->json([
                     'success' => true,
@@ -420,7 +420,7 @@ class ChurchLeadershipController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -434,7 +434,7 @@ class ChurchLeadershipController extends Controller
                 ], 403);
             }
 
-            $leader = ChurchLeadership::where('tenant_id', $user->tenant_id)
+            $leader = ChurchLeadership::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId())
                 ->findOrFail($id);
 
             DB::beginTransaction();
@@ -445,11 +445,11 @@ class ChurchLeadershipController extends Controller
                 DB::commit();
 
                 // Clear cache for this tenant's leadership
-                $this->clearLeadershipCache($user->tenant_id);
+                $this->clearLeadershipCache(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId());
 
                 Log::info('Church leader deleted', [
                     'leader_id' => $id,
-                    'tenant_id' => $user->tenant_id,
+                    'tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                     'deleted_by' => $user->id,
                 ]);
 

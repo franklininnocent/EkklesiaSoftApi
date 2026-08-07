@@ -19,7 +19,7 @@ class DonationCampaignsController extends Controller
 
     public function index(): JsonResponse
     {
-        $tenantId = (int) Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
 
         return response()->json([
             'success' => true,
@@ -31,13 +31,13 @@ class DonationCampaignsController extends Controller
     {
         return response()->json([
             'success' => true,
-            'data' => $this->campaignService->find((int) Auth::user()->tenant_id, $id),
+            'data' => $this->campaignService->find(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(), $id),
         ]);
     }
 
     public function dashboard(string $id): JsonResponse
     {
-        $tenantId = (int) Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $campaign = $this->campaignService->find($tenantId, $id);
 
         return response()->json([

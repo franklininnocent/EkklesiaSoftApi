@@ -17,7 +17,7 @@ class ParishExpensesController extends Controller
 
     public function index(): JsonResponse
     {
-        $tenantId = (int) Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $expenses = ParishExpense::forTenant($tenantId)
             ->orderByDesc('expense_date')
             ->limit(100)
@@ -31,7 +31,7 @@ class ParishExpensesController extends Controller
 
     public function store(StoreParishExpenseRequest $request): JsonResponse
     {
-        $tenantId = (int) Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $payload = $request->validated();
         $payload['tenant_id'] = $tenantId;

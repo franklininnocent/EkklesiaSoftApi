@@ -6,5 +6,7 @@
     "Sacraments": true,
     "Family": true,
     "BCC": true,
-    "Donations": true
+    "Donations": true,
+    "MinistriesAssociations": true,
+    "SupportAccess": true
 }

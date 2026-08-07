@@ -21,7 +21,7 @@ class DonorsController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $query = Donor::forTenant($tenantId)->orderBy('name');
 
         if ($request->filled('donor_type')) {
@@ -48,7 +48,7 @@ class DonorsController extends Controller
 
     public function show(string $id): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $donor = Donor::forTenant($tenantId)->findOrFail($id);
 
         return response()->json([
@@ -59,7 +59,7 @@ class DonorsController extends Controller
 
     public function store(StoreDonorRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $payload = $request->validated();
         $payload['tenant_id'] = $tenantId;
@@ -104,7 +104,7 @@ class DonorsController extends Controller
 
     public function update(UpdateDonorRequest $request, string $id): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $donor = Donor::forTenant($tenantId)->findOrFail($id);
         $oldValues = $donor->toArray();

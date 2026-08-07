@@ -1,0 +1,16 @@
+{
+    "name": "nwidart/supportaccess",
+    "description": "Support Access platform module",
+    "extra": {
+        "laravel": {
+            "providers": [],
+            "aliases": {}
+        }
+    },
+    "autoload": {
+        "psr-4": {
+            "Modules\\SupportAccess\\": "app/",
+            "Modules\\SupportAccess\\Database\\Seeders\\": "database/seeders/"
+        }
+    }
+}

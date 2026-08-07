@@ -24,7 +24,7 @@ class FinancialGlobalSearchController extends Controller
         return response()->json([
             'success' => true,
             'data' => $this->searchService->search(
-                (int) Auth::user()->tenant_id,
+                app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                 $validated['q'],
                 (int) ($validated['limit'] ?? 6)
             ),

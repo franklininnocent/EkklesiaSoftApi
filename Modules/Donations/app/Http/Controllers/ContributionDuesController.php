@@ -24,7 +24,7 @@ class ContributionDuesController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
 
         $query = ContributionDue::forTenant($tenantId)->with(['family', 'plan']);
 
@@ -57,7 +57,7 @@ class ContributionDuesController extends Controller
 
     public function store(StoreDueRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $payload = $request->validated();
         $payload['tenant_id'] = $tenantId;
         $payload['amount_paid'] = 0;
@@ -76,7 +76,7 @@ class ContributionDuesController extends Controller
 
     public function waive(string $id, UpdateDueStatusRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $due = ContributionDue::forTenant($tenantId)->findOrFail($id);
 
@@ -98,7 +98,7 @@ class ContributionDuesController extends Controller
 
     public function cancel(string $id, UpdateDueStatusRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $due = ContributionDue::forTenant($tenantId)->findOrFail($id);
 
@@ -120,7 +120,7 @@ class ContributionDuesController extends Controller
 
     public function sendReminder(string $id): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $due = ContributionDue::forTenant($tenantId)->findOrFail($id);
 
         SendContributionReminderJob::dispatch($tenantId, $due->id);

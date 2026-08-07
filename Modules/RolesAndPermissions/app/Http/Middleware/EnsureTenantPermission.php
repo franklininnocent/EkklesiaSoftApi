@@ -4,25 +4,35 @@ namespace Modules\RolesAndPermissions\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Modules\Tenants\Support\SupportSessionMode;
+use Modules\Tenants\Support\TenantContext;
 use Symfony\Component\HttpFoundation\Response;
 
 class EnsureTenantPermission
 {
     /**
-     * Ensure authenticated tenant user has all required permissions.
+     * Ensure authenticated user may act in the effective tenant with the given permissions.
+     *
+     * Support sessions (Phase 1) authorize via support.sessions.* mode permissions,
+     * not borrowed tenant-user RBAC.
      */
     public function handle(Request $request, Closure $next, ...$permissions): Response
     {
         $user = $request->user();
+        $context = app(TenantContext::class);
 
-        if (!$user || !$user->tenant_id) {
+        if (!$user || $context->effectiveTenantId() === null) {
             return response()->json([
                 'success' => false,
                 'message' => 'Tenant context required.',
             ], 403);
         }
 
-        // Super admin still bypasses permission checks.
+        if ($context->isSupportSession()) {
+            return $this->authorizeSupportSession($request, $next, $context);
+        }
+
+        // Super admin still bypasses tenant permission checks when acting in home tenant.
         if (method_exists($user, 'isSuperAdmin') && $user->isSuperAdmin()) {
             return $next($request);
         }
@@ -39,6 +49,31 @@ class EnsureTenantPermission
                 'success' => false,
                 'message' => 'Insufficient permission for this tenant action.',
                 'missing_permissions' => $missing,
+            ], 403);
+        }
+
+        return $next($request);
+    }
+
+    /**
+     * @param  \Closure(\Illuminate\Http\Request): (\Symfony\Component\HttpFoundation\Response)  $next
+     */
+    private function authorizeSupportSession(Request $request, Closure $next, TenantContext $context): Response
+    {
+        $user = $request->user();
+        $mode = $context->supportMode();
+        $modePermission = match ($mode) {
+            SupportSessionMode::Readonly => 'support.sessions.readonly',
+            SupportSessionMode::Standard => 'support.sessions.standard',
+            SupportSessionMode::Emergency => 'support.sessions.emergency',
+            default => null,
+        };
+
+        if ($modePermission === null || !method_exists($user, 'hasPermission') || !$user->hasPermission($modePermission)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Support session mode is not authorized.',
+                'missing_permissions' => array_values(array_filter([$modePermission])),
             ], 403);
         }
 

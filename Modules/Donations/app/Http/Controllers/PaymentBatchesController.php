@@ -23,7 +23,7 @@ class PaymentBatchesController extends Controller
 
     public function index(): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $batches = PaymentBatch::forTenant($tenantId)
             ->withCount('payments')
             ->orderByDesc('batch_date')
@@ -37,7 +37,7 @@ class PaymentBatchesController extends Controller
 
     public function store(StorePaymentBatchRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $payload = $request->validated();
 
@@ -86,7 +86,7 @@ class PaymentBatchesController extends Controller
 
     public function upload(ProcessPaymentBatchUploadRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $payload = $request->validated();
         $rows = $payload['rows'];

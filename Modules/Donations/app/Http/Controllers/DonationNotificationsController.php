@@ -17,7 +17,7 @@ class DonationNotificationsController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $query = DonationNotificationLog::forTenant($tenantId)->orderByDesc('created_at');
 
         if ($request->filled('status')) {
@@ -32,7 +32,7 @@ class DonationNotificationsController extends Controller
 
     public function queueReminder(Request $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $log = $this->notificationService->queue(
             $tenantId,
             $request->input('notification_type', 'due.reminder'),

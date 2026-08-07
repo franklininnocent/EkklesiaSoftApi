@@ -39,7 +39,7 @@ class FamilyController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             
             if (!$tenantId) {
                 return response()->json([
@@ -90,7 +90,7 @@ class FamilyController extends Controller
     public function store(StoreFamilyRequest $request): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
             
             if (!$tenantId) {
@@ -130,7 +130,7 @@ class FamilyController extends Controller
     public function show(string $id): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             
             if (!$tenantId) {
                 return response()->json([
@@ -172,7 +172,7 @@ class FamilyController extends Controller
     public function update(UpdateFamilyRequest $request, string $id): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
             
             if (!$tenantId) {
@@ -284,7 +284,7 @@ class FamilyController extends Controller
     public function statistics(): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             
             if (!$tenantId) {
                 return response()->json([
@@ -318,7 +318,7 @@ class FamilyController extends Controller
     public function byBcc(string $bccId): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             
             if (!$tenantId) {
                 return response()->json([
@@ -351,7 +351,7 @@ class FamilyController extends Controller
     public function withoutBcc(): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             
             if (!$tenantId) {
                 return response()->json([
@@ -387,7 +387,7 @@ class FamilyController extends Controller
     public function members(string $familyId): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             
             if (!$tenantId) {
                 return response()->json([
@@ -429,7 +429,7 @@ class FamilyController extends Controller
     public function addMember(StoreFamilyMemberRequest $request, string $familyId): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
             
             if (!$tenantId) {
@@ -512,7 +512,7 @@ class FamilyController extends Controller
                 ], 400);
             }
             
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
             
             if (!$tenantId) {
@@ -629,7 +629,7 @@ class FamilyController extends Controller
     public function deleteMember(string $familyId, string $memberId): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
             
             if (!$tenantId) {
@@ -672,7 +672,7 @@ class FamilyController extends Controller
     public function uploadProfileImage(Request $request, string $id): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
             
             if (!$tenantId) {
@@ -731,7 +731,7 @@ class FamilyController extends Controller
     public function deleteProfileImage(string $id): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
             
             if (!$tenantId) {
@@ -775,7 +775,7 @@ class FamilyController extends Controller
     public function uploadHeadProfileImage(Request $request, string $id): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
             
             if (!$tenantId) {
@@ -834,7 +834,7 @@ class FamilyController extends Controller
     public function deleteHeadProfileImage(string $id): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
             
             if (!$tenantId) {
@@ -877,7 +877,7 @@ class FamilyController extends Controller
     public function allMembers(Request $request): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             
             if (!$tenantId) {
                 return response()->json([

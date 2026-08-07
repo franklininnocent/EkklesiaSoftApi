@@ -19,7 +19,7 @@ class DonationApprovalsController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $query = DonationApproval::forTenant($tenantId)->orderByDesc('created_at');
 
         if ($request->filled('status')) {
@@ -34,7 +34,7 @@ class DonationApprovalsController extends Controller
 
     public function decide(string $id, DecideApprovalRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
 
         $approval = DonationApproval::forTenant($tenantId)->findOrFail($id);

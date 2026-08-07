@@ -29,7 +29,7 @@ class DonationDashboardController extends Controller
     public function summary(): JsonResponse
     {
         $user = Auth::user();
-        $tenantId = (int) $user->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $summary = $this->dashboardService->getSummary($tenantId);
         $persona = $this->personaService->resolve($user, $summary['tenant_context'] ?? null);
 
@@ -45,7 +45,7 @@ class DonationDashboardController extends Controller
     public function commandCenter(): JsonResponse
     {
         $user = Auth::user();
-        $tenantId = (int) $user->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $period = (string) request()->query('period', 'month');
         $payload = $this->commandCenterService->build($tenantId, $user, $period);
         $persona = $this->personaService->resolve($user, $payload['tenant_context'] ?? null);
@@ -61,7 +61,7 @@ class DonationDashboardController extends Controller
 
     public function rollup(): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
 
         return response()->json([
             'success' => true,
@@ -72,7 +72,7 @@ class DonationDashboardController extends Controller
     public function familySummary(string $familyId): JsonResponse
     {
         try {
-            $profile = $this->profileService->build(Auth::user()->tenant_id, $familyId);
+            $profile = $this->profileService->build(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(), $familyId);
         } catch (\RuntimeException $exception) {
             return response()->json([
                 'success' => false,
@@ -96,7 +96,7 @@ class DonationDashboardController extends Controller
     public function familyFinancialProfile(string $familyId): JsonResponse
     {
         try {
-            $profile = $this->profileService->build(Auth::user()->tenant_id, $familyId);
+            $profile = $this->profileService->build(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(), $familyId);
         } catch (\RuntimeException $exception) {
             return response()->json([
                 'success' => false,
@@ -113,7 +113,7 @@ class DonationDashboardController extends Controller
     public function familyStatementPrint(string $familyId)
     {
         try {
-            $payload = $this->familyStatementPrintService->buildPayload((int) Auth::user()->tenant_id, $familyId);
+            $payload = $this->familyStatementPrintService->buildPayload(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(), $familyId);
         } catch (\RuntimeException $exception) {
             return response()->json([
                 'success' => false,

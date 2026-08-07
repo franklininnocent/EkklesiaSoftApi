@@ -4,6 +4,9 @@ namespace Modules\Tenants\Providers;
 
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\ServiceProvider;
+use Modules\Tenants\Contracts\SupportSessionResolver;
+use Modules\Tenants\Support\NullSupportSessionResolver;
+use Modules\Tenants\Support\TenantContext;
 use Nwidart\Modules\Traits\PathNamespace;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -52,6 +55,9 @@ class TenantsServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->singleton(SupportSessionResolver::class, NullSupportSessionResolver::class);
+        $this->app->scoped(TenantContext::class, static fn () => TenantContext::empty());
+
         $this->app->register(EventServiceProvider::class);
         $this->app->register(RouteServiceProvider::class);
     }

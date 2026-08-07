@@ -28,14 +28,14 @@ class ChurchSocialMediaController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
                 ], 404);
             }
 
-            $query = ChurchSocialMedia::where('tenant_id', $user->tenant_id);
+            $query = ChurchSocialMedia::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId());
 
             // Filter by platform
             if ($request->has('platform')) {
@@ -83,7 +83,7 @@ class ChurchSocialMediaController extends Controller
         try {
             $user = auth()->user();
             
-            $socialMedia = ChurchSocialMedia::where('tenant_id', $user->tenant_id)
+            $socialMedia = ChurchSocialMedia::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId())
                 ->findOrFail($id);
 
             return response()->json([
@@ -114,7 +114,7 @@ class ChurchSocialMediaController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -139,14 +139,14 @@ class ChurchSocialMediaController extends Controller
                 'active' => 'nullable|boolean',
             ]);
 
-            $validated['tenant_id'] = $user->tenant_id;
+            $validated['tenant_id'] = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $validated['is_primary'] = $validated['is_primary'] ?? 0;
             $validated['active'] = $validated['active'] ?? 1;
             $validated['display_order'] = $validated['display_order'] ?? 0;
 
             // If this is being set as primary, unset other primary accounts for this platform
             if ($validated['is_primary']) {
-                ChurchSocialMedia::where('tenant_id', $user->tenant_id)
+                ChurchSocialMedia::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId())
                     ->where('platform', $validated['platform'])
                     ->where('is_primary', 1)
                     ->update(['is_primary' => 0]);
@@ -160,7 +160,7 @@ class ChurchSocialMediaController extends Controller
 
                 Log::info('Church social media account created', [
                     'social_media_id' => $socialMedia->id,
-                    'tenant_id' => $user->tenant_id,
+                    'tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                     'platform' => $socialMedia->platform,
                     'created_by' => $user->id,
                 ]);
@@ -204,7 +204,7 @@ class ChurchSocialMediaController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -218,7 +218,7 @@ class ChurchSocialMediaController extends Controller
                 ], 403);
             }
 
-            $socialMedia = ChurchSocialMedia::where('tenant_id', $user->tenant_id)
+            $socialMedia = ChurchSocialMedia::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId())
                 ->findOrFail($id);
 
             // Validation
@@ -235,7 +235,7 @@ class ChurchSocialMediaController extends Controller
             // If this is being set as primary, unset other primary accounts for this platform
             if (isset($validated['is_primary']) && $validated['is_primary']) {
                 $platform = $validated['platform'] ?? $socialMedia->platform;
-                ChurchSocialMedia::where('tenant_id', $user->tenant_id)
+                ChurchSocialMedia::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId())
                     ->where('platform', $platform)
                     ->where('is_primary', 1)
                     ->where('id', '!=', $id)
@@ -250,7 +250,7 @@ class ChurchSocialMediaController extends Controller
 
                 Log::info('Church social media account updated', [
                     'social_media_id' => $socialMedia->id,
-                    'tenant_id' => $user->tenant_id,
+                    'tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                     'platform' => $socialMedia->platform,
                     'updated_by' => $user->id,
                 ]);
@@ -294,7 +294,7 @@ class ChurchSocialMediaController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -308,7 +308,7 @@ class ChurchSocialMediaController extends Controller
                 ], 403);
             }
 
-            $socialMedia = ChurchSocialMedia::where('tenant_id', $user->tenant_id)
+            $socialMedia = ChurchSocialMedia::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId())
                 ->findOrFail($id);
 
             DB::beginTransaction();
@@ -320,7 +320,7 @@ class ChurchSocialMediaController extends Controller
 
                 Log::info('Church social media account deleted', [
                     'social_media_id' => $id,
-                    'tenant_id' => $user->tenant_id,
+                    'tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                     'platform' => $platform,
                     'deleted_by' => $user->id,
                 ]);

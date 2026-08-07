@@ -22,7 +22,7 @@ class DonationProjectsController extends Controller
 
     public function index(): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
 
         $projects = DonationProject::forTenant($tenantId)
             ->where('entity_kind', 'project')
@@ -47,7 +47,7 @@ class DonationProjectsController extends Controller
 
     public function show(string $id): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
 
         $project = DonationProject::forTenant($tenantId)
             ->with(['fund', 'assignments.family'])
@@ -62,7 +62,7 @@ class DonationProjectsController extends Controller
 
     public function dashboard(string $id): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $project = DonationProject::forTenant($tenantId)->findOrFail($id);
 
         return response()->json([
@@ -73,7 +73,7 @@ class DonationProjectsController extends Controller
 
     public function store(StoreProjectRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
 
         $project = $this->projectService->create($tenantId, $userId, $request->validated());
@@ -91,7 +91,7 @@ class DonationProjectsController extends Controller
 
     public function update(string $id, UpdateProjectRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $project = DonationProject::forTenant($tenantId)->findOrFail($id);
 
@@ -106,7 +106,7 @@ class DonationProjectsController extends Controller
 
     public function generateInstallments(string $id, GenerateProjectInstallmentsRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $project = DonationProject::forTenant($tenantId)->findOrFail($id);
 

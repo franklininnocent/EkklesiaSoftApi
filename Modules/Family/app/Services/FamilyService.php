@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Modules\Family\Events\FamilyMemberStatusChanged;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
 use Modules\Family\app\Repositories\FamilyRepository;
@@ -25,16 +26,22 @@ class FamilyService
      */
     protected FamilyFileUploadService $fileUploadService;
 
+    protected FamilyAuditService $familyAuditService;
+
     /**
      * FamilyService constructor.
      *
      * @param FamilyRepository $familyRepository
      * @param FamilyFileUploadService $fileUploadService
      */
-    public function __construct(FamilyRepository $familyRepository, FamilyFileUploadService $fileUploadService)
-    {
+    public function __construct(
+        FamilyRepository $familyRepository,
+        FamilyFileUploadService $fileUploadService,
+        FamilyAuditService $familyAuditService
+    ) {
         $this->familyRepository = $familyRepository;
         $this->fileUploadService = $fileUploadService;
+        $this->familyAuditService = $familyAuditService;
     }
 
     /**
@@ -114,6 +121,19 @@ class FamilyService
                 'user_id' => $userId
             ]);
 
+            try {
+                $this->familyAuditService->log(
+                    (int) $tenantId,
+                    'family.created',
+                    'family',
+                    (string) $family->id,
+                    null,
+                    ['family_code' => $family->family_code],
+                );
+            } catch (\Throwable $e) {
+                Log::warning('Family audit log failed on create', ['error' => $e->getMessage()]);
+            }
+
             // Reload with relationships
             return $this->familyRepository->findById($family->id, $tenantId);
 
@@ -170,6 +190,8 @@ class FamilyService
             $this->familyRepository->update($family, $data);
 
             // Handle members if provided
+            $pendingStatusChangeEvents = [];
+
             if (!empty($membersData) && is_array($membersData)) {
                 foreach ($membersData as $memberData) {
                     // Extract and normalize member ID (could be UUID string, null, or empty)
@@ -198,9 +220,15 @@ class FamilyService
                                 'member_id' => $memberId,
                                 'family_id' => $family->id
                             ]);
+                            $previousStatus = $member->status;
                             $memberData['updated_by'] = $userId;
                             $this->enforceSacramentDependencies($memberData, $member);
                             $this->familyRepository->updateMember($member, $memberData);
+                            $member->refresh();
+                            $pendingStatusChangeEvents[] = [
+                                'member' => $member,
+                                'previous_status' => $previousStatus,
+                            ];
                         } else {
                             // Member ID provided but not found - log error and throw exception
                             Log::error('Member ID provided but not found in database', [
@@ -228,12 +256,33 @@ class FamilyService
 
             DB::commit();
 
+            foreach ($pendingStatusChangeEvents as $statusChangeEvent) {
+                $this->dispatchFamilyMemberStatusChangedEvent(
+                    $tenantId,
+                    $statusChangeEvent['member'],
+                    $statusChangeEvent['previous_status'],
+                );
+            }
+
             Log::info('Family updated', [
                 'family_id' => $family->id,
                 'tenant_id' => $tenantId,
                 'user_id' => $userId,
                 'members_processed' => !empty($membersData) ? count($membersData) : 0
             ]);
+
+            try {
+                $this->familyAuditService->log(
+                    (int) $tenantId,
+                    'family.updated',
+                    'family',
+                    (string) $family->id,
+                    null,
+                    ['members_processed' => ! empty($membersData) ? count($membersData) : 0],
+                );
+            } catch (\Throwable $e) {
+                Log::warning('Family audit log failed on update', ['error' => $e->getMessage()]);
+            }
 
             // Reload with relationships
             return $this->familyRepository->findById($id, $tenantId);
@@ -280,6 +329,17 @@ class FamilyService
                 'tenant_id' => $tenantId,
                 'user_id' => $userId
             ]);
+
+            try {
+                $this->familyAuditService->log(
+                    (int) $tenantId,
+                    'family.deleted',
+                    'family',
+                    (string) $id,
+                );
+            } catch (\Throwable $e) {
+                Log::warning('Family audit log failed on delete', ['error' => $e->getMessage()]);
+            }
 
             return $result;
 
@@ -439,6 +499,8 @@ class FamilyService
 
             DB::beginTransaction();
 
+            $previousStatus = $member->status;
+
             // Log the data being sent for debugging
             Log::info('Updating existing family member', [
                 'member_id' => $memberId,
@@ -470,6 +532,9 @@ class FamilyService
             }
 
             DB::commit();
+
+            $member->refresh();
+            $this->dispatchFamilyMemberStatusChangedEvent($tenantId, $member, $previousStatus);
 
             Log::info('Family member updated', [
                 'member_id' => $memberId,
@@ -518,14 +583,25 @@ class FamilyService
                 return false;
             }
 
+            $previousStatus = $member->status;
+            $memberIdValue = $member->id;
+
             DB::beginTransaction();
 
             $result = $this->familyRepository->deleteMember($member);
 
             DB::commit();
 
+            $this->dispatchFamilyMemberStatusChangedEvent(
+                $tenantId,
+                null,
+                $previousStatus,
+                $memberIdValue,
+                deleted: true,
+            );
+
             Log::info('Family member deleted', [
-                'member_id' => $memberId,
+                'member_id' => $memberIdValue,
                 'family_id' => $familyId,
                 'tenant_id' => $tenantId,
                 'user_id' => $userId
@@ -871,6 +947,94 @@ class FamilyService
     public function getAllMembers(string $tenantId, array $filters = [], int $perPage = 10, int $page = 1): LengthAwarePaginator
     {
         return $this->familyRepository->getAllMembers($tenantId, $filters, $perPage, $page);
+    }
+
+    private function dispatchFamilyMemberStatusChangedEvent(
+        int|string $tenantId,
+        ?FamilyMember $member,
+        string $previousStatus,
+        ?string $familyMemberId = null,
+        bool $deleted = false,
+    ): void {
+        $familyMemberId ??= $member?->id;
+
+        if ($familyMemberId === null) {
+            return;
+        }
+
+        if ($deleted) {
+            if (! $this->shouldEmitCensusStatusEvent($previousStatus, 'deleted')) {
+                return;
+            }
+
+            FamilyMemberStatusChanged::dispatch(
+                (int) $tenantId,
+                $familyMemberId,
+                $previousStatus,
+                'deleted',
+                now()->toDateString(),
+            );
+
+            return;
+        }
+
+        if ($member === null) {
+            return;
+        }
+
+        $newStatus = $this->normalizeCensusEventStatus($member->status);
+
+        if ($newStatus === null || ! $this->shouldEmitCensusStatusEvent($previousStatus, $newStatus)) {
+            return;
+        }
+
+        FamilyMemberStatusChanged::dispatch(
+            (int) $tenantId,
+            $member->id,
+            $previousStatus,
+            $newStatus,
+            $this->resolveCensusEffectiveDate($member, $newStatus),
+        );
+    }
+
+    private function shouldEmitCensusStatusEvent(string $previousStatus, string $newStatus): bool
+    {
+        $triggers = ['inactive', 'deceased', 'transferred', 'deleted'];
+
+        if (! in_array($newStatus, $triggers, true)) {
+            return false;
+        }
+
+        $normalizedPrevious = $this->normalizeCensusEventStatus($previousStatus) ?? $previousStatus;
+
+        if ($normalizedPrevious === 'migrated') {
+            $normalizedPrevious = 'transferred';
+        }
+
+        if (in_array($normalizedPrevious, $triggers, true)) {
+            return false;
+        }
+
+        return $normalizedPrevious !== $newStatus;
+    }
+
+    private function normalizeCensusEventStatus(string $status): ?string
+    {
+        return match ($status) {
+            'migrated' => 'transferred',
+            'inactive', 'deceased' => $status,
+            'deleted' => 'deleted',
+            default => null,
+        };
+    }
+
+    private function resolveCensusEffectiveDate(FamilyMember $member, string $newStatus): string
+    {
+        if ($newStatus === 'deceased' && $member->deceased_date !== null) {
+            return $member->deceased_date->toDateString();
+        }
+
+        return now()->toDateString();
     }
 }
 

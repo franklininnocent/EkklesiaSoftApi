@@ -23,12 +23,18 @@ return Application::configure(basePath: dirname(__DIR__))
             'passport' => \App\Http\Middleware\PassportAuthenticate::class,
             'tenant.permission' => \Modules\RolesAndPermissions\Http\Middleware\EnsureTenantPermission::class,
             'tenant.feature.donations' => \Modules\Donations\Http\Middleware\EnsureDonationFeatureEnabled::class,
+            'tenant.feature.ministries' => \Modules\MinistriesAssociations\Http\Middleware\EnsureMinistriesFeatureEnabled::class,
+            'support.permission' => \Modules\SupportAccess\Http\Middleware\EnsureSupportPermission::class,
+            'support.mode' => \Modules\SupportAccess\Http\Middleware\EnforceSupportSessionMode::class,
         ]);
         
-        // Configure API middleware group - set default guard to API  
+        // Configure API middleware group - set default guard to API
+        // Order: bindings → Passport identity → TenantContext bind (SSOT for effective tenant)
         $middleware->api(prepend: [
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
             \App\Http\Middleware\PassportAuthenticate::class,
+            \Modules\Tenants\Http\Middleware\ResolveTenantContext::class,
+            \Modules\SupportAccess\Http\Middleware\EnforceSupportSessionMode::class,
         ]);
         
         // Add security headers to all responses

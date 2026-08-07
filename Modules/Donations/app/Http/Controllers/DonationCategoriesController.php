@@ -20,7 +20,7 @@ class DonationCategoriesController extends Controller
 
     public function index(): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $categories = DonationCategory::forTenant($tenantId)->orderBy('name')->get();
 
         return response()->json([
@@ -31,7 +31,7 @@ class DonationCategoriesController extends Controller
 
     public function store(StoreDonationCategoryRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $payload = $request->validated();
         $payload['tenant_id'] = $tenantId;
@@ -50,7 +50,7 @@ class DonationCategoriesController extends Controller
 
     public function seedDefaults(): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
 
         (new \Modules\Donations\Database\Seeders\DonationCategorySeeder())->run($tenantId, $userId);
@@ -67,7 +67,7 @@ class DonationCategoriesController extends Controller
 
     public function update(UpdateDonationCategoryRequest $request, string $id): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $category = DonationCategory::forTenant($tenantId)->findOrFail($id);
         $oldValues = $category->toArray();
@@ -86,7 +86,7 @@ class DonationCategoriesController extends Controller
 
     public function destroy(string $id): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $category = DonationCategory::forTenant($tenantId)->findOrFail($id);
 
         $hasDonations = Donation::forTenant($tenantId)

@@ -39,7 +39,7 @@ class BCCController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             
             if (!$tenantId) {
                 return response()->json([
@@ -89,7 +89,7 @@ class BCCController extends Controller
     public function store(StoreBCCRequest $request): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
             
             if (!$tenantId) {
@@ -129,7 +129,7 @@ class BCCController extends Controller
     public function show(string $id): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             
             if (!$tenantId) {
                 return response()->json([
@@ -171,7 +171,7 @@ class BCCController extends Controller
     public function update(UpdateBCCRequest $request, string $id): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
             
             if (!$tenantId) {
@@ -271,7 +271,7 @@ class BCCController extends Controller
     public function statistics(): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             
             if (!$tenantId) {
                 return response()->json([
@@ -304,7 +304,7 @@ class BCCController extends Controller
     public function withSpace(): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             
             if (!$tenantId) {
                 return response()->json([
@@ -340,7 +340,7 @@ class BCCController extends Controller
     public function leaders(string $bccId): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             
             if (!$tenantId) {
                 return response()->json([
@@ -382,7 +382,7 @@ class BCCController extends Controller
     public function addLeader(StoreBCCLeaderRequest $request, string $bccId): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
             
             if (!$tenantId) {
@@ -432,7 +432,7 @@ class BCCController extends Controller
     public function updateLeader(UpdateBCCLeaderRequest $request, string $bccId, string $leaderId): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
             
             if (!$tenantId) {
@@ -482,7 +482,7 @@ class BCCController extends Controller
     public function deleteLeader(string $bccId, string $leaderId): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
             
             if (!$tenantId) {
@@ -527,7 +527,7 @@ class BCCController extends Controller
     public function assignFamilies(AssignFamiliesRequest $request, string $bccId): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
             
             if (!$tenantId) {
@@ -568,7 +568,7 @@ class BCCController extends Controller
     public function removeFamilies(AssignFamiliesRequest $request): JsonResponse
     {
         try {
-            $tenantId = Auth::user()->tenant_id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
             
             if (!$tenantId) {

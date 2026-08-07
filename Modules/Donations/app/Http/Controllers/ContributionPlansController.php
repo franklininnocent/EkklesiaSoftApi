@@ -24,7 +24,7 @@ class ContributionPlansController extends Controller
 
     public function index(): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
 
         $plans = ContributionPlan::forTenant($tenantId)
             ->with('fund')
@@ -40,7 +40,7 @@ class ContributionPlansController extends Controller
 
     public function show(string $id): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
 
         $plan = ContributionPlan::forTenant($tenantId)
             ->with(['fund', 'assignments.family'])
@@ -55,7 +55,7 @@ class ContributionPlansController extends Controller
 
     public function store(StoreContributionPlanRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
 
         $plan = $this->planService->create($tenantId, $userId, $request->validated());
@@ -69,7 +69,7 @@ class ContributionPlansController extends Controller
 
     public function update(string $id, UpdateContributionPlanRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $plan = ContributionPlan::forTenant($tenantId)->findOrFail($id);
 
@@ -84,7 +84,7 @@ class ContributionPlansController extends Controller
 
     public function revisionHistory(string $id, Request $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         ContributionPlan::forTenant($tenantId)->findOrFail($id);
 
         $history = ContributionPlanRevisionHistory::query()
@@ -102,7 +102,7 @@ class ContributionPlansController extends Controller
 
     public function generateDues(string $id, GenerateContributionDuesRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $plan = ContributionPlan::forTenant($tenantId)->findOrFail($id);
         $payload = $request->validated();

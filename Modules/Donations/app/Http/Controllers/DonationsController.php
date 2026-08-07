@@ -25,7 +25,7 @@ class DonationsController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $query = Donation::forTenant($tenantId)->with(['donor', 'category'])->orderByDesc('created_at');
 
         if ($request->filled('status')) {
@@ -63,7 +63,7 @@ class DonationsController extends Controller
 
     public function show(string $id): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $donation = Donation::forTenant($tenantId)->with(['donor', 'category'])->findOrFail($id);
 
         return response()->json([
@@ -74,7 +74,7 @@ class DonationsController extends Controller
 
     public function store(StoreDonationRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $payload = $request->validated();
         $payload['tenant_id'] = $tenantId;
@@ -120,7 +120,7 @@ class DonationsController extends Controller
 
     public function update(UpdateDonationRequest $request, string $id): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $donation = Donation::forTenant($tenantId)->findOrFail($id);
         $oldValues = $donation->toArray();
@@ -139,7 +139,7 @@ class DonationsController extends Controller
 
     public function collect(CollectVoluntaryDonationRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
 
         try {

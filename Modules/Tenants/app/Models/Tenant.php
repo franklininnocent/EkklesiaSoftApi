@@ -386,6 +386,14 @@ class Tenant extends Model
     }
 
     /**
+     * Whether the Ministries & Associations module is enabled for this tenant.
+     */
+    public function supportsMinistriesAssociations(): bool
+    {
+        return $this->hasFeature('ministries_associations');
+    }
+
+    /**
      * Get a specific setting value.
      */
     public function getSetting(string $key, $default = null)

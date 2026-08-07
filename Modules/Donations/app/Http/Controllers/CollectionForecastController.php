@@ -23,7 +23,7 @@ class CollectionForecastController extends Controller
         return response()->json([
             'success' => true,
             'data' => $this->forecastService->build(
-                (int) Auth::user()->tenant_id,
+                app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                 (int) ($validated['months'] ?? 3)
             ),
         ]);

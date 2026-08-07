@@ -21,7 +21,7 @@ class DonationReceiptsController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $query = DonationReceipt::forTenant($tenantId)
             ->with([
                 'payment:id,payment_number,payer_name,amount,payment_date,method,status,family_id,is_anonymous',
@@ -93,7 +93,7 @@ class DonationReceiptsController extends Controller
 
     public function showByPayment(string $paymentId): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
 
         $payment = DonationPayment::forTenant($tenantId)
             ->with(['allocations', 'receipt', 'family', 'donor'])
@@ -115,7 +115,7 @@ class DonationReceiptsController extends Controller
 
     public function printByPayment(string $paymentId)
     {
-        $tenantId = (int) Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
 
         $payment = DonationPayment::forTenant($tenantId)
             ->with(['allocations', 'receipt', 'family', 'donor'])
@@ -139,7 +139,7 @@ class DonationReceiptsController extends Controller
 
     public function show(string $id): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $receipt = DonationReceipt::forTenant($tenantId)
             ->with(['payment.allocations', 'payment.family', 'payment.donor'])
             ->findOrFail($id);

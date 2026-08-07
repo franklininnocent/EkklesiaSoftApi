@@ -26,7 +26,7 @@ class DonationReportsController extends Controller
 
     public function export(Request $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
 
         $report = DonationReportExport::create([
@@ -52,7 +52,7 @@ class DonationReportsController extends Controller
 
     public function exports(): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
 
         return response()->json([
             'success' => true,
@@ -64,7 +64,7 @@ class DonationReportsController extends Controller
     {
         return response()->json([
             'success' => true,
-            'data' => $this->reportService->buildExecutiveNarrative((int) Auth::user()->tenant_id),
+            'data' => $this->reportService->buildExecutiveNarrative(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId()),
         ]);
     }
 
@@ -72,13 +72,13 @@ class DonationReportsController extends Controller
     {
         return response()->json([
             'success' => true,
-            'data' => $this->reportService->buildParishComparisonReport((int) Auth::user()->tenant_id),
+            'data' => $this->reportService->buildParishComparisonReport(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId()),
         ]);
     }
 
     public function stewardshipPrint()
     {
-        $tenantId = (int) Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $payload = $this->stewardshipPrintService->buildPayload($tenantId);
         $html = $this->stewardshipPrintService->renderHtml($payload);
 
@@ -89,7 +89,7 @@ class DonationReportsController extends Controller
 
     public function executiveBoardPrint()
     {
-        $tenantId = (int) Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $payload = $this->executiveBoardPackPrintService->buildPayload($tenantId);
         $html = $this->executiveBoardPackPrintService->renderHtml($payload);
 

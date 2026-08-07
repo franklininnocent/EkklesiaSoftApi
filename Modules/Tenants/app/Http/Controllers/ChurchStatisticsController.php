@@ -29,14 +29,14 @@ class ChurchStatisticsController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
                 ], 404);
             }
 
-            $query = ChurchStatistic::where('tenant_id', $user->tenant_id);
+            $query = ChurchStatistic::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId());
 
             // Filter by year
             if ($request->has('year')) {
@@ -91,7 +91,7 @@ class ChurchStatisticsController extends Controller
         try {
             $user = auth()->user();
             
-            $statistic = ChurchStatistic::where('tenant_id', $user->tenant_id)
+            $statistic = ChurchStatistic::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId())
                 ->findOrFail($id);
 
             return response()->json([
@@ -122,7 +122,7 @@ class ChurchStatisticsController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -150,10 +150,10 @@ class ChurchStatisticsController extends Controller
                 'notes' => 'nullable|string|max:2000',
             ]);
 
-            $validated['tenant_id'] = $user->tenant_id;
+            $validated['tenant_id'] = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
 
             // Check if record already exists for this period
-            $existing = ChurchStatistic::where('tenant_id', $user->tenant_id)
+            $existing = ChurchStatistic::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId())
                 ->where('year', $validated['year'])
                 ->where('month', $validated['month'] ?? null)
                 ->first();
@@ -173,7 +173,7 @@ class ChurchStatisticsController extends Controller
 
                 Log::info('Church statistic created', [
                     'statistic_id' => $statistic->id,
-                    'tenant_id' => $user->tenant_id,
+                    'tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                     'period' => $statistic->period,
                     'created_by' => $user->id,
                 ]);
@@ -217,7 +217,7 @@ class ChurchStatisticsController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -231,7 +231,7 @@ class ChurchStatisticsController extends Controller
                 ], 403);
             }
 
-            $statistic = ChurchStatistic::where('tenant_id', $user->tenant_id)
+            $statistic = ChurchStatistic::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId())
                 ->findOrFail($id);
 
             // Validation
@@ -253,7 +253,7 @@ class ChurchStatisticsController extends Controller
                 $year = $validated['year'] ?? $statistic->year;
                 $month = $validated['month'] ?? $statistic->month;
 
-                $existing = ChurchStatistic::where('tenant_id', $user->tenant_id)
+                $existing = ChurchStatistic::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId())
                     ->where('year', $year)
                     ->where('month', $month)
                     ->where('id', '!=', $id)
@@ -275,7 +275,7 @@ class ChurchStatisticsController extends Controller
 
                 Log::info('Church statistic updated', [
                     'statistic_id' => $statistic->id,
-                    'tenant_id' => $user->tenant_id,
+                    'tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                     'period' => $statistic->period,
                     'updated_by' => $user->id,
                 ]);
@@ -319,7 +319,7 @@ class ChurchStatisticsController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -333,7 +333,7 @@ class ChurchStatisticsController extends Controller
                 ], 403);
             }
 
-            $statistic = ChurchStatistic::where('tenant_id', $user->tenant_id)
+            $statistic = ChurchStatistic::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId())
                 ->findOrFail($id);
 
             DB::beginTransaction();
@@ -345,7 +345,7 @@ class ChurchStatisticsController extends Controller
 
                 Log::info('Church statistic deleted', [
                     'statistic_id' => $id,
-                    'tenant_id' => $user->tenant_id,
+                    'tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                     'period' => $period,
                     'deleted_by' => $user->id,
                 ]);

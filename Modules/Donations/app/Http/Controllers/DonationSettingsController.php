@@ -17,7 +17,7 @@ class DonationSettingsController extends Controller
 
     public function show(): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $settings = DonationSetting::forTenant($tenantId)->first();
 
         return response()->json([
@@ -28,7 +28,7 @@ class DonationSettingsController extends Controller
 
     public function update(UpdateDonationSettingsRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $payload = $request->validated();
 

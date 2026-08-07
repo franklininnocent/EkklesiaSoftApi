@@ -25,7 +25,7 @@ class DonationSavedViewsController extends Controller
     {
         return response()->json([
             'success' => true,
-            'data' => $this->savedViewService->apply((int) Auth::user()->tenant_id, $key),
+            'data' => $this->savedViewService->apply(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(), $key),
         ]);
     }
 }

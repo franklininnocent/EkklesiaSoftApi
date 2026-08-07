@@ -21,7 +21,7 @@ class RecurringDonationSchedulesController extends Controller
 
     public function index(): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $schedules = RecurringDonationSchedule::forTenant($tenantId)
             ->orderBy('next_run_on')
             ->paginate(20);
@@ -34,7 +34,7 @@ class RecurringDonationSchedulesController extends Controller
 
     public function store(StoreRecurringDonationScheduleRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $payload = $request->validated();
         $payload['tenant_id'] = $tenantId;
@@ -53,7 +53,7 @@ class RecurringDonationSchedulesController extends Controller
 
     public function update(UpdateRecurringDonationScheduleRequest $request, string $id): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $schedule = RecurringDonationSchedule::forTenant($tenantId)->findOrFail($id);
         $oldValues = $schedule->toArray();
@@ -72,7 +72,7 @@ class RecurringDonationSchedulesController extends Controller
 
     public function pause(string $id): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $schedule = RecurringDonationSchedule::forTenant($tenantId)->findOrFail($id);
         $schedule = $this->recurringService->updateStatus($schedule, $userId, 'paused');
@@ -86,7 +86,7 @@ class RecurringDonationSchedulesController extends Controller
 
     public function cancel(string $id): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $schedule = RecurringDonationSchedule::forTenant($tenantId)->findOrFail($id);
         $schedule = $this->recurringService->updateStatus($schedule, $userId, 'cancelled');
@@ -100,7 +100,7 @@ class RecurringDonationSchedulesController extends Controller
 
     public function runDue(): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $result = $this->recurringService->runDueSchedules($tenantId);
 
         return response()->json([
@@ -112,7 +112,7 @@ class RecurringDonationSchedulesController extends Controller
 
     public function queueRunDue(): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         RunRecurringDonationSchedulesJob::dispatch($tenantId);
 
         return response()->json([

@@ -20,7 +20,13 @@ class RolesAndPermissionsDatabaseSeeder extends Seeder
         $this->call([
             PermissionsTableSeeder::class,
             TenantPermissionCatalogSeeder::class,
+            SupportAccessPermissionSeeder::class,
+            SupportAccessRoleSeeder::class,
         ]);
+
+        if (class_exists(\Modules\MinistriesAssociations\Database\Seeders\MinistriesAssociationsPermissionSeeder::class)) {
+            $this->call(\Modules\MinistriesAssociations\Database\Seeders\MinistriesAssociationsPermissionSeeder::class);
+        }
 
         $this->command->line('');
         $this->command->info('✅ RolesAndPermissions Module seeded successfully!');
