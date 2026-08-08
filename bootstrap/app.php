@@ -24,6 +24,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'tenant.permission' => \Modules\RolesAndPermissions\Http\Middleware\EnsureTenantPermission::class,
             'tenant.feature.donations' => \Modules\Donations\Http\Middleware\EnsureDonationFeatureEnabled::class,
             'tenant.feature.ministries' => \Modules\MinistriesAssociations\Http\Middleware\EnsureMinistriesFeatureEnabled::class,
+            'tenant.subscription' => \Modules\Tenants\Http\Middleware\EnsureSubscriptionAccess::class,
             'support.permission' => \Modules\SupportAccess\Http\Middleware\EnsureSupportPermission::class,
             'support.mode' => \Modules\SupportAccess\Http\Middleware\EnforceSupportSessionMode::class,
         ]);

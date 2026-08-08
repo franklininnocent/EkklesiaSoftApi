@@ -32,6 +32,7 @@ class PermissionsTableSeeder extends Seeder
             ['name' => 'tenants.delete', 'display_name' => 'Delete Tenants', 'description' => 'Can delete tenants', 'module' => 'Tenants', 'category' => 'tenants'],
             ['name' => 'tenants.activate', 'display_name' => 'Activate/Deactivate Tenants', 'description' => 'Can activate or deactivate tenants', 'module' => 'Tenants', 'category' => 'tenants'],
             ['name' => 'tenants.statistics', 'display_name' => 'View Tenant Statistics', 'description' => 'Can view tenant statistics', 'module' => 'Tenants', 'category' => 'tenants'],
+            ['name' => 'subscription.view', 'display_name' => 'View Subscription', 'description' => 'Can view own church subscription status', 'module' => 'Tenants', 'category' => 'subscription', 'scope' => Permission::SCOPE_TENANT],
             
             // Role Management Permissions
             ['name' => 'roles.view', 'display_name' => 'View Roles', 'description' => 'Can view role list and details', 'module' => 'RolesAndPermissions', 'category' => 'roles'],
@@ -50,9 +51,11 @@ class PermissionsTableSeeder extends Seeder
         ];
 
         foreach ($permissions as $permissionData) {
-            $scope = $permissionData['module'] === 'Tenants'
-                ? Permission::SCOPE_PLATFORM
-                : Permission::SCOPE_TENANT;
+            $scope = $permissionData['scope']
+                ?? ($permissionData['module'] === 'Tenants'
+                    ? Permission::SCOPE_PLATFORM
+                    : Permission::SCOPE_TENANT);
+            unset($permissionData['scope']);
 
             Permission::updateOrCreate(['name' => $permissionData['name']], array_merge($permissionData, [
                 'tenant_id' => null,

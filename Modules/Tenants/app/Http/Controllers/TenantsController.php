@@ -17,6 +17,7 @@ use Modules\Tenants\Http\Requests\StoreTenantRequest;
 use Modules\Tenants\Http\Requests\UpdateTenantRequest;
 use Modules\Tenants\Services\FileUploadService;
 use Modules\Tenants\Services\AddressService;
+use Modules\Tenants\Services\SubscriptionService;
 use Modules\Authentication\Models\User;
 use Modules\Authentication\Models\Role;
 use Modules\RolesAndPermissions\Models\Permission;
@@ -26,13 +27,16 @@ class TenantsController extends Controller
 {
     protected $fileUploadService;
     protected $addressService;
+    protected SubscriptionService $subscriptionService;
 
     public function __construct(
         FileUploadService $fileUploadService,
-        AddressService $addressService
+        AddressService $addressService,
+        SubscriptionService $subscriptionService
     ) {
         $this->fileUploadService = $fileUploadService;
         $this->addressService = $addressService;
+        $this->subscriptionService = $subscriptionService;
     }
 
     /**
@@ -167,6 +171,8 @@ class TenantsController extends Controller
                 $tenant->logo_full_url = $this->fileUploadService->getTenantLogoUrl($tenant->logo_url);
             }
 
+            $subscriptionStatus = $this->subscriptionService->resolveStatus($tenant);
+
             return response()->json([
                 'success' => true,
                 'data' => $tenant,
@@ -176,6 +182,9 @@ class TenantsController extends Controller
                     'remaining_slots' => $tenant->getRemainingUserSlots(),
                     'has_active_subscription' => $tenant->hasActiveSubscription(),
                     'is_in_trial' => $tenant->isInTrial(),
+                    'subscription_status' => $subscriptionStatus,
+                    'allows_gated_access' => $this->subscriptionService->allowsGatedAccess($tenant),
+                    'subscription_suspended_at' => $tenant->subscription_suspended_at?->toIso8601String(),
                 ],
             ]);
         } catch (\Exception $e) {
@@ -1264,8 +1273,8 @@ class TenantsController extends Controller
     }
 
     /**
-     * Upgrade tenant subscription plan.
-     * 
+     * Upgrade tenant subscription plan (admin entitlement grant — no payment).
+     *
      * @route POST /api/tenant/{id}/subscription/upgrade
      */
     public function upgradeSubscription(Request $request, $id): JsonResponse
@@ -1279,80 +1288,31 @@ class TenantsController extends Controller
             }
 
             $validated = $request->validate([
-                'plan' => 'required|string|in:free,basic,premium,enterprise',
-                'subscription_duration_months' => 'nullable|integer|min:1|max:60',
+                'plan' => 'required|string|max:255',
+                'subscription_duration_months' => 'nullable|integer|min:1|max:120',
+                'reason' => 'nullable|string|max:500',
             ]);
 
             $tenant = Tenant::findOrFail($id);
-            $newPlan = $validated['plan'];
-            $durationMonths = (int) ($validated['subscription_duration_months'] ?? 12);
+            $user = auth()->user();
 
-            // Get plan configuration
-            $plans = config('tenants.plans');
-            if (!isset($plans[$newPlan])) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Invalid subscription plan',
-                ], 422);
-            }
+            $tenant = $this->subscriptionService->applyPlan($tenant, [
+                'plan' => $validated['plan'],
+                'subscription_duration_months' => $validated['subscription_duration_months'] ?? 12,
+                'reason' => $validated['reason'] ?? null,
+                'source' => 'admin_ui',
+            ], $user?->id, $user?->role_name ?? $user?->role?->name);
 
-            $planConfig = $plans[$newPlan];
-
-            // Check if upgrading or downgrading to Free (allowed for grace periods/exceptions)
-            $currentPlanOrder = ['free' => 0, 'basic' => 1, 'premium' => 2, 'enterprise' => 3];
-            $newPlanOrder = $currentPlanOrder[$newPlan];
-            $oldPlanOrder = $currentPlanOrder[$tenant->plan] ?? 0;
-
-            // Allow upgrades or downgrades to Free plan (for grace periods, exceptions, etc.)
-            if ($newPlanOrder < $oldPlanOrder && $newPlan !== 'free') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Cannot downgrade to this plan. Only downgrades to Free plan are allowed for special cases.',
-                ], 422);
-            }
-
-            // Calculate new subscription end date
-            $subscriptionEndsAt = now()->addMonths($durationMonths);
-            
-            // For Free plan, set 30-day trial period
-            $trialDays = config('tenants.trial_days', 30);
-            $trialEndsAt = null;
-            if ($newPlan === 'free') {
-                $trialEndsAt = now()->addDays($trialDays);
-            }
-
-            // Update tenant subscription
-            $updateData = [
-                'plan' => $newPlan,
-                'max_users' => $planConfig['max_users'],
-                'max_storage_mb' => $planConfig['max_storage_mb'],
-                'subscription_ends_at' => $subscriptionEndsAt,
-                'features' => $planConfig['features'],
-                'updated_by' => auth()->id(),
-            ];
-            
-            // Add trial_ends_at for Free plan
-            if ($newPlan === 'free') {
-                $updateData['trial_ends_at'] = $trialEndsAt;
-            }
-            
-            $tenant->update($updateData);
-
-            Log::info('Tenant subscription upgraded', [
-                'tenant_id' => $id,
-                'old_plan' => $tenant->getOriginal('plan'),
-                'new_plan' => $newPlan,
-                'subscription_ends_at' => $subscriptionEndsAt,
-                'upgraded_by' => auth()->id(),
-            ]);
+            $plan = \Modules\Tenants\Models\SubscriptionPlan::query()->where('key', $tenant->plan)->first();
 
             return response()->json([
                 'success' => true,
                 'message' => 'Subscription upgraded successfully',
                 'data' => [
                     'tenant' => $tenant->fresh(),
-                    'plan_details' => $planConfig,
-                    'subscription_ends_at' => $subscriptionEndsAt->toDateTimeString(),
+                    'plan_details' => $plan,
+                    'subscription_status' => $this->subscriptionService->resolveStatus($tenant),
+                    'subscription_ends_at' => $tenant->subscription_ends_at?->toDateTimeString(),
                 ],
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -1361,12 +1321,25 @@ class TenantsController extends Controller
                 'message' => 'Validation failed',
                 'errors' => $e->errors(),
             ], 422);
+        } catch (\RuntimeException $e) {
+            $message = match ($e->getMessage()) {
+                'invalid_plan' => 'Invalid or inactive subscription plan',
+                'downgrade_not_allowed' => 'Cannot downgrade to this plan. Only downgrades to Free plan are allowed for special cases.',
+                'duration_not_in_catalog', 'invalid_duration' => 'Invalid subscription duration',
+                default => 'Error upgrading subscription',
+            };
+            $code = in_array($e->getMessage(), ['invalid_plan', 'downgrade_not_allowed', 'duration_not_in_catalog', 'invalid_duration'], true) ? 422 : 500;
+
+            return response()->json([
+                'success' => false,
+                'message' => $message,
+            ], $code);
         } catch (\Exception $e) {
             Log::error('Error upgrading subscription: ' . $e->getMessage(), [
                 'tenant_id' => $id,
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error upgrading subscription',
@@ -1376,8 +1349,8 @@ class TenantsController extends Controller
     }
 
     /**
-     * Renew tenant subscription.
-     * 
+     * Renew tenant subscription (admin date extension — no payment).
+     *
      * @route POST /api/tenant/{id}/subscription/renew
      */
     public function renewSubscription(Request $request, $id): JsonResponse
@@ -1391,46 +1364,360 @@ class TenantsController extends Controller
             }
 
             $validated = $request->validate([
-                'duration_months' => 'nullable|integer|min:1|max:60',
+                'duration_months' => 'nullable|integer|min:1|max:120',
+                'reason' => 'nullable|string|max:500',
             ]);
 
             $tenant = Tenant::findOrFail($id);
-            $durationMonths = (int) ($validated['duration_months'] ?? 12);
+            $user = auth()->user();
 
-            // Calculate new subscription end date
-            // If subscription is already expired, start from now
-            // If subscription is still active, extend from current end date
-            $currentEndDate = $tenant->subscription_ends_at;
-            
-            if ($currentEndDate && $currentEndDate->isFuture()) {
-                // Extend from current end date
-                $newEndDate = $currentEndDate->copy()->addMonths($durationMonths);
-            } else {
-                // Start from now (expired or no subscription)
-                $newEndDate = now()->addMonths($durationMonths);
-            }
-
-            // Update tenant subscription
-            $tenant->update([
-                'subscription_ends_at' => $newEndDate,
-                'updated_by' => auth()->id(),
-            ]);
-
-            Log::info('Tenant subscription renewed', [
-                'tenant_id' => $id,
-                'old_end_date' => $currentEndDate?->toDateTimeString(),
-                'new_end_date' => $newEndDate->toDateTimeString(),
-                'duration_months' => $durationMonths,
-                'renewed_by' => auth()->id(),
-            ]);
+            $tenant = $this->subscriptionService->renew($tenant, [
+                'duration_months' => $validated['duration_months'] ?? 12,
+                'reason' => $validated['reason'] ?? null,
+                'source' => 'admin_ui',
+            ], $user?->id, $user?->role_name ?? $user?->role?->name);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Subscription renewed successfully',
                 'data' => [
                     'tenant' => $tenant->fresh(),
-                    'subscription_ends_at' => $newEndDate->toDateTimeString(),
-                    'duration_months' => $durationMonths,
+                    'subscription_status' => $this->subscriptionService->resolveStatus($tenant),
+                    'subscription_ends_at' => $tenant->subscription_ends_at?->toDateTimeString(),
+                    'duration_months' => (int) ($validated['duration_months'] ?? 12),
+                ],
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid subscription duration',
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Error renewing subscription: ' . $e->getMessage(), [
+                'tenant_id' => $id,
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error renewing subscription',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
+        }
+    }
+
+    /**
+     * Suspend tenant subscription access (admin soft-block).
+     *
+     * @route POST /api/tenant/{id}/subscription/suspend
+     */
+    public function suspendSubscription(Request $request, $id): JsonResponse
+    {
+        try {
+            if (!$this->canManageTenants()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Only SuperAdmin and EkklesiaAdmin can manage subscriptions.',
+                ], 403);
+            }
+
+            $validated = $request->validate([
+                'reason' => 'nullable|string|max:500',
+            ]);
+
+            $tenant = Tenant::findOrFail($id);
+            $user = auth()->user();
+            $tenant = $this->subscriptionService->suspend(
+                $tenant,
+                $validated['reason'] ?? null,
+                $user?->id,
+                $user?->role_name ?? $user?->role?->name
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Subscription suspended successfully',
+                'data' => [
+                    'tenant' => $tenant->fresh(),
+                    'subscription_status' => $this->subscriptionService->resolveStatus($tenant),
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error suspending subscription: ' . $e->getMessage(), ['tenant_id' => $id]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error suspending subscription',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
+        }
+    }
+
+    /**
+     * Reactivate a suspended subscription.
+     *
+     * @route POST /api/tenant/{id}/subscription/reactivate
+     */
+    public function reactivateSubscription(Request $request, $id): JsonResponse
+    {
+        try {
+            if (!$this->canManageTenants()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Only SuperAdmin and EkklesiaAdmin can manage subscriptions.',
+                ], 403);
+            }
+
+            $validated = $request->validate([
+                'reason' => 'nullable|string|max:500',
+            ]);
+
+            $tenant = Tenant::findOrFail($id);
+            $user = auth()->user();
+            $tenant = $this->subscriptionService->reactivate(
+                $tenant,
+                $validated['reason'] ?? null,
+                $user?->id,
+                $user?->role_name ?? $user?->role?->name
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Subscription reactivated successfully',
+                'data' => [
+                    'tenant' => $tenant->fresh(),
+                    'subscription_status' => $this->subscriptionService->resolveStatus($tenant),
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error reactivating subscription: ' . $e->getMessage(), ['tenant_id' => $id]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error reactivating subscription',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
+        }
+    }
+
+    /**
+     * Super Admin: paginated subscription audit history for a tenant.
+     *
+     * @route GET /api/tenant/{id}/subscription/audits
+     */
+    public function subscriptionAudits(Request $request, $id): JsonResponse
+    {
+        try {
+            if (!$this->canManageTenants()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Only SuperAdmin and EkklesiaAdmin can view subscription audits.',
+                ], 403);
+            }
+
+            $tenant = Tenant::find($id);
+            if (!$tenant) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tenant not found',
+                ], 404);
+            }
+
+            $validated = $request->validate([
+                'per_page' => 'sometimes|integer|min:1|max:50',
+                'page' => 'sometimes|integer|min:1',
+                'operation' => 'sometimes|nullable|string|max:64',
+            ]);
+
+            $result = $this->subscriptionService->listAuditsForTenant((int) $id, $validated);
+
+            return response()->json([
+                'success' => true,
+                'data' => $result['data'],
+                'pagination' => $result['pagination'],
+                'meta' => [
+                    'operations' => $this->subscriptionService->auditOperationLabels(),
+                ],
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
+        } catch (\Exception $e) {
+            Log::error('Error fetching subscription audits: ' . $e->getMessage(), ['tenant_id' => $id]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error fetching subscription audits',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
+        }
+    }
+
+    /**
+     * Lightweight subscription access for any authenticated tenant user (nav/banners).
+     *
+     * @route GET /api/tenant/subscription-access
+     */
+    public function subscriptionAccess(): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            if (!$user || !$user->tenant_id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User is not associated with a tenant/church',
+                ], 404);
+            }
+
+            $tenant = Tenant::find($user->tenant_id);
+            if (!$tenant) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Church not found',
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $this->subscriptionService->buildAccessSnapshot($tenant),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error fetching subscription access: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error fetching subscription access',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
+        }
+    }
+
+    /**
+     * Tenant read-only subscription summary (auth tenant context).
+     *
+     * @route GET /api/tenant/my-subscription
+     */
+    public function mySubscription(): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            if (!$user || !$user->tenant_id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User is not associated with a tenant/church',
+                ], 404);
+            }
+
+            if (
+                !$user->isSuperAdmin()
+                && !$user->isEkklesiaAdmin()
+                && !$user->is_primary_admin
+                && !$user->isTenantAdmin()
+                && method_exists($user, 'hasPermission')
+                && !$user->hasPermission('subscription.view')
+            ) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized to view subscription.',
+                ], 403);
+            }
+
+            $tenant = Tenant::find($user->tenant_id);
+            if (!$tenant) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Church not found',
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $this->subscriptionService->buildSummary($tenant),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error fetching my subscription: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error fetching subscription',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
+        }
+    }
+
+    /**
+     * Super Admin: get platform subscription settings (includes configurable grace days).
+     *
+     * @route GET /api/subscription/settings
+     */
+    public function getSubscriptionSettings(): JsonResponse
+    {
+        try {
+            if (!$this->canManageTenants()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Only SuperAdmin and EkklesiaAdmin can manage subscription settings.',
+                ], 403);
+            }
+
+            $settings = $this->subscriptionService->getSettings();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'grace_period_days' => (int) $settings->grace_period_days,
+                    'expiring_warning_days' => (int) $settings->expiring_warning_days,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error fetching subscription settings: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error fetching subscription settings',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
+        }
+    }
+
+    /**
+     * Super Admin: update platform subscription settings (grace days, etc.).
+     *
+     * @route PUT /api/subscription/settings
+     */
+    public function updateSubscriptionSettings(Request $request): JsonResponse
+    {
+        try {
+            if (!$this->canManageTenants()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Only SuperAdmin and EkklesiaAdmin can manage subscription settings.',
+                ], 403);
+            }
+
+            $validated = $request->validate([
+                'grace_period_days' => 'required|integer|min:0|max:365',
+                'expiring_warning_days' => 'required|integer|min:0|max:365',
+            ]);
+
+            $user = auth()->user();
+            $settings = $this->subscriptionService->updateSettings(
+                $validated,
+                $user?->id,
+                $user?->role_name ?? $user?->role?->name
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Subscription settings updated successfully',
+                'data' => [
+                    'grace_period_days' => (int) $settings->grace_period_days,
+                    'expiring_warning_days' => (int) $settings->expiring_warning_days,
                 ],
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -1440,14 +1727,11 @@ class TenantsController extends Controller
                 'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
-            Log::error('Error renewing subscription: ' . $e->getMessage(), [
-                'tenant_id' => $id,
-                'trace' => $e->getTraceAsString()
-            ]);
-            
+            Log::error('Error updating subscription settings: ' . $e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Error renewing subscription',
+                'message' => 'Error updating subscription settings',
                 'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
             ], 500);
         }
@@ -1866,12 +2150,20 @@ class TenantsController extends Controller
 
             $plan = SubscriptionPlan::findOrFail($id);
 
+            // Inactive-plan policy: deactivate first; hard delete only when inactive + unused.
+            if ($plan->active) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cannot delete an active plan. Deactivate the plan first (tenants keep their current entitlements; new assigns will be blocked).',
+                ], 422);
+            }
+
             // Check if any tenants are using this plan
             $tenantCount = Tenant::where('plan', $plan->key)->count();
             if ($tenantCount > 0) {
                 return response()->json([
                     'success' => false,
-                    'message' => "Cannot delete plan. {$tenantCount} tenant(s) are currently using this plan.",
+                    'message' => "Cannot delete plan. {$tenantCount} tenant(s) are currently using this plan. Keep it inactive so existing tenants retain their snapshot.",
                 ], 422);
             }
 

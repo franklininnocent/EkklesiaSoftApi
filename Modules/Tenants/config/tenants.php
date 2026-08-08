@@ -100,6 +100,33 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Subscription Access Control (R1)
+    |--------------------------------------------------------------------------
+    |
+    | Runtime grace/expiring days are Super Admin–configurable in
+    | subscription_settings. Values below are defaults / bootstrap only.
+    |
+    */
+    'subscription' => [
+        'grace_period_days' => 7,
+        'expiring_warning_days' => 14,
+        'gated_modules' => [
+            'donations',
+            'ministries_associations',
+            'groups',
+            'messaging',
+            'events',
+        ],
+        'always_on' => [
+            'auth',
+            'settings',
+            'my_subscription',
+            'church_profile',
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Domain Configuration
     |--------------------------------------------------------------------------
     |

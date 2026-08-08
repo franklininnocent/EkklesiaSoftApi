@@ -150,4 +150,15 @@ trait InteractsWithMinistriesValidation
 
         $this->merge($merged);
     }
+
+    /**
+     * Sanitize TipTap HTML fields before validation (allowlisted markup only).
+     *
+     * @param  list<string>  $fields
+     */
+    protected function sanitizeRichTextFields(array $fields): void
+    {
+        $sanitizer = app(\App\Support\Html\HtmlSanitizer::class);
+        $this->merge($sanitizer->sanitizeFields($this->all(), $fields));
+    }
 }

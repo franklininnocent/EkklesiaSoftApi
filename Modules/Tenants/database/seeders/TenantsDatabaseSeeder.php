@@ -26,7 +26,9 @@ class TenantsDatabaseSeeder extends Seeder
             EcclesiasticalTitlesSeeder::class,          // 4. Ecclesiastical titles (Archbishop, Bishop, etc.)
             ReligiousOrdersSeeder::class,               // 5. Religious orders and congregations
             TamilNaduBishopsSeeder::class,              // 6. Current bishops of Tamil Nadu dioceses
-            TenantsTableSeeder::class,                  // 7. Sample tenants
+            SubscriptionPlansSeeder::class,             // 7. Subscription plan catalog
+            SubscriptionDurationOptionsSeeder::class,   // 8. Subscription duration options
+            TenantsTableSeeder::class,                  // 9. Sample tenants
         ]);
 
         $this->command->line('');

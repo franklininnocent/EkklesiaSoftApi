@@ -73,10 +73,22 @@ Route::middleware('auth:api')->group(function () {
     
     // Subscription management
     Route::get('/tenant/subscription/plans', [TenantsController::class, 'getSubscriptionPlans']);
+    Route::get('/tenant/subscription-access', [TenantsController::class, 'subscriptionAccess']);
+    Route::get('/tenant/my-subscription', [TenantsController::class, 'mySubscription']);
     Route::post('/tenant/{id}/subscription/upgrade', [TenantsController::class, 'upgradeSubscription'])
         ->where('id', '[0-9]+');
     Route::post('/tenant/{id}/subscription/renew', [TenantsController::class, 'renewSubscription'])
         ->where('id', '[0-9]+');
+    Route::post('/tenant/{id}/subscription/suspend', [TenantsController::class, 'suspendSubscription'])
+        ->where('id', '[0-9]+');
+    Route::post('/tenant/{id}/subscription/reactivate', [TenantsController::class, 'reactivateSubscription'])
+        ->where('id', '[0-9]+');
+    Route::get('/tenant/{id}/subscription/audits', [TenantsController::class, 'subscriptionAudits'])
+        ->where('id', '[0-9]+');
+    
+    // Platform subscription settings (SuperAdmin/EkklesiaAdmin) — includes configurable grace days
+    Route::get('/subscription/settings', [TenantsController::class, 'getSubscriptionSettings']);
+    Route::put('/subscription/settings', [TenantsController::class, 'updateSubscriptionSettings']);
     
     // Subscription duration options management (SuperAdmin/EkklesiaAdmin only)
     Route::get('/subscription/duration-options', [TenantsController::class, 'getDurationOptions']);

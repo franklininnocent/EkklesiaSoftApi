@@ -19,6 +19,12 @@ class StoreOrganizationRequest extends FormRequest
     protected function prepareForValidation(): void
     {
         $this->flattenOrganizationSettings();
+        $this->sanitizeRichTextFields([
+            'description',
+            'vision',
+            'mission',
+            'objectives',
+        ]);
     }
 
     public function rules(): array
