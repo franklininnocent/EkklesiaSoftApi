@@ -1,6 +1,13 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\MinistriesAssociations\Http\Controllers\Admin\AdminMinistriesAnalyticsController;
+use Modules\MinistriesAssociations\Http\Controllers\Admin\AdminMinistriesAuditController;
+use Modules\MinistriesAssociations\Http\Controllers\Admin\AdminMinistriesHealthController;
+use Modules\MinistriesAssociations\Http\Controllers\Admin\AdminMinistriesOrganizationsController;
+use Modules\MinistriesAssociations\Http\Controllers\Admin\AdminMinistriesOverviewController;
+use Modules\MinistriesAssociations\Http\Controllers\Admin\AdminMinistriesReportsController;
+use Modules\MinistriesAssociations\Http\Controllers\Admin\AdminMinistriesTenantsController;
 use Modules\MinistriesAssociations\Http\Controllers\FamilyMinistriesController;
 use Modules\MinistriesAssociations\Http\Controllers\GuestMemberController;
 use Modules\MinistriesAssociations\Http\Controllers\MinistriesAuditLogController;
@@ -13,6 +20,65 @@ use Modules\MinistriesAssociations\Http\Controllers\OrganizationMembershipContro
 use Modules\MinistriesAssociations\Http\Controllers\OrganizationTypeController;
 use Modules\MinistriesAssociations\Http\Controllers\ParishionerLookupController;
 use Modules\MinistriesAssociations\Http\Controllers\PositionController;
+
+/*
+|--------------------------------------------------------------------------
+| Ekklesia / Super Admin — Ministries Insights (platform, cross-tenant)
+|--------------------------------------------------------------------------
+| Do not merge this group into tenant middleware (feature/permission gates).
+*/
+Route::prefix('admin/ministries')
+    ->middleware(['auth:api'])
+    ->group(function (): void {
+        Route::get('/overview', [AdminMinistriesOverviewController::class, 'show'])
+            ->middleware('ministries.platform.permission:ministries.platform.overview');
+
+        Route::get('/attention', [AdminMinistriesOverviewController::class, 'attention'])
+            ->middleware('ministries.platform.permission:ministries.platform.overview');
+
+        Route::get('/activity', [AdminMinistriesOverviewController::class, 'activity'])
+            ->middleware('ministries.platform.permission:ministries.platform.overview');
+
+        Route::get('/tenants/export', [AdminMinistriesTenantsController::class, 'export'])
+            ->middleware('ministries.platform.permission:ministries.platform.export');
+
+        Route::get('/tenants', [AdminMinistriesTenantsController::class, 'index'])
+            ->middleware('ministries.platform.permission:ministries.platform.tenants');
+
+        Route::get('/tenants/{tenantId}', [AdminMinistriesTenantsController::class, 'show'])
+            ->middleware('ministries.platform.permission:ministries.platform.tenants')
+            ->whereNumber('tenantId');
+
+        Route::get('/organizations', [AdminMinistriesOrganizationsController::class, 'index'])
+            ->middleware('ministries.platform.permission:ministries.platform.organizations');
+
+        Route::get('/health', [AdminMinistriesHealthController::class, 'show'])
+            ->middleware('ministries.platform.permission:ministries.platform.organizations');
+
+        Route::get('/analytics/adoption', [AdminMinistriesAnalyticsController::class, 'adoption'])
+            ->middleware('ministries.platform.permission:ministries.platform.analytics');
+
+        Route::get('/analytics/usage', [AdminMinistriesAnalyticsController::class, 'usage'])
+            ->middleware('ministries.platform.permission:ministries.platform.analytics');
+
+        Route::get('/analytics/features', [AdminMinistriesAnalyticsController::class, 'features'])
+            ->middleware('ministries.platform.permission:ministries.platform.analytics');
+
+        Route::get('/analytics/trends', [AdminMinistriesAnalyticsController::class, 'trends'])
+            ->middleware('ministries.platform.permission:ministries.platform.analytics');
+
+        Route::get('/audit', [AdminMinistriesAuditController::class, 'index'])
+            ->middleware('ministries.platform.permission:ministries.platform.audit');
+
+        Route::get('/reports', [AdminMinistriesReportsController::class, 'index'])
+            ->middleware('ministries.platform.permission:ministries.platform.reports');
+
+        Route::get('/reports/{type}/export', [AdminMinistriesReportsController::class, 'export'])
+            ->middleware('ministries.platform.permission:ministries.platform.export');
+
+        Route::get('/reports/{type}', [AdminMinistriesReportsController::class, 'show'])
+            ->middleware('ministries.platform.permission:ministries.platform.reports');
+    });
 
 Route::prefix('tenant/ministries')
     ->middleware(['auth:api', 'tenant.permission:ministries.view'])

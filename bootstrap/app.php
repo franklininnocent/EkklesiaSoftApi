@@ -27,6 +27,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'tenant.subscription' => \Modules\Tenants\Http\Middleware\EnsureSubscriptionAccess::class,
             'support.permission' => \Modules\SupportAccess\Http\Middleware\EnsureSupportPermission::class,
             'support.mode' => \Modules\SupportAccess\Http\Middleware\EnforceSupportSessionMode::class,
+            'ministries.platform.permission' => \Modules\MinistriesAssociations\Http\Middleware\EnsureAdminMinistriesPermission::class,
         ]);
         
         // Configure API middleware group - set default guard to API

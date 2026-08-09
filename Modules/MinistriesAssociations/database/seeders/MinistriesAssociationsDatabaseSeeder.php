@@ -10,6 +10,7 @@ class MinistriesAssociationsDatabaseSeeder extends Seeder
     {
         $this->call([
             MinistriesAssociationsPermissionSeeder::class,
+            AdminMinistriesPlatformPermissionSeeder::class,
         ]);
 
         // Per-tenant taxonomy/org defaults are applied by MinistriesAssociationsDefaultSeeder

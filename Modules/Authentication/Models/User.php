@@ -254,14 +254,17 @@ class User extends Authenticatable
                 if ($this->isSuperAdmin()) {
                     return true; // SuperAdmin can have any permission
                 }
-                
+
                 if (is_null($permission->tenant_id)) {
+                    // Platform catalog permissions are only resolvable by platform operators.
+                    // Tenant users must never inherit them through hasPermission().
                     if (($permission->scope ?? null) === Permission::SCOPE_PLATFORM) {
-                        return false;
+                        return $this->canResolvePlatformPermissions();
                     }
-                    return true; // System permissions are allowed
+
+                    return true; // System/tenant-shared catalog permissions
                 }
-                
+
                 return $permission->tenant_id === $this->tenant_id;
             })
             ->unique('id');
@@ -608,6 +611,21 @@ class User extends Authenticatable
     public function isActive(): bool
     {
         return $this->active === 1;
+    }
+
+    /**
+     * Whether this actor may resolve SCOPE_PLATFORM permissions via hasPermission().
+     * Requires a platform Ekklesia role and no tenant home context.
+     */
+    public function canResolvePlatformPermissions(): bool
+    {
+        if ($this->tenant_id !== null) {
+            return false;
+        }
+
+        return $this->isEkklesiaAdmin()
+            || $this->isEkklesiaManager()
+            || $this->isEkklesiaUser();
     }
 
     /**
