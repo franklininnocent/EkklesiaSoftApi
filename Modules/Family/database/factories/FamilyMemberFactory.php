@@ -5,6 +5,7 @@ namespace Modules\Family\Database\Factories;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Modules\Family\Models\FamilyMember;
 use Modules\Family\Models\Family;
+use Modules\Family\Models\Person;
 use App\Models\User;
 
 class FamilyMemberFactory extends Factory
@@ -15,6 +16,7 @@ class FamilyMemberFactory extends Factory
     {
         return [
             'family_id' => Family::factory(),
+            'person_id' => Person::factory(),
             'first_name' => $this->faker->firstName(),
             'middle_name' => $this->faker->optional()->firstName(),
             'last_name' => $this->faker->lastName(),

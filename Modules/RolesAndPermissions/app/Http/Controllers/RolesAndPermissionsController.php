@@ -8,6 +8,7 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Modules\Authentication\Models\Role;
+use Modules\Authentication\Models\User;
 use Modules\RolesAndPermissions\Http\Requests\StoreTenantRoleRequest;
 use Modules\RolesAndPermissions\Http\Requests\UpdateTenantRoleRequest;
 use Modules\RolesAndPermissions\Services\PermissionAuditService;
@@ -701,7 +702,21 @@ class RolesAndPermissionsController extends Controller
                 return response()->json(['message' => 'Unauthorized'], 403);
             }
 
+            $user = auth()->user();
             $role = Role::withTrashed()->findOrFail($id);
+
+            if (!$this->canMutateLegacyRole($user, $role)) {
+                return response()->json([
+                    'message' => 'You can only restore roles for your tenant',
+                ], 403);
+            }
+
+            if ($role->isProtectedSystemRole()) {
+                return response()->json([
+                    'message' => 'Protected system roles cannot be restored via this endpoint',
+                ], 422);
+            }
+
             $role->restore();
 
             Log::info('Role restored', ['role_id' => $id, 'restored_by' => auth()->id()]);
@@ -729,10 +744,23 @@ class RolesAndPermissionsController extends Controller
                 return response()->json(['message' => 'Unauthorized'], 403);
             }
 
+            $user = auth()->user();
             $role = Role::findOrFail($id);
 
+            if (!$this->canMutateLegacyRole($user, $role)) {
+                return response()->json([
+                    'message' => 'You can only activate roles for your tenant',
+                ], 403);
+            }
+
+            if ($role->isProtectedSystemRole()) {
+                return response()->json([
+                    'message' => 'Protected system roles cannot be activated or deactivated',
+                ], 422);
+            }
+
             // Only custom roles can be activated/deactivated
-            if (!$role->isCustom() && !auth()->user()->isSuperAdmin()) {
+            if (!$role->isCustom() && !$user->isSuperAdmin()) {
                 return response()->json([
                     'message' => 'Only SuperAdmin can activate/deactivate system roles',
                 ], 403);
@@ -765,10 +793,23 @@ class RolesAndPermissionsController extends Controller
                 return response()->json(['message' => 'Unauthorized'], 403);
             }
 
+            $user = auth()->user();
             $role = Role::findOrFail($id);
 
+            if (!$this->canMutateLegacyRole($user, $role)) {
+                return response()->json([
+                    'message' => 'You can only deactivate roles for your tenant',
+                ], 403);
+            }
+
+            if ($role->isProtectedSystemRole()) {
+                return response()->json([
+                    'message' => 'Protected system roles cannot be activated or deactivated',
+                ], 422);
+            }
+
             // Only custom roles can be activated/deactivated
-            if (!$role->isCustom() && !auth()->user()->isSuperAdmin()) {
+            if (!$role->isCustom() && !$user->isSuperAdmin()) {
                 return response()->json([
                     'message' => 'Only SuperAdmin can activate/deactivate system roles',
                 ], 403);
@@ -820,6 +861,28 @@ class RolesAndPermissionsController extends Controller
         }
         
         // All other users cannot manage roles
+        return false;
+    }
+
+    /**
+     * Tenant-scoped actors may only mutate roles owned by their tenant.
+     * Platform actors retain broader access subject to other guards.
+     */
+    private function canMutateLegacyRole(User $user, Role $role): bool
+    {
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
+        if ($user->isEkklesiaAdmin() || $user->isEkklesiaManager()) {
+            return is_null($role->tenant_id)
+                || ($user->tenant_id && $role->tenant_id === $user->tenant_id);
+        }
+
+        if ($user->tenant_id) {
+            return $role->tenant_id === $user->tenant_id;
+        }
+
         return false;
     }
 

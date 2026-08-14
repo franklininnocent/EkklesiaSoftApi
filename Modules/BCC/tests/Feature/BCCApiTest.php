@@ -11,8 +11,10 @@ use Modules\Tenants\Models\Tenant;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
 use Modules\Authentication\Models\User;
+use Modules\RolesAndPermissions\Models\Permission;
 use Laravel\Passport\Passport;
 use Illuminate\Support\Str;
+use PHPUnit\Framework\Attributes\Test;
 
 class BCCApiTest extends TestCase
 {
@@ -40,13 +42,43 @@ class BCCApiTest extends TestCase
             'created_by' => $this->user->id,
         ]);
 
-        // Authenticate user for API requests
         Passport::actingAs($this->user);
+        $this->grantBccPermissions();
+    }
+
+    private function grantBccPermissions(): void
+    {
+        $ids = [];
+        foreach ([
+            'bcc.view',
+            'bcc.create',
+            'bcc.edit',
+            'bcc.delete',
+            'bcc.manage_members',
+            'bcc.manage_leadership',
+        ] as $name) {
+            $permission = Permission::query()->firstOrCreate(
+                ['name' => $name],
+                [
+                    'display_name' => $name,
+                    'module' => 'BCC',
+                    'category' => 'bcc',
+                    'scope' => Permission::SCOPE_TENANT,
+                    'active' => 1,
+                    'tenant_id' => null,
+                    'is_custom' => false,
+                ]
+            );
+            $ids[] = $permission->id;
+        }
+
+        $this->user->permissions()->syncWithoutDetaching($ids);
+        $this->user->clearPermissionsCache();
     }
 
     // ==================== BCC CRUD OPERATIONS ====================
 
-    /** @test */
+    #[Test]
     public function it_can_get_paginated_list_of_bccs()
     {
         // Arrange: Create multiple BCCs
@@ -88,7 +120,7 @@ class BCCApiTest extends TestCase
         $this->assertGreaterThanOrEqual(10, count($response->json('data')));
     }
 
-    /** @test */
+    #[Test]
     public function it_can_filter_bccs_by_tenant()
     {
         // Arrange: Create BCCs for different tenants
@@ -115,7 +147,7 @@ class BCCApiTest extends TestCase
         }
     }
 
-    /** @test */
+    #[Test]
     public function it_can_filter_bccs_by_status()
     {
         // Arrange
@@ -140,7 +172,7 @@ class BCCApiTest extends TestCase
         }
     }
 
-    /** @test */
+    #[Test]
     public function it_can_search_bccs_by_name()
     {
         // Arrange
@@ -173,19 +205,17 @@ class BCCApiTest extends TestCase
         $this->assertTrue($found);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_filter_bccs_with_space()
     {
         // Arrange: Create BCCs with different capacities
         $bccWithSpace = BCC::factory()->create([
             'tenant_id' => $this->tenant->id,
-            'max_families' => 50,
             'status' => 'active',
         ]);
 
         $bccAtCapacity = BCC::factory()->create([
             'tenant_id' => $this->tenant->id,
-            'max_families' => 5,
             'status' => 'active',
         ]);
 
@@ -203,7 +233,7 @@ class BCCApiTest extends TestCase
             ->assertJson(['success' => true]);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_get_single_bcc_by_id()
     {
         // Arrange
@@ -226,7 +256,7 @@ class BCCApiTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_returns_404_for_non_existent_bcc()
     {
         // Act
@@ -240,7 +270,7 @@ class BCCApiTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_returns_403_when_accessing_bcc_from_different_tenant()
     {
         // Arrange: Create BCC for different tenant
@@ -256,7 +286,7 @@ class BCCApiTest extends TestCase
         $response->assertStatus(404); // Returns 404 because service filters by tenant
     }
 
-    /** @test */
+    #[Test]
     public function it_can_create_bcc_with_valid_data()
     {
         // Arrange
@@ -267,10 +297,6 @@ class BCCApiTest extends TestCase
             'meeting_day' => 'sunday',
             'meeting_time' => '10:00',
             'meeting_frequency' => 'Weekly',
-            'min_families' => 10,
-            'max_families' => 50,
-            'contact_phone' => '1234567890',
-            'contact_email' => 'bcc@example.com',
             'status' => 'active',
             'established_date' => '2025-01-01',
             'notes' => 'Test notes',
@@ -297,7 +323,7 @@ class BCCApiTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_required_fields_when_creating_bcc()
     {
         // Arrange: Missing required fields
@@ -313,7 +339,7 @@ class BCCApiTest extends TestCase
             ->assertJsonValidationErrors(['name']);
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_meeting_day_is_valid_enum()
     {
         // Arrange
@@ -330,42 +356,30 @@ class BCCApiTest extends TestCase
             ->assertJsonValidationErrors(['meeting_day']);
     }
 
-    /** @test */
-    public function it_validates_max_families_greater_than_min_families()
+    #[Test]
+    public function it_creates_bcc_without_capacity_fields()
     {
-        // Arrange
-        $data = [
-            'name' => 'Test BCC',
-            'min_families' => 50,
-            'max_families' => 20, // Less than min_families
-        ];
+        $response = $this->postJson('/api/bccs', [
+            'name' => 'Capacity-free BCC',
+            'status' => 'active',
+        ]);
 
-        // Act
-        $response = $this->postJson('/api/bccs', $data);
-
-        // Assert
-        $response->assertStatus(422)
-            ->assertJsonValidationErrors(['max_families']);
+        $response->assertStatus(201)->assertJson(['success' => true]);
+        $this->assertDatabaseHas('bccs', ['name' => 'Capacity-free BCC']);
     }
 
-    /** @test */
-    public function it_validates_email_format()
+    #[Test]
+    public function it_ignores_removed_contact_fields()
     {
-        // Arrange
-        $data = [
-            'name' => 'Test BCC',
+        $response = $this->postJson('/api/bccs', [
+            'name' => 'No Contact BCC',
             'contact_email' => 'invalid-email',
-        ];
+        ]);
 
-        // Act
-        $response = $this->postJson('/api/bccs', $data);
-
-        // Assert
-        $response->assertStatus(422)
-            ->assertJsonValidationErrors(['contact_email']);
+        $response->assertStatus(201)->assertJson(['success' => true]);
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_status_is_valid_enum()
     {
         // Arrange
@@ -382,7 +396,7 @@ class BCCApiTest extends TestCase
             ->assertJsonValidationErrors(['status']);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_update_bcc_with_valid_data()
     {
         // Arrange
@@ -420,7 +434,7 @@ class BCCApiTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_returns_404_when_updating_non_existent_bcc()
     {
         // Act
@@ -436,7 +450,7 @@ class BCCApiTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_delete_bcc()
     {
         // Arrange
@@ -459,7 +473,7 @@ class BCCApiTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_returns_404_when_deleting_non_existent_bcc()
     {
         // Act
@@ -469,11 +483,11 @@ class BCCApiTest extends TestCase
         $response->assertStatus(404)
             ->assertJson([
                 'success' => false,
-                'message' => 'BCC not found'
+                'message' => 'BCC not found or does not belong to your tenant',
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_get_bcc_statistics()
     {
         // Arrange: Create BCCs with different statuses
@@ -518,19 +532,17 @@ class BCCApiTest extends TestCase
         $this->assertGreaterThanOrEqual(5, $stats['active_bccs']); // At least 5 active (could be 6 if setUp BCC is active)
     }
 
-    /** @test */
+    #[Test]
     public function it_can_get_bccs_with_available_space()
     {
         // Arrange
         $bccWithSpace = BCC::factory()->create([
             'tenant_id' => $this->tenant->id,
-            'max_families' => 50,
             'status' => 'active',
         ]);
 
         $bccAtCapacity = BCC::factory()->create([
             'tenant_id' => $this->tenant->id,
-            'max_families' => 5,
             'status' => 'active',
         ]);
 
@@ -552,14 +564,13 @@ class BCCApiTest extends TestCase
                     '*' => [
                         'id',
                         'name',
-                        'max_families',
                         'current_family_count',
                     ]
                 ]
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_requires_authentication_to_access_bccs()
     {
         // Note: Testing authentication in Laravel Passport tests is complex because
@@ -577,7 +588,7 @@ class BCCApiTest extends TestCase
         $this->assertNotEquals(401, $response->status(), 'Authenticated request should succeed');
     }
 
-    /** @test */
+    #[Test]
     public function it_requires_tenant_id_for_bcc_operations()
     {
         // Arrange: Create user without tenant_id
@@ -594,13 +605,13 @@ class BCCApiTest extends TestCase
         $response->assertStatus(403)
             ->assertJson([
                 'success' => false,
-                'message' => 'Tenant ID is required'
+                'message' => 'Tenant context required.',
             ]);
     }
 
     // ==================== BCC LEADER OPERATIONS ====================
 
-    /** @test */
+    #[Test]
     public function it_can_get_leaders_for_a_bcc()
     {
         // Arrange
@@ -645,7 +656,7 @@ class BCCApiTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_returns_404_when_getting_leaders_for_non_existent_bcc()
     {
         // Act
@@ -659,30 +670,32 @@ class BCCApiTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_add_leader_to_bcc()
     {
         // Arrange
         $bcc = BCC::factory()->create([
             'tenant_id' => $this->tenant->id,
+            'status' => 'active',
         ]);
 
         $family = Family::factory()->create([
             'tenant_id' => $this->tenant->id,
+            'bcc_id' => $bcc->id,
+            'status' => 'active',
         ]);
 
         $member = FamilyMember::factory()->create([
             'family_id' => $family->id,
             'first_name' => 'John',
             'last_name' => 'Doe',
+            'status' => 'active',
         ]);
 
         $data = [
-            'leader_name' => 'John Doe',
             'family_member_id' => $member->id,
             'role' => 'leader',
             'appointed_date' => '2025-01-01',
-            'is_active' => true,
         ];
 
         // Act
@@ -692,7 +705,7 @@ class BCCApiTest extends TestCase
         $response->assertStatus(201)
             ->assertJson([
                 'success' => true,
-                'message' => 'Leader added successfully',
+                'message' => 'Leader assigned.',
             ])
             ->assertJsonStructure([
                 'success',
@@ -712,7 +725,7 @@ class BCCApiTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_required_fields_when_adding_leader()
     {
         // Arrange
@@ -722,18 +735,15 @@ class BCCApiTest extends TestCase
 
         $data = [
             'role' => 'leader',
-            // Missing leader_name
         ];
 
-        // Act
         $response = $this->postJson("/api/bccs/{$bcc->id}/leaders", $data);
 
-        // Assert
         $response->assertStatus(422)
-            ->assertJsonValidationErrors(['leader_name']);
+            ->assertJsonValidationErrors(['family_member_id']);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_update_bcc_leader()
     {
         // Arrange
@@ -777,7 +787,7 @@ class BCCApiTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_returns_404_when_updating_non_existent_leader()
     {
         // Arrange
@@ -798,7 +808,7 @@ class BCCApiTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_delete_bcc_leader()
     {
         // Arrange
@@ -835,7 +845,7 @@ class BCCApiTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_returns_404_when_deleting_non_existent_leader()
     {
         // Arrange
@@ -856,13 +866,13 @@ class BCCApiTest extends TestCase
 
     // ==================== FAMILY ASSIGNMENT OPERATIONS ====================
 
-    /** @test */
+    #[Test]
     public function it_can_assign_families_to_bcc()
     {
         // Arrange
         $bcc = BCC::factory()->create([
             'tenant_id' => $this->tenant->id,
-            'max_families' => 50,
+            'status' => 'active',
         ]);
 
         $family1 = Family::factory()->create([
@@ -881,7 +891,7 @@ class BCCApiTest extends TestCase
         $response = $this->postJson("/api/bccs/{$bcc->id}/assign-families", $data);
 
         // Assert
-        $response->assertStatus(200)
+        $response->assertStatus(201)
             ->assertJson([
                 'success' => true,
             ]);
@@ -897,7 +907,7 @@ class BCCApiTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_family_ids_when_assigning()
     {
         // Arrange
@@ -917,36 +927,33 @@ class BCCApiTest extends TestCase
             ->assertJsonValidationErrors(['family_ids']);
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_families_exist_when_assigning()
     {
         // Arrange
         $bcc = BCC::factory()->create([
             'tenant_id' => $this->tenant->id,
+            'status' => 'active',
         ]);
 
         $data = [
-            'family_ids' => [Str::uuid(), Str::uuid()], // Non-existent IDs
+            'family_ids' => [Str::uuid(), Str::uuid()],
         ];
 
         // Act
         $response = $this->postJson("/api/bccs/{$bcc->id}/assign-families", $data);
 
-        // Assert
-        $response->assertStatus(422)
-            ->assertJsonValidationErrors(['family_ids.0']);
+        $response->assertStatus(404);
     }
 
-    /** @test */
-    public function it_cannot_assign_families_to_bcc_at_capacity()
+    #[Test]
+    public function it_assigns_families_without_a_capacity_limit()
     {
-        // Arrange
         $bcc = BCC::factory()->create([
             'tenant_id' => $this->tenant->id,
-            'max_families' => 2,
+            'status' => 'active',
         ]);
 
-        // Fill capacity
         Family::factory()->count(2)->create([
             'tenant_id' => $this->tenant->id,
             'bcc_id' => $bcc->id,
@@ -956,21 +963,15 @@ class BCCApiTest extends TestCase
             'tenant_id' => $this->tenant->id,
         ]);
 
-        $data = [
+        $response = $this->postJson("/api/bccs/{$bcc->id}/assign-families", [
             'family_ids' => [$family3->id],
-        ];
+        ]);
 
-        // Act
-        $response = $this->postJson("/api/bccs/{$bcc->id}/assign-families", $data);
-
-        // Assert: Should return error about capacity
-        $response->assertStatus(400)
-            ->assertJson([
-                'success' => false,
-            ]);
+        $response->assertStatus(201)
+            ->assertJson(['success' => true]);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_remove_families_from_bcc()
     {
         // Arrange
@@ -1017,7 +1018,7 @@ class BCCApiTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_family_ids_when_removing()
     {
         // Arrange
@@ -1033,7 +1034,7 @@ class BCCApiTest extends TestCase
             ->assertJsonValidationErrors(['family_ids']);
     }
 
-    /** @test */
+    #[Test]
     public function it_handles_errors_gracefully_when_service_throws_exception()
     {
         // Arrange: Create BCC that will cause an exception
@@ -1053,7 +1054,7 @@ class BCCApiTest extends TestCase
         $response->assertStatus(200); // If no exception, should work
     }
 
-    /** @test */
+    #[Test]
     public function it_can_sort_bccs_by_created_at_descending()
     {
         // Arrange
@@ -1089,7 +1090,7 @@ class BCCApiTest extends TestCase
         }
     }
 
-    /** @test */
+    #[Test]
     public function it_can_sort_bccs_by_name_ascending()
     {
         // Arrange
@@ -1115,7 +1116,7 @@ class BCCApiTest extends TestCase
         $this->assertGreaterThanOrEqual(2, count($data));
     }
 
-    /** @test */
+    #[Test]
     public function it_can_sort_bccs_by_current_family_count_descending()
     {
         $bccWithFamilies = BCC::factory()->create([

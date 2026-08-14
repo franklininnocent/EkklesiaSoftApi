@@ -48,36 +48,7 @@ class PermissionsController extends Controller
 
             $user = auth()->user();
 
-            // Tenant-context path uses dedicated service guardrails.
-            if (
-                $user->tenant_id &&
-                !$user->isSuperAdmin() &&
-                !$user->isEkklesiaAdmin() &&
-                !$user->isEkklesiaManager()
-            ) {
-                $validator = Validator::make($request->all(), [
-                    'name' => 'required|string|max:255',
-                    'display_name' => 'nullable|string|max:255',
-                    'description' => 'nullable|string',
-                    'module' => 'nullable|string|max:255',
-                    'category' => 'nullable|string|max:255',
-                    'active' => 'nullable|boolean',
-                ]);
-
-                if ($validator->fails()) {
-                    return response()->json([
-                        'message' => 'Validation failed',
-                        'errors' => $validator->errors(),
-                    ], 422);
-                }
-
-                $permission = $this->tenantPermissionCrudService->createTenantPermission($user, $validator->validated());
-
-                return response()->json([
-                    'message' => 'Permission created successfully',
-                    'permission' => $permission,
-                ], 201);
-            }
+            // List only — tenant custom permission creation belongs on POST /permissions (store).
             $query = Permission::query();
 
             // Apply role-based filtering
@@ -313,6 +284,23 @@ class PermissionsController extends Controller
 
             $data = $request->all();
 
+            // Tenant-context path uses dedicated service guardrails.
+            if ($this->isTenantScopedActor($user)) {
+                $permission = $this->tenantPermissionCrudService->createTenantPermission($user, [
+                    'name' => $data['name'],
+                    'display_name' => $data['display_name'] ?? $data['name'],
+                    'description' => $data['description'] ?? null,
+                    'module' => $data['module'] ?? null,
+                    'category' => $data['category'] ?? null,
+                    'active' => $data['active'] ?? true,
+                ]);
+
+                return response()->json([
+                    'message' => 'Permission created successfully',
+                    'permission' => $permission,
+                ], 201);
+            }
+
             // Authorization checks
             if (!$user->isSuperAdmin()) {
                 // Non-SuperAdmins can only create custom permissions for their tenant
@@ -540,26 +528,7 @@ class PermissionsController extends Controller
             $role = Role::findOrFail($request->role_id);
             $currentUser = auth()->user();
 
-            if ($this->isTenantScopedActor($currentUser)) {
-                $nextPermissionIds = $role->permissions()
-                    ->pluck('permissions.id')
-                    ->map(fn ($id) => (int) $id)
-                    ->reject(fn (int $id) => $id === (int) $permission->id)
-                    ->values()
-                    ->all();
-
-                $count = $this->tenantPermissionService->syncRolePermissions($currentUser, $role, $nextPermissionIds);
-
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Permission removed from role successfully',
-                    'data' => [
-                        'role_id' => $role->id,
-                        'permissions_count' => $count,
-                    ],
-                ]);
-            }
-
+            // Tenant actors must use the tenant sync path (escalation + ownership checks).
             if ($this->isTenantScopedActor($currentUser)) {
                 $nextPermissionIds = $role->permissions()
                     ->pluck('permissions.id')
@@ -672,6 +641,27 @@ class PermissionsController extends Controller
             $role = Role::findOrFail($request->role_id);
             $currentUser = auth()->user();
 
+            // Tenant actors must use the tenant sync path (escalation + ownership checks).
+            if ($this->isTenantScopedActor($currentUser)) {
+                $nextPermissionIds = $role->permissions()
+                    ->pluck('permissions.id')
+                    ->map(fn ($id) => (int) $id)
+                    ->reject(fn (int $id) => $id === (int) $permission->id)
+                    ->values()
+                    ->all();
+
+                $count = $this->tenantPermissionService->syncRolePermissions($currentUser, $role, $nextPermissionIds);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Permission removed from role successfully',
+                    'data' => [
+                        'role_id' => $role->id,
+                        'permissions_count' => $count,
+                    ],
+                ]);
+            }
+
             // CRITICAL SECURITY: Prevent non-SuperAdmin users from removing "Tenants" and "Pope" module permissions
             // This ensures that even if a role has restricted permissions, non-SuperAdmin users cannot modify them
             if (($permission->module === 'Tenants' || $permission->module === 'Pope') && !$currentUser->isSuperAdmin()) {
@@ -763,6 +753,34 @@ class PermissionsController extends Controller
                 ], 403);
             }
 
+            // Tenant actors may only manage users in their own tenant.
+            if ($this->isTenantScopedActor($currentUser)) {
+                if ($user->tenant_id !== $currentUser->tenant_id) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Cannot assign permissions to a user from another tenant',
+                    ], 403);
+                }
+                if (!is_null($permission->tenant_id) && $permission->tenant_id !== $currentUser->tenant_id) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Cannot assign permission from another tenant',
+                    ], 403);
+                }
+                if (!$permission->isTenantAssignable()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Permission is not assignable in tenant context',
+                    ], 403);
+                }
+                if (!$currentUser->isSuperAdmin() && !$currentUser->hasPermission($permission->name)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Permission escalation blocked. You cannot assign '{$permission->name}'.",
+                    ], 403);
+                }
+            }
+
             // SECURITY: Validate tenant isolation - permission and user must belong to same tenant
             // System permissions (tenant_id = null) can be assigned to any user
             // Tenant-specific permissions can only be assigned to users from the same tenant
@@ -795,6 +813,12 @@ class PermissionsController extends Controller
             return response()->json([
                 'message' => 'Permission assigned to user successfully',
             ]);
+        } catch (\RuntimeException $e) {
+            $status = in_array($e->getCode(), [403, 422], true) ? $e->getCode() : 422;
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $status);
         } catch (\Exception $e) {
             Log::error('Error assigning permission to user: ' . $e->getMessage());
             return response()->json([
@@ -845,6 +869,13 @@ class PermissionsController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized: Tenants and Pope module permissions can only be managed by Super Administrators',
+                ], 403);
+            }
+
+            if ($this->isTenantScopedActor($currentUser) && $user->tenant_id !== $currentUser->tenant_id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cannot modify permissions for a user from another tenant',
                 ], 403);
             }
 

@@ -55,9 +55,38 @@ class TenantPermissionCatalogSeeder extends Seeder
             ['name' => 'ministries.manage_leadership', 'display_name' => 'Manage Ministry Leadership', 'description' => 'Assign, terminate, and hand over leadership terms', 'module' => 'MinistriesAssociations', 'category' => 'ministries'],
             ['name' => 'ministries.configure', 'display_name' => 'Configure Ministries Taxonomies', 'description' => 'Manage categories, types, positions, and seed defaults', 'module' => 'MinistriesAssociations', 'category' => 'ministries'],
 
+            // BCC
+            ['name' => 'bcc.view', 'display_name' => 'View BCCs', 'description' => 'View BCC dashboard, list, members, history, and audit', 'module' => 'BCC', 'category' => 'bcc'],
+            ['name' => 'bcc.create', 'display_name' => 'Create BCCs', 'description' => 'Create Basic Christian Communities', 'module' => 'BCC', 'category' => 'bcc'],
+            ['name' => 'bcc.edit', 'display_name' => 'Edit BCCs', 'description' => 'Update BCC profiles and status', 'module' => 'BCC', 'category' => 'bcc'],
+            ['name' => 'bcc.delete', 'display_name' => 'Delete BCCs', 'description' => 'Soft-delete BCCs and unassign families', 'module' => 'BCC', 'category' => 'bcc'],
+            ['name' => 'bcc.manage_members', 'display_name' => 'Manage BCC Members', 'description' => 'Assign and remove families from a BCC', 'module' => 'BCC', 'category' => 'bcc'],
+            ['name' => 'bcc.manage_leadership', 'display_name' => 'Manage BCC Leadership', 'description' => 'Assign, end, and hand over BCC leadership', 'module' => 'BCC', 'category' => 'bcc'],
+
+            // Sacraments registry
+            ['name' => 'sacraments.view', 'display_name' => 'View Sacraments', 'description' => 'View sacramental records', 'module' => 'Sacraments', 'category' => 'sacraments'],
+            ['name' => 'sacraments.create', 'display_name' => 'Create Sacraments', 'description' => 'Create sacramental records', 'module' => 'Sacraments', 'category' => 'sacraments'],
+            ['name' => 'sacraments.edit', 'display_name' => 'Edit Sacraments', 'description' => 'Edit sacramental metadata / legacy fields', 'module' => 'Sacraments', 'category' => 'sacraments'],
+            ['name' => 'sacraments.correct', 'display_name' => 'Correct Sacraments', 'description' => 'Post-registration correction with reason and audit', 'module' => 'Sacraments', 'category' => 'sacraments'],
+            ['name' => 'sacraments.void', 'display_name' => 'Void Sacraments', 'description' => 'Void sacramental records (business invalid)', 'module' => 'Sacraments', 'category' => 'sacraments'],
+            ['name' => 'sacraments.delete', 'display_name' => 'Delete Sacraments', 'description' => 'Soft-delete sacramental records', 'module' => 'Sacraments', 'category' => 'sacraments'],
+            ['name' => 'sacraments.restore', 'display_name' => 'Restore Sacraments', 'description' => 'Restore soft-deleted records (does not unvoid)', 'module' => 'Sacraments', 'category' => 'sacraments'],
+            ['name' => 'sacraments.export', 'display_name' => 'Export Sacraments', 'description' => 'Export sacramental records', 'module' => 'Sacraments', 'category' => 'sacraments'],
+            ['name' => 'sacraments.view_restricted', 'display_name' => 'View Restricted Sacraments', 'description' => 'View and create restricted sacramental records (e.g. Reconciliation)', 'module' => 'Sacraments', 'category' => 'sacraments'],
+            ['name' => 'certificate.generate', 'display_name' => 'Generate Certificates', 'description' => 'Preview and generate official sacramental certificates', 'module' => 'Sacraments', 'category' => 'sacraments'],
+            ['name' => 'certificate.download', 'display_name' => 'Download Certificates', 'description' => 'Download issued sacramental certificates', 'module' => 'Sacraments', 'category' => 'sacraments'],
+            ['name' => 'certificate.reissue', 'display_name' => 'Reissue Certificates', 'description' => 'Reissue / supersede sacramental certificates', 'module' => 'Sacraments', 'category' => 'sacraments'],
+            ['name' => 'sacraments.migration.view', 'display_name' => 'View Sacrament Migration Queue', 'description' => 'View migration resolutions and migration report', 'module' => 'Sacraments', 'category' => 'sacraments'],
+            ['name' => 'sacraments.migration.resolve', 'display_name' => 'Resolve Sacrament Migration', 'description' => 'Resolve unresolved participants and run backfill', 'module' => 'Sacraments', 'category' => 'sacraments'],
+            ['name' => 'sacraments.settings.view', 'display_name' => 'View Sacrament Settings', 'description' => 'View which sacrament types are available for this church', 'module' => 'Sacraments', 'category' => 'sacraments'],
+            ['name' => 'sacraments.settings.manage', 'display_name' => 'Manage Sacrament Settings', 'description' => 'Activate or deactivate sacrament types for this church', 'module' => 'Sacraments', 'category' => 'sacraments'],
+
             // Reports
             ['name' => 'reports.view', 'display_name' => 'View Reports', 'description' => 'View reports', 'module' => 'Reports', 'category' => 'reports'],
             ['name' => 'reports.export', 'display_name' => 'Export Reports', 'description' => 'Export reports', 'module' => 'Reports', 'category' => 'reports'],
+
+            // Tenant data export (Settings → Data Export)
+            ['name' => 'tenant.data.export', 'display_name' => 'Export Tenant Data', 'description' => 'Request, view, and download parish business data exports', 'module' => 'TenantDataExport', 'category' => 'settings'],
 
             // Support Access (parish self-serve windows)
             ['name' => 'support.grants.parish.view', 'display_name' => 'View Support Access Windows', 'description' => 'View customer-granted support access windows for this parish', 'module' => 'SupportAccess', 'category' => 'support'],

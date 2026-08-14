@@ -3,63 +3,63 @@
 namespace Modules\BCC\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+use Modules\BCC\Services\BccLeadershipService;
 
 class UpdateBCCLeaderRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
     public function authorize(): bool
     {
         return true;
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     *
-     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
-     */
     public function rules(): array
     {
         return [
-            // Leader Identification
-            'user_id' => ['nullable', 'exists:users,id'],
-            'family_member_id' => ['nullable', 'exists:family_members,id'],
-            'leader_name' => ['sometimes', 'required', 'string', 'max:255'],
-            
-            // Role Information
-            'role' => ['sometimes', 'required', 'string', 'max:100'],
-            
-            // Dates
-            'assigned_date' => ['nullable', 'date'],
-            'end_date' => ['nullable', 'date', 'after:assigned_date'],
-            
-            // Status
-            'is_current' => ['nullable', 'boolean'],
-            
-            // Additional Information
+            'family_member_id' => ['sometimes', 'uuid', 'exists:family_members,id'],
+            'role' => ['sometimes', 'string', Rule::in(BccLeadershipService::ROLES)],
+            'role_description' => ['nullable', 'string', 'max:255'],
+            'appointment_date' => ['sometimes', 'date', 'before_or_equal:effective_from'],
+            'effective_from' => ['sometimes', 'date'],
+            'effective_to' => ['nullable', 'date', 'after_or_equal:effective_from'],
+            'term_label' => ['nullable', 'string', 'max:50'],
+            'appointment_reference' => ['nullable', 'string', 'max:100'],
+            'is_interim' => ['sometimes', 'boolean'],
+            'is_active' => ['nullable', 'boolean'],
+            'status' => ['sometimes', 'string', Rule::in(['active', 'completed', 'vacated', 'terminated'])],
+            'exit_reason' => ['nullable', 'string', Rule::in(BccLeadershipService::EXIT_REASONS)],
+            'remarks' => ['nullable', 'string'],
+            'leader_phone' => ['nullable', 'string', 'max:20'],
+            'leader_email' => ['nullable', 'email', 'max:255'],
             'responsibilities' => ['nullable', 'string'],
-            'notes' => ['nullable', 'string'],
         ];
     }
 
-    /**
-     * Get custom attributes for validator errors.
-     *
-     * @return array<string, string>
-     */
-    public function attributes(): array
+    protected function prepareForValidation(): void
     {
-        return [
-            'user_id' => 'user',
-            'family_member_id' => 'family member',
-            'leader_name' => 'leader name',
-            'role' => 'leader role',
-            'assigned_date' => 'assigned date',
-            'end_date' => 'end date',
-            'is_current' => 'current status',
-        ];
+        $normalized = [];
+        if ($this->hasAny(['appointment_date', 'appointed_date'])) {
+            $normalized['appointment_date'] = $this->input(
+                'appointment_date',
+                $this->input('appointed_date')
+            );
+        }
+        if ($this->hasAny(['effective_from', 'term_start_date'])) {
+            $normalized['effective_from'] = $this->input(
+                'effective_from',
+                $this->input('term_start_date')
+            );
+        }
+        if ($this->hasAny(['effective_to', 'term_end_date'])) {
+            $normalized['effective_to'] = $this->input(
+                'effective_to',
+                $this->input('term_end_date')
+            );
+        }
+        if ($this->hasAny(['remarks', 'notes'])) {
+            $normalized['remarks'] = $this->input('remarks', $this->input('notes'));
+        }
+
+        $this->merge($normalized);
     }
 }
-
-

@@ -12,6 +12,15 @@ class StoreTenantRoleRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('name') && is_string($this->input('name'))) {
+            $this->merge([
+                'name' => trim($this->input('name')),
+            ]);
+        }
+    }
+
     public function rules(): array
     {
         $tenantId = $this->user()?->tenant_id;

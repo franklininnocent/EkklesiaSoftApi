@@ -10,6 +10,7 @@ use Modules\Authentication\Models\User;
 use Modules\RolesAndPermissions\Http\Middleware\EnsureTenantPermission;
 use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Support\TenantContext;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -32,6 +33,7 @@ class EnsureTenantPermissionMiddlewareTest extends TestCase
         ]);
         $user = User::factory()->create(['tenant_id' => $tenant->id, 'role_id' => $role->id]);
         $user->syncRoles([$role->id]);
+        app()->instance(TenantContext::class, TenantContext::fromUserAndSession($user, null));
 
         $request = Request::create('/api/tenant/roles', 'GET');
         $request->setUserResolver(fn () => $user);
@@ -73,6 +75,7 @@ class EnsureTenantPermissionMiddlewareTest extends TestCase
 
         $user = User::factory()->create(['tenant_id' => $tenant->id, 'role_id' => $role->id]);
         $user->syncRoles([$role->id]);
+        app()->instance(TenantContext::class, TenantContext::fromUserAndSession($user, null));
 
         $request = Request::create('/api/tenant/roles', 'GET');
         $request->setUserResolver(fn () => $user);
@@ -81,5 +84,21 @@ class EnsureTenantPermissionMiddlewareTest extends TestCase
         $response = $middleware->handle($request, fn () => new Response('ok', 200), 'roles.view');
 
         $this->assertSame(200, $response->getStatusCode());
+    }
+
+    #[Test]
+    public function it_blocks_when_tenant_context_is_missing(): void
+    {
+        $user = User::factory()->create(['tenant_id' => null]);
+        app()->instance(TenantContext::class, TenantContext::empty());
+
+        $request = Request::create('/api/tenant/roles', 'GET');
+        $request->setUserResolver(fn () => $user);
+
+        $middleware = new EnsureTenantPermission();
+        $response = $middleware->handle($request, fn () => new Response('ok', 200), 'roles.view');
+
+        $this->assertSame(403, $response->getStatusCode());
+        $this->assertSame('Tenant context required.', $response->getData(true)['message']);
     }
 }

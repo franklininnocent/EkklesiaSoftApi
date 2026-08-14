@@ -47,7 +47,18 @@ class TenantRoleService
         }
 
         if ($role->isProtectedSystemRole()) {
-            throw new \RuntimeException('Protected tenant roles cannot be modified.', 403);
+            $allowedKeys = ['description'];
+            $attemptedKeys = array_keys($payload);
+            $disallowed = array_values(array_diff($attemptedKeys, $allowedKeys));
+
+            if (!empty($disallowed)) {
+                throw new \RuntimeException('Protected tenant roles cannot be modified.', 403);
+            }
+
+            // Description-only updates are allowed for parish clarity (name/level locked).
+            if (!array_key_exists('description', $payload)) {
+                return $role;
+            }
         }
 
         if (isset($payload['active']) && (int) $payload['active'] === 0 && $role->isTenantAdministratorRole()) {

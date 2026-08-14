@@ -3,7 +3,9 @@
 namespace Modules\Family\app\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 use App\Rules\PhoneNumberForTenant;
+use Modules\Tenants\Support\TenantContext;
 
 class StoreFamilyRequest extends FormRequest
 {
@@ -21,7 +23,14 @@ class StoreFamilyRequest extends FormRequest
             'address_line_2' => ['nullable', 'string', 'max:255'],
             'city' => ['nullable', 'string', 'max:120'],
             'postal_code' => ['nullable', 'string', 'max:40'],
-            'bcc_id' => ['nullable', 'uuid', 'exists:bccs,id'],
+            'bcc_id' => [
+                'nullable',
+                'uuid',
+                Rule::exists('bccs', 'id')->where(function ($query) {
+                    $tenantId = app(TenantContext::class)->effectiveTenantId();
+                    $query->where('tenant_id', $tenantId)->whereNull('deleted_at');
+                }),
+            ],
             'status' => ['nullable', 'in:active,inactive,migrated'],
             'notes' => ['nullable', 'string'],
 

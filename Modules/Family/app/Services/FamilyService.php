@@ -99,8 +99,12 @@ class FamilyService
             $data['created_by'] = $userId;
             $data['updated_by'] = $userId;
 
-            // Create family
             $family = $this->familyRepository->create($data);
+
+            if (! empty($family->bcc_id)) {
+                app(\Modules\BCC\Services\BccFamilyMembershipService::class)
+                    ->syncFromFamilyPointer($family, null, (int) $tenantId);
+            }
 
             // If members data is provided, create them
             if (!empty($data['members']) && is_array($data['members'])) {
@@ -183,11 +187,19 @@ class FamilyService
             $membersData = $data['members'] ?? null;
             unset($data['members']); // Remove members from family update data
 
+            $previousBccId = $family->bcc_id;
+
             // Add audit info
             $data['updated_by'] = $userId;
 
             // Update family
             $this->familyRepository->update($family, $data);
+
+            if (array_key_exists('bcc_id', $data)) {
+                $family->refresh();
+                app(\Modules\BCC\Services\BccFamilyMembershipService::class)
+                    ->syncFromFamilyPointer($family, $previousBccId, (int) $tenantId);
+            }
 
             // Handle members if provided
             $pendingStatusChangeEvents = [];

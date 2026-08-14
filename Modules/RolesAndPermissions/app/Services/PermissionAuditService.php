@@ -234,19 +234,16 @@ class PermissionAuditService
             // Use a nested transaction so audit insert failures don't poison
             // the parent transaction in PostgreSQL-backed test runs.
             DB::transaction(function () use ($data) {
-                $permissionId = isset($data['permission_id']) && Str::isUuid((string) $data['permission_id'])
-                    ? (string) $data['permission_id']
-                    : null;
-                $roleId = isset($data['role_id']) && Str::isUuid((string) $data['role_id'])
-                    ? (string) $data['role_id']
-                    : null;
-                $userId = isset($data['user_id']) && Str::isUuid((string) $data['user_id'])
-                    ? (string) $data['user_id']
-                    : null;
-                $assignedBy = $data['assigned_by'] ?? $data['created_by'] ?? $data['updated_by'] ?? $data['deleted_by'] ?? null;
-                $assignedById = !is_null($assignedBy) && Str::isUuid((string) $assignedBy)
-                    ? (string) $assignedBy
-                    : null;
+                $permissionId = $this->normalizeEntityId($data['permission_id'] ?? null);
+                $roleId = $this->normalizeEntityId($data['role_id'] ?? null);
+                $userId = $this->normalizeEntityId($data['user_id'] ?? null);
+                $assignedByRaw = $data['assigned_by']
+                    ?? $data['created_by']
+                    ?? $data['updated_by']
+                    ?? $data['deleted_by']
+                    ?? $data['removed_by']
+                    ?? null;
+                $assignedById = $this->normalizeEntityId($assignedByRaw);
 
                 DB::table('permission_audit_logs')->insert([
                     'action' => $data['action'],
@@ -266,6 +263,33 @@ class PermissionAuditService
             // If table doesn't exist or error occurs, just log to file
             Log::warning('Could not write to audit_logs table: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Normalize entity IDs for relational audit columns (bigint PKs).
+     */
+    private function normalizeEntityId(mixed $value): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_int($value)) {
+            return $value > 0 ? $value : null;
+        }
+
+        if (is_numeric($value)) {
+            $asInt = (int) $value;
+
+            return $asInt > 0 ? $asInt : null;
+        }
+
+        // Legacy UUID payloads (pre-migration) are retained in metadata only.
+        if (is_string($value) && Str::isUuid($value)) {
+            return null;
+        }
+
+        return null;
     }
 }
 

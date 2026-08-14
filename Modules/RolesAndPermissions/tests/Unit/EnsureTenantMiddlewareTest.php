@@ -8,6 +8,7 @@ use Illuminate\Http\Response;
 use Modules\Authentication\Models\User;
 use Modules\RolesAndPermissions\Http\Middleware\EnsureTenant;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Support\TenantContext;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -19,6 +20,8 @@ class EnsureTenantMiddlewareTest extends TestCase
     public function it_blocks_user_without_tenant_context(): void
     {
         $user = User::factory()->create(['tenant_id' => null]);
+        app()->instance(TenantContext::class, TenantContext::fromUserAndSession($user, null));
+
         $request = Request::create('/api/tenant/roles', 'GET');
         $request->setUserResolver(fn () => $user);
 
@@ -34,6 +37,8 @@ class EnsureTenantMiddlewareTest extends TestCase
     {
         $tenant = Tenant::factory()->create();
         $user = User::factory()->create(['tenant_id' => $tenant->id]);
+        app()->instance(TenantContext::class, TenantContext::fromUserAndSession($user, null));
+
         $request = Request::create('/api/tenant/roles', 'GET');
         $request->setUserResolver(fn () => $user);
 

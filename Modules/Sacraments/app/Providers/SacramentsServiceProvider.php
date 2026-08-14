@@ -4,6 +4,8 @@ namespace Modules\Sacraments\Providers;
 
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\ServiceProvider;
+use Modules\Sacraments\Console\Commands\BackfillTenantSacramentSettingsCommand;
+use Modules\Sacraments\Console\Commands\MigrateSacramentParticipantsCommand;
 use Nwidart\Modules\Traits\PathNamespace;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -43,7 +45,10 @@ class SacramentsServiceProvider extends ServiceProvider
      */
     protected function registerCommands(): void
     {
-        // $this->commands([]);
+        $this->commands([
+            MigrateSacramentParticipantsCommand::class,
+            BackfillTenantSacramentSettingsCommand::class,
+        ]);
     }
 
     /**
@@ -129,7 +134,7 @@ class SacramentsServiceProvider extends ServiceProvider
 
         $this->loadViewsFrom(array_merge($this->getPublishableViewPaths(), [$sourcePath]), $this->nameLower);
 
-        Blade::componentNamespace(config('modules.namespace').'\\' . $this->name . '\\View\\Components', $this->nameLower);
+        Blade::componentNamespace(config('modules.namespace').'\\'.$this->name.'\\View\\Components', $this->nameLower);
     }
 
     /**

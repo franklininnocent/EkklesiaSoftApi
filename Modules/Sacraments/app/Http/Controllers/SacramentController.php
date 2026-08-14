@@ -6,42 +6,49 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Validation\Rule;
-use Modules\Family\Models\FamilyMember;
-use Modules\Sacraments\Services\SacramentService;
+use Illuminate\Validation\ValidationException;
+use Modules\Sacraments\Definitions\SacramentDefinitionRegistry;
+use Modules\Sacraments\Exceptions\SacramentBusinessRuleException;
+use Modules\Sacraments\Http\Requests\BulkUpdateSacramentStatusRequest;
+use Modules\Sacraments\Http\Requests\CorrectSacramentRequest;
+use Modules\Sacraments\Http\Requests\PatchSacramentMetadataRequest;
+use Modules\Sacraments\Http\Requests\RestoreSacramentRequest;
+use Modules\Sacraments\Http\Requests\StoreSacramentRequest;
+use Modules\Sacraments\Http\Requests\UpdateSacramentRequest;
+use Modules\Sacraments\Http\Requests\VoidSacramentRequest;
 use Modules\Sacraments\Models\SacramentType;
+use Modules\Sacraments\Services\SacramentService;
+use Modules\Sacraments\Services\TenantSacramentSettingsService;
+use Modules\Sacraments\Support\SacramentFeatureFlags;
+use Modules\Sacraments\Support\SacramentPrivacyAccess;
+use Modules\Sacraments\Support\SacramentStatus;
+use Modules\Sacraments\Support\SacramentTypeCode;
+use Modules\Tenants\Support\TenantContext;
 
 /**
  * SacramentController - Tenant Sacrament Records Management
- * 
- * This controller handles CRUD operations for Sacrament Records.
- * Only Tenant users can access these endpoints. Ekklesia users are blocked.
- * 
- * Note: Sacrament Types are managed by Ekklesia users in the
- * EcclesiasticalData module and are read-only here.
+ *
+ * Phase 1: Form Requests, RBAC via routes, no silent FamilyMember sync (ADR-13),
+ * status registered/conditional/voided (ADR-07).
  */
 class SacramentController extends Controller
 {
-    protected array $sacramentTypeCache = [];
+    public function __construct(
+        protected SacramentService $service,
+        protected SacramentPrivacyAccess $privacyAccess
+    ) {}
 
-    public function __construct(protected SacramentService $service) {}
-
-    /**
-     * Verify user is a tenant user (not Ekklesia role)
-     */
     private function verifyTenantUser(Request $request): ?JsonResponse
     {
         $user = $request->user();
-        
-        // Check if user has tenant_id (tenant users must have this)
-        if (app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
+
+        if (app(TenantContext::class)->effectiveTenantId() === null) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized. Only tenant users can manage sacrament records.',
             ], 403);
         }
 
-        // Block Ekklesia roles from accessing tenant sacrament records
         if ($user->hasEkklesiaRole()) {
             return response()->json([
                 'success' => false,
@@ -49,92 +56,87 @@ class SacramentController extends Controller
             ], 403);
         }
 
-        return null; // User is authorized
+        return null;
     }
 
-    /**
-     * Get paginated list of sacraments (tenant-isolated)
-     */
     public function index(Request $request): JsonResponse
     {
         try {
-            // Verify tenant user
             if ($error = $this->verifyTenantUser($request)) {
                 return $error;
             }
 
-            $user = $request->user();
-            
-            // Get params and enforce tenant isolation
             $params = $request->only([
                 'sacrament_type_id', 'status', 'search',
                 'date_from', 'date_to', 'per_page', 'sort_by', 'sort_dir',
                 'minister_name', 'certificate_number', 'book_number',
-                'family_id', 'bcc_id'
+                'family_id', 'bcc_id', 'event_subtype',
             ]);
-            
-            // Force tenant_id to current user's tenant
-            $params['tenant_id'] = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+
+            if (isset($params['status'])) {
+                $params['status'] = SacramentStatus::normalize($params['status']) ?? $params['status'];
+            }
+
+            $params['tenant_id'] = app(TenantContext::class)->requireEffectiveTenantId();
+            $params['include_restricted'] = $this->privacyAccess->canViewRestricted($request->user());
 
             $sacraments = $this->service->getAll($params);
 
             return response()->json([
                 'success' => true,
                 'data' => $sacraments,
-                'message' => 'Sacraments retrieved successfully'
+                'message' => 'Sacraments retrieved successfully',
             ]);
         } catch (\Exception $e) {
             Log::error('Error fetching sacraments', [
                 'error' => $e->getMessage(),
-                'user_id' => $request->user()->id ?? null
+                'user_id' => $request->user()->id ?? null,
             ]);
 
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve sacraments',
-                'error' => config('app.debug') ? $e->getMessage() : 'An error occurred'
+                'error' => config('app.debug') ? $e->getMessage() : 'An error occurred',
             ], 500);
         }
     }
 
-    /**
-     * Get single sacrament by ID (tenant-isolated)
-     */
     public function show(Request $request, int $id): JsonResponse
     {
         try {
-            // Verify tenant user
             if ($error = $this->verifyTenantUser($request)) {
                 return $error;
             }
 
-            $user = $request->user();
             $sacrament = $this->service->getById($id);
 
-            if (!$sacrament) {
+            if (! $sacrament) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Sacrament not found'
+                    'message' => 'Sacrament not found',
                 ], 404);
             }
 
-            // Verify sacrament belongs to user's tenant
-            if ($sacrament->tenant_id !== app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId()) {
+            if ($sacrament->tenant_id !== app(TenantContext::class)->requireEffectiveTenantId()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. You can only access sacraments from your own tenant.',
                 ], 403);
             }
 
+            $this->privacyAccess->assertCanAccessSacrament($request->user(), $sacrament);
+
             return response()->json([
                 'success' => true,
                 'data' => $sacrament,
-                'message' => 'Sacrament retrieved successfully'
+                'message' => 'Sacrament retrieved successfully',
             ]);
+        } catch (SacramentBusinessRuleException $e) {
+            return response()->json($e->toResponse(), $e->httpStatus());
         } catch (\Exception $e) {
             Log::error('Error fetching sacrament', [
                 'id' => $id,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
 
             return response()->json([
@@ -144,271 +146,137 @@ class SacramentController extends Controller
         }
     }
 
-    /**
-     * Create new sacrament record (tenant-isolated)
-     */
-    public function store(Request $request): JsonResponse
+    public function store(StoreSacramentRequest $request): JsonResponse
     {
         try {
-            // Verify tenant user
             if ($error = $this->verifyTenantUser($request)) {
                 return $error;
             }
 
             $user = $request->user();
+            $validated = $request->validated();
 
-            // Prepare data - convert empty strings to null for nullable fields
-            $data = $request->all();
-            $nullableFields = [
-                'family_id', 'bcc_id', 'recipient_dob', 'recipient_birth_date', 
-                'recipient_birth_place', 'recipient_gender', 'place_administered', 'minister_name', 
-                'minister_title', 'certificate_number', 'book_number', 'page_number',
-                'father_name', 'mother_name', 'godparent1_name', 'godparent2_name',
-                'witnesses', 'notes', 'status',
-                'marriage_bride_full_name', 'marriage_bride_father_name', 'marriage_bride_mother_name',
-                'marriage_bride_address', 'marriage_bride_church_type', 'marriage_bride_church_name',
-                'marriage_bride_church_address', 'marriage_groom_full_name', 'marriage_groom_father_name',
-                'marriage_groom_mother_name', 'marriage_groom_address', 'marriage_groom_church_type',
-                'marriage_groom_church_name', 'marriage_groom_church_address',
-            ];
-            
-            foreach ($nullableFields as $field) {
-                if (isset($data[$field]) && $data[$field] === '') {
-                    $data[$field] = null;
-                }
-            }
+            // Drop alias field if present — DB column is recipient_birth_date.
+            unset($validated['recipient_dob']);
 
-            // Build validation rules with tenant isolation
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
-            $validationRules = [
-                'sacrament_type_id' => 'required|exists:sacrament_types,id',
-                'family_id' => [
-                    'nullable',
-                    'uuid',
-                    Rule::exists('families', 'id')->where('tenant_id', $tenantId)
-                ],
-                'bcc_id' => [
-                    'nullable',
-                    'uuid',
-                    Rule::exists('bccs', 'id')->where('tenant_id', $tenantId)
-                ],
-                'recipient_name' => 'required|string|max:255',
-                'recipient_dob' => 'nullable|date',
-                'recipient_birth_date' => 'nullable|date',
-                'recipient_birth_place' => 'nullable|string|max:255',
-                'date_administered' => 'required|date',
-                'place_administered' => 'nullable|string|max:255',
-                'recipient_gender' => 'nullable|in:male,female,other',
-                'minister_name' => 'nullable|string|max:255',
-                'minister_title' => 'nullable|string|max:50',
-                'certificate_number' => [
-                    'nullable',
-                    'string',
-                    'max:255',
-                    Rule::unique('sacraments', 'certificate_number')
-                        ->where('tenant_id', $tenantId)
-                        ->whereNull('deleted_at')
-                ],
-                'book_number' => 'nullable|string|max:255',
-                'page_number' => 'nullable|string|max:255',
-                'father_name' => 'nullable|string|max:255',
-                'mother_name' => 'nullable|string|max:255',
-                'godparent1_name' => 'nullable|string|max:255',
-                'godparent2_name' => 'nullable|string|max:255',
-                'witnesses' => 'nullable|string',
-                'notes' => 'nullable|string',
-                'status' => 'nullable|in:active,cancelled,conditional',
-                'marriage_bride_full_name' => 'nullable|string|max:255',
-                'marriage_bride_father_name' => 'nullable|string|max:255',
-                'marriage_bride_mother_name' => 'nullable|string|max:255',
-                'marriage_bride_address' => 'nullable|string',
-                'marriage_bride_church_type' => 'nullable|in:home_parish,other',
-                'marriage_bride_church_name' => 'nullable|string|max:255',
-                'marriage_bride_church_address' => 'nullable|string',
-                'marriage_groom_full_name' => 'nullable|string|max:255',
-                'marriage_groom_father_name' => 'nullable|string|max:255',
-                'marriage_groom_mother_name' => 'nullable|string|max:255',
-                'marriage_groom_address' => 'nullable|string',
-                'marriage_groom_church_type' => 'nullable|in:home_parish,other',
-                'marriage_groom_church_name' => 'nullable|string|max:255',
-                'marriage_groom_church_address' => 'nullable|string',
-            ];
-            
-            $validated = validator($data, $validationRules)->validate();
-
-            // Auto-set tenant_id from authenticated user
-            $validated['tenant_id'] = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+            $validated['tenant_id'] = app(TenantContext::class)->requireEffectiveTenantId();
             $validated['created_by'] = $user->id;
+            $validated['status'] = SacramentStatus::normalize($validated['status'] ?? null)
+                ?? SacramentStatus::REGISTERED;
 
-            $sacrament = $this->service->create($validated);
-            $this->syncBaptismFamilyMembership($sacrament, $user);
+            // ADR-13: do not silently mutate FamilyMember from sacrament create.
+            $result = $this->service->create(
+                $validated,
+                $request->header('Idempotency-Key')
+            );
+
+            $sacrament = $result['sacrament'];
+            $status = $result['replay'] ? 200 : 201;
+            $message = $result['replay']
+                ? 'Sacrament already created for this Idempotency-Key'
+                : 'Sacrament created successfully';
 
             Log::info('Sacrament record created', [
                 'sacrament_id' => $sacrament->id,
-                'tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
-                'created_by' => $user->id
+                'tenant_id' => $validated['tenant_id'],
+                'created_by' => $user->id,
+                'replay' => $result['replay'],
+                'participants_v1' => SacramentFeatureFlags::participantsV1Enabled(),
             ]);
 
-            return response()->json([
+            $payload = [
                 'success' => true,
                 'data' => $sacrament,
-                'message' => 'Sacrament created successfully'
-            ], 201);
-        } catch (\Illuminate\Validation\ValidationException $e) {
+                'message' => $message,
+                'replay' => $result['replay'],
+            ];
+            if ($result['warning']) {
+                $payload['warning'] = $result['warning'];
+            }
+
+            return response()->json($payload, $status);
+        } catch (SacramentBusinessRuleException $e) {
+            return response()->json($e->toResponse(), $e->httpStatus());
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validation failed',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             Log::error('Error creating sacrament', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-                'request_data' => $request->all(),
-                'user_id' => $request->user()->id ?? null
+                'user_id' => $request->user()->id ?? null,
             ]);
 
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to create sacrament',
-                'error' => config('app.debug') ? $e->getMessage() : 'An error occurred while creating the sacrament record'
+                'error' => config('app.debug') ? $e->getMessage() : 'An error occurred while creating the sacrament record',
             ], 500);
         }
     }
 
-    /**
-     * Update existing sacrament record (tenant-isolated)
-     */
-    public function update(Request $request, int $id): JsonResponse
+    public function update(UpdateSacramentRequest $request, int $id): JsonResponse
     {
         try {
-            // Verify tenant user
             if ($error = $this->verifyTenantUser($request)) {
                 return $error;
             }
 
             $user = $request->user();
-
-            // Check if sacrament exists and belongs to user's tenant
             $existingSacrament = $this->service->getById($id);
-            
-            if (!$existingSacrament) {
+
+            if (! $existingSacrament) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Sacrament not found'
+                    'message' => 'Sacrament not found',
                 ], 404);
             }
 
-            if ($existingSacrament->tenant_id !== app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId()) {
+            if ($existingSacrament->tenant_id !== app(TenantContext::class)->requireEffectiveTenantId()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. You can only update sacraments from your own tenant.',
                 ], 403);
             }
 
-            $data = $request->all();
-            $nullableFields = [
-                'family_id', 'bcc_id', 'recipient_dob', 'recipient_birth_date', 
-                'recipient_birth_place', 'recipient_gender', 'place_administered', 'minister_name', 
-                'minister_title', 'certificate_number', 'book_number', 'page_number',
-                'father_name', 'mother_name', 'godparent1_name', 'godparent2_name',
-                'witnesses', 'notes', 'status',
-                'marriage_bride_full_name', 'marriage_bride_father_name', 'marriage_bride_mother_name',
-                'marriage_bride_address', 'marriage_bride_church_type', 'marriage_bride_church_name',
-                'marriage_bride_church_address', 'marriage_groom_full_name', 'marriage_groom_father_name',
-                'marriage_groom_mother_name', 'marriage_groom_address', 'marriage_groom_church_type',
-                'marriage_groom_church_name', 'marriage_groom_church_address',
-            ];
+            $this->privacyAccess->assertCanAccessSacrament($request->user(), $existingSacrament);
 
-            foreach ($nullableFields as $field) {
-                if (isset($data[$field]) && $data[$field] === '') {
-                    $data[$field] = null;
-                }
+            $validated = $request->validated();
+            unset($validated['recipient_dob']);
+
+            if (array_key_exists('status', $validated)) {
+                $validated['status'] = SacramentStatus::normalize($validated['status']) ?? $validated['status'];
             }
-
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
-
-            $validationRules = [
-                'family_id' => [
-                    'nullable',
-                    'uuid',
-                    Rule::exists('families', 'id')->where('tenant_id', $tenantId)
-                ],
-                'bcc_id' => [
-                    'nullable',
-                    'uuid',
-                    Rule::exists('bccs', 'id')->where('tenant_id', $tenantId)
-                ],
-                'recipient_name' => 'sometimes|string|max:255',
-                'recipient_dob' => 'nullable|date',
-                'recipient_birth_date' => 'nullable|date',
-                'recipient_birth_place' => 'nullable|string|max:255',
-                'date_administered' => 'sometimes|date',
-                'place_administered' => 'nullable|string|max:255',
-                'recipient_gender' => 'nullable|in:male,female,other',
-                'minister_name' => 'nullable|string|max:255',
-                'minister_title' => 'nullable|string|max:50',
-                'certificate_number' => [
-                    'nullable',
-                    'string',
-                    'max:255',
-                    Rule::unique('sacraments', 'certificate_number')
-                        ->where('tenant_id', $tenantId)
-                        ->whereNull('deleted_at')
-                        ->ignore($id)
-                ],
-                'book_number' => 'nullable|string|max:255',
-                'page_number' => 'nullable|string|max:255',
-                'father_name' => 'nullable|string|max:255',
-                'mother_name' => 'nullable|string|max:255',
-                'godparent1_name' => 'nullable|string|max:255',
-                'godparent2_name' => 'nullable|string|max:255',
-                'witnesses' => 'nullable|string',
-                'notes' => 'nullable|string',
-                'status' => 'nullable|in:active,cancelled,conditional',
-                'marriage_bride_full_name' => 'nullable|string|max:255',
-                'marriage_bride_father_name' => 'nullable|string|max:255',
-                'marriage_bride_mother_name' => 'nullable|string|max:255',
-                'marriage_bride_address' => 'nullable|string',
-                'marriage_bride_church_type' => 'nullable|in:home_parish,other',
-                'marriage_bride_church_name' => 'nullable|string|max:255',
-                'marriage_bride_church_address' => 'nullable|string',
-                'marriage_groom_full_name' => 'nullable|string|max:255',
-                'marriage_groom_father_name' => 'nullable|string|max:255',
-                'marriage_groom_mother_name' => 'nullable|string|max:255',
-                'marriage_groom_address' => 'nullable|string',
-                'marriage_groom_church_type' => 'nullable|in:home_parish,other',
-                'marriage_groom_church_name' => 'nullable|string|max:255',
-                'marriage_groom_church_address' => 'nullable|string',
-            ];
-
-            $validated = validator($data, $validationRules)->validate();
 
             $validated['updated_by'] = $user->id;
 
+            // ADR-13: no silent FamilyMember sync on update.
             $sacrament = $this->service->update($id, $validated);
-            $this->syncBaptismFamilyMembership($sacrament, $user);
 
             Log::info('Sacrament record updated', [
                 'sacrament_id' => $id,
-                'updated_by' => $user->id
+                'updated_by' => $user->id,
             ]);
 
             return response()->json([
                 'success' => true,
                 'data' => $sacrament,
-                'message' => 'Sacrament updated successfully'
+                'message' => 'Sacrament updated successfully',
             ]);
-        } catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (SacramentBusinessRuleException $e) {
+            return response()->json($e->toResponse(), $e->httpStatus());
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validation failed',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             Log::error('Error updating sacrament', [
                 'id' => $id,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
 
             return response()->json([
@@ -418,60 +286,176 @@ class SacramentController extends Controller
         }
     }
 
-    /**
-     * Delete sacrament record (tenant-isolated)
-     */
+    public function correct(CorrectSacramentRequest $request, int $id): JsonResponse
+    {
+        try {
+            if ($error = $this->verifyTenantUser($request)) {
+                return $error;
+            }
+
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $existing = $this->service->getById($id);
+            if (! $existing || $existing->tenant_id !== $tenantId) {
+                return response()->json(['success' => false, 'message' => 'Sacrament not found'], 404);
+            }
+            $this->privacyAccess->assertCanAccessSacrament($request->user(), $existing);
+
+            $sacrament = $this->service->correct(
+                $id,
+                $request->validated(),
+                $tenantId,
+                $request->user()->id
+            );
+
+            return response()->json([
+                'success' => true,
+                'data' => $sacrament,
+                'message' => 'Sacrament corrected successfully',
+            ]);
+        } catch (SacramentBusinessRuleException $e) {
+            return response()->json($e->toResponse(), $e->httpStatus());
+        } catch (\Exception $e) {
+            Log::error('Error correcting sacrament', ['id' => $id, 'error' => $e->getMessage()]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to correct sacrament',
+            ], 500);
+        }
+    }
+
+    public function void(VoidSacramentRequest $request, int $id): JsonResponse
+    {
+        try {
+            if ($error = $this->verifyTenantUser($request)) {
+                return $error;
+            }
+
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $sacrament = $this->service->void(
+                $id,
+                $request->validated(),
+                $tenantId,
+                $request->user()->id
+            );
+
+            return response()->json([
+                'success' => true,
+                'data' => $sacrament,
+                'message' => 'Sacrament voided successfully',
+            ]);
+        } catch (SacramentBusinessRuleException $e) {
+            return response()->json($e->toResponse(), $e->httpStatus());
+        } catch (\Exception $e) {
+            Log::error('Error voiding sacrament', ['id' => $id, 'error' => $e->getMessage()]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to void sacrament',
+            ], 500);
+        }
+    }
+
+    public function restore(RestoreSacramentRequest $request, int $id): JsonResponse
+    {
+        try {
+            if ($error = $this->verifyTenantUser($request)) {
+                return $error;
+            }
+
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $sacrament = $this->service->restore($id, $tenantId, $request->user()->id);
+
+            return response()->json([
+                'success' => true,
+                'data' => $sacrament,
+                'message' => 'Sacrament restored successfully (soft-delete cleared; status unchanged)',
+            ]);
+        } catch (SacramentBusinessRuleException $e) {
+            return response()->json($e->toResponse(), $e->httpStatus());
+        } catch (\Exception $e) {
+            Log::error('Error restoring sacrament', ['id' => $id, 'error' => $e->getMessage()]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to restore sacrament',
+            ], 500);
+        }
+    }
+
+    public function patchMetadata(PatchSacramentMetadataRequest $request, int $id): JsonResponse
+    {
+        try {
+            if ($error = $this->verifyTenantUser($request)) {
+                return $error;
+            }
+
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $sacrament = $this->service->patchMetadata(
+                $id,
+                $request->validated(),
+                $tenantId,
+                $request->user()->id
+            );
+
+            return response()->json([
+                'success' => true,
+                'data' => $sacrament,
+                'message' => 'Sacrament metadata updated successfully',
+            ]);
+        } catch (SacramentBusinessRuleException $e) {
+            return response()->json($e->toResponse(), $e->httpStatus());
+        } catch (\Exception $e) {
+            Log::error('Error patching sacrament metadata', ['id' => $id, 'error' => $e->getMessage()]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update sacrament metadata',
+            ], 500);
+        }
+    }
+
     public function destroy(Request $request, int $id): JsonResponse
     {
         try {
-            // Verify tenant user
             if ($error = $this->verifyTenantUser($request)) {
                 return $error;
             }
 
             $user = $request->user();
-
-            // SECURITY: Only Tenant Admins can delete sacraments
-            if (!$user->isTenantAdmin() && !$user->isSuperAdmin() && !$user->isEkklesiaAdmin()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized. Only Tenant Administrators can delete sacrament records.',
-                ], 403);
-            }
-
-            // Check if sacrament exists and belongs to user's tenant
             $sacrament = $this->service->getById($id);
-            
-            if (!$sacrament) {
+
+            if (! $sacrament) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Sacrament not found'
+                    'message' => 'Sacrament not found',
                 ], 404);
             }
 
-            if ($sacrament->tenant_id !== app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId()) {
+            if ($sacrament->tenant_id !== app(TenantContext::class)->requireEffectiveTenantId()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. You can only delete sacraments from your own tenant.',
                 ], 403);
             }
 
-            $deleted = $this->service->delete($id);
+            $this->privacyAccess->assertCanAccessSacrament($request->user(), $sacrament);
+
+            $this->service->delete($id);
 
             Log::info('Sacrament record deleted', [
                 'sacrament_id' => $id,
                 'deleted_by' => $user->id,
-                'deleted_by' => $user->id
             ]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Sacrament deleted successfully'
+                'message' => 'Sacrament deleted successfully',
             ]);
         } catch (\Exception $e) {
             Log::error('Error deleting sacrament', [
                 'id' => $id,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
 
             return response()->json([
@@ -481,32 +465,42 @@ class SacramentController extends Controller
         }
     }
 
-    /**
-     * Get all sacrament types (read-only for tenants)
-     * 
-     * Tenant users can VIEW sacrament types to select them,
-     * but cannot CREATE/UPDATE/DELETE types.
-     */
     public function getSacramentTypes(Request $request): JsonResponse
     {
         try {
-            // Verify tenant user
             if ($error = $this->verifyTenantUser($request)) {
                 return $error;
             }
 
-            $types = SacramentType::where('active', true)
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $settings = app(TenantSacramentSettingsService::class);
+            $enabledMap = $settings->enabledMap($tenantId);
+            $includeInactive = $request->boolean('include_inactive');
+            $disabledIds = $includeInactive ? [] : $settings->disabledTypeIdsForTenant($tenantId);
+
+            $types = SacramentType::query()
+                ->where('active', true)
+                ->when($disabledIds !== [], fn ($query) => $query->whereNotIn('id', $disabledIds))
                 ->orderBy('display_order')
-                ->get();
+                ->orderBy('name')
+                ->get()
+                ->map(function (SacramentType $type) use ($enabledMap) {
+                    $enabled = $enabledMap[(int) $type->id] ?? true;
+                    $type->setAttribute('canonical_code', SacramentTypeCode::normalize($type->code));
+                    $type->setAttribute('enabled_for_tenant', $enabled);
+
+                    return $type;
+                })
+                ->values();
 
             return response()->json([
                 'success' => true,
                 'data' => $types,
-                'message' => 'Sacrament types retrieved successfully'
+                'message' => 'Sacrament types retrieved successfully',
             ]);
         } catch (\Exception $e) {
             Log::error('Error fetching sacrament types', [
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
 
             return response()->json([
@@ -517,253 +511,137 @@ class SacramentController extends Controller
     }
 
     /**
-     * Determine if the sacrament type is Baptism.
+     * Authoritative sacrament definitions for FE (ADR-06). Phase 3.
      */
-    protected function isBaptismType(int $sacramentTypeId): bool
-    {
-        if (!array_key_exists($sacramentTypeId, $this->sacramentTypeCache)) {
-            $type = SacramentType::find($sacramentTypeId);
-            $this->sacramentTypeCache[$sacramentTypeId] = $type ? strtoupper($type->code) === 'BAPTISM' : false;
-        }
-
-        return $this->sacramentTypeCache[$sacramentTypeId];
-    }
-
-    /**
-     * Ensure baptized recipients become members of their associated family.
-     */
-    protected function syncBaptismFamilyMembership($sacrament, $user): void
-    {
-        if (
-            !$sacrament ||
-            empty($sacrament->family_id) ||
-            !$this->isBaptismType((int) $sacrament->sacrament_type_id)
-        ) {
-            return;
-        }
-
-        $nameParts = $this->parseRecipientName($sacrament->recipient_name);
-        if (!$nameParts) {
-            return;
-        }
-
-        $memberData = array_filter(
-            [
-                'first_name' => $nameParts['first_name'],
-                'middle_name' => $nameParts['middle_name'],
-                'last_name' => $nameParts['last_name'],
-                'date_of_birth' => $sacrament->recipient_birth_date,
-                'gender' => $sacrament->recipient_gender,
-                'baptism_date' => $sacrament->date_administered,
-                'baptism_place' => $sacrament->place_administered,
-                'baptism_godparent_primary' => $sacrament->godparent1_name,
-                'baptism_godparent_secondary' => $sacrament->godparent2_name,
-                'baptism_church_name' => $sacrament->place_administered,
-                'baptism_priest_name' => $sacrament->minister_name,
-                'notes' => $sacrament->notes,
-            ],
-            fn($value) => !is_null($value) && $value !== ''
-        );
-
-        $existingMember = FamilyMember::where('family_id', $sacrament->family_id)
-            ->whereRaw('LOWER(first_name) = ?', [mb_strtolower($nameParts['first_name'])])
-            ->whereRaw('LOWER(last_name) = ?', [mb_strtolower($nameParts['last_name'])])
-            ->when(
-                $sacrament->recipient_birth_date,
-                fn($query) => $query->whereDate('date_of_birth', $sacrament->recipient_birth_date)
-            )
-            ->first();
-
-        if ($existingMember) {
-            $updateData = $memberData;
-            $updateData['updated_by'] = $user->id;
-            $existingMember->fill($updateData);
-            $existingMember->save();
-            return;
-        }
-
-        $memberData['family_id'] = $sacrament->family_id;
-        $memberData['relationship_to_head'] = $this->determineRelationshipToHead($sacrament->family_id);
-        $memberData['is_primary_contact'] = false;
-        $memberData['status'] = 'active';
-        $memberData['created_by'] = $user->id;
-        $memberData['updated_by'] = $user->id;
-
-        FamilyMember::create($memberData);
-    }
-
-    /**
-     * Split recipient name into first/middle/last components.
-     */
-    protected function parseRecipientName(?string $name): ?array
-    {
-        if (!$name) {
-            return null;
-        }
-
-        $normalized = trim(preg_replace('/\s+/', ' ', $name));
-        if ($normalized === '') {
-            return null;
-        }
-
-        $parts = explode(' ', $normalized);
-        $firstName = array_shift($parts);
-        $lastName = count($parts) ? array_pop($parts) : $firstName;
-        $middleName = count($parts) ? implode(' ', $parts) : null;
-
-        return [
-            'first_name' => $firstName,
-            'middle_name' => $middleName,
-            'last_name' => $lastName,
-        ];
-    }
-
-    /**
-     * Determine default relationship role for a new member.
-     */
-    protected function determineRelationshipToHead(string $familyId): string
-    {
-        $existingMembers = FamilyMember::where('family_id', $familyId)->count();
-        return $existingMembers === 0 ? 'self' : 'other';
-    }
-
-    /**
-     * Bulk update status for multiple sacraments (tenant-isolated)
-     */
-    public function bulkUpdateStatus(Request $request): JsonResponse
+    public function getDefinitions(Request $request): JsonResponse
     {
         try {
-            // Verify tenant user
             if ($error = $this->verifyTenantUser($request)) {
                 return $error;
             }
 
-            $user = $request->user();
-            
-            $validated = $request->validate([
-                'ids' => 'required|array|min:1',
-                'ids.*' => 'required|integer|exists:sacraments,id',
-                'status' => 'required|in:active,cancelled,conditional'
-            ]);
-
-            $ids = $validated['ids'];
-            $status = $validated['status'];
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
-
-            // Verify all sacraments belong to user's tenant
-            $sacraments = $this->service->getByIds($ids);
-            $unauthorized = $sacraments->filter(fn($sacrament) => $sacrament->tenant_id !== $tenantId);
-            
-            if ($unauthorized->isNotEmpty()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized. Some sacraments do not belong to your tenant.',
-                ], 403);
-            }
-
-            // Update all sacraments
-            $updated = $this->service->bulkUpdateStatus($ids, $status, $user->id);
-
-            Log::info('Bulk status update performed', [
-                'count' => count($ids),
-                'status' => $status,
-                'updated_by' => $user->id
-            ]);
+            $definitions = app(SacramentDefinitionRegistry::class)->all();
 
             return response()->json([
                 'success' => true,
-                'message' => "Successfully updated {$updated} sacrament(s) to {$status}",
-                'data' => [
-                    'updated_count' => $updated,
-                    'status' => $status
-                ]
+                'data' => $definitions,
+                'message' => 'Sacrament definitions retrieved successfully',
+                'meta' => [
+                    'participants_v1' => SacramentFeatureFlags::participantsV1Enabled(),
+                ],
             ]);
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $e->errors()
-            ], 422);
         } catch (\Exception $e) {
-            Log::error('Error in bulk status update', [
+            Log::error('Error fetching sacrament definitions', [
                 'error' => $e->getMessage(),
-                'user_id' => $request->user()->id ?? null
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to update sacraments',
-                'error' => config('app.debug') ? $e->getMessage() : 'An error occurred'
+                'message' => 'Failed to retrieve sacrament definitions',
             ], 500);
         }
     }
 
-    /**
-     * Bulk delete multiple sacraments (tenant-isolated)
-     */
-    public function bulkDelete(Request $request): JsonResponse
+    public function bulkUpdateStatus(BulkUpdateSacramentStatusRequest $request): JsonResponse
     {
         try {
-            // Verify tenant user
             if ($error = $this->verifyTenantUser($request)) {
                 return $error;
             }
 
             $user = $request->user();
-            
-            $validated = $request->validate([
-                'ids' => 'required|array|min:1',
-                'ids.*' => 'required|integer|exists:sacraments,id'
-            ]);
-
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $validated = $request->validated();
+            $status = SacramentStatus::normalize($validated['status']) ?? $validated['status'];
             $ids = $validated['ids'];
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
 
-            // Verify all sacraments belong to user's tenant
-            $sacraments = $this->service->getByIds($ids);
-            $unauthorized = $sacraments->filter(fn($sacrament) => $sacrament->tenant_id !== $tenantId);
-            
-            if ($unauthorized->isNotEmpty()) {
+            // Only update rows owned by this tenant.
+            $ownedIds = $this->service->getByIds($ids)
+                ->where('tenant_id', $tenantId)
+                ->pluck('id')
+                ->all();
+
+            if (count($ownedIds) !== count($ids)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized. Some sacraments do not belong to your tenant.',
+                    'message' => 'Unauthorized. One or more sacraments do not belong to your tenant.',
                 ], 403);
             }
 
-            // Delete all sacraments
-            $deleted = $this->service->bulkDelete($ids);
-
-            Log::info('Bulk delete performed', [
-                'count' => count($ids),
-                'deleted_by' => $user->id
-            ]);
+            $updated = $this->service->bulkUpdateStatus($ownedIds, $status, $user->id);
 
             return response()->json([
                 'success' => true,
-                'message' => "Successfully deleted {$deleted} sacrament(s)",
-                'data' => [
-                    'deleted_count' => $deleted
-                ]
+                'data' => ['updated' => $updated],
+                'message' => 'Sacrament statuses updated successfully',
             ]);
-        } catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validation failed',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
-            Log::error('Error in bulk delete', [
+            Log::error('Error bulk updating sacrament status', [
                 'error' => $e->getMessage(),
-                'user_id' => $request->user()->id ?? null
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update sacrament statuses',
+            ], 500);
+        }
+    }
+
+    public function bulkDelete(Request $request): JsonResponse
+    {
+        try {
+            if ($error = $this->verifyTenantUser($request)) {
+                return $error;
+            }
+
+            $validated = $request->validate([
+                'ids' => 'required|array|min:1',
+                'ids.*' => 'integer|exists:sacraments,id',
+            ]);
+
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $ids = $validated['ids'];
+
+            $ownedIds = $this->service->getByIds($ids)
+                ->where('tenant_id', $tenantId)
+                ->pluck('id')
+                ->all();
+
+            if (count($ownedIds) !== count($ids)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. One or more sacraments do not belong to your tenant.',
+                ], 403);
+            }
+
+            $deleted = $this->service->bulkDelete($ownedIds);
+
+            return response()->json([
+                'success' => true,
+                'data' => ['deleted' => $deleted],
+                'message' => 'Sacraments deleted successfully',
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Error bulk deleting sacraments', [
+                'error' => $e->getMessage(),
             ]);
 
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to delete sacraments',
-                'error' => config('app.debug') ? $e->getMessage() : 'An error occurred'
             ], 500);
         }
     }
 }
-
-

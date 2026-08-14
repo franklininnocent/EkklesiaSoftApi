@@ -3,25 +3,26 @@
 namespace Modules\BCC\Providers;
 
 use Illuminate\Foundation\Support\Providers\EventServiceProvider as ServiceProvider;
+use Illuminate\Support\Facades\Gate;
+use Modules\BCC\Models\BCC;
+use Modules\BCC\Models\BCCLeader;
+use Modules\BCC\Models\BccAuditLog;
+use Modules\BCC\Models\BccFamilyMembership;
+use Modules\BCC\Policies\BCCLeaderPolicy;
+use Modules\BCC\Policies\BCCPolicy;
+use Modules\BCC\Policies\BccAuditLogPolicy;
+use Modules\BCC\Policies\BccFamilyMembershipPolicy;
 
 class EventServiceProvider extends ServiceProvider
 {
-    /**
-     * The event handler mappings for the application.
-     *
-     * @var array<string, array<int, string>>
-     */
+    /** @var array<string, array<int, string>> */
     protected $listen = [];
 
-    /**
-     * Indicates if events should be discovered.
-     *
-     * @var bool
-     */
-    protected static $shouldDiscoverEvents = true;
-
-    /**
-     * Configure the proper event listeners for email verification.
-     */
-    protected function configureEmailVerification(): void {}
+    public function boot(): void
+    {
+        Gate::policy(BCC::class, BCCPolicy::class);
+        Gate::policy(BccFamilyMembership::class, BccFamilyMembershipPolicy::class);
+        Gate::policy(BCCLeader::class, BCCLeaderPolicy::class);
+        Gate::policy(BccAuditLog::class, BccAuditLogPolicy::class);
+    }
 }

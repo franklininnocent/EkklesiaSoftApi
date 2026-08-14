@@ -39,6 +39,7 @@ class FamilyMember extends Model
      */
     protected $fillable = [
         'family_id',
+        'person_id',
         'first_name',
         'middle_name',
         'last_name',

@@ -3,18 +3,23 @@
 namespace Modules\BCC\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Modules\BCC\Exceptions\BccDomainException;
 use Modules\BCC\Http\Requests\StoreBCCRequest;
 use Modules\BCC\Http\Requests\UpdateBCCRequest;
 use Modules\BCC\Http\Requests\StoreBCCLeaderRequest;
 use Modules\BCC\Http\Requests\UpdateBCCLeaderRequest;
 use Modules\BCC\Http\Requests\AssignFamiliesRequest;
+use Modules\BCC\Models\BCC;
 use Modules\BCC\Services\BCCService;
 
 class BCCController extends Controller
 {
+    use AuthorizesRequests;
+
     /**
      * @var BCCService
      */
@@ -39,6 +44,7 @@ class BCCController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
+            $this->authorize('viewAny', BCC::class);
             $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             
             if (!$tenantId) {
@@ -51,6 +57,7 @@ class BCCController extends Controller
             $filters = [
                 'search' => $request->input('search'),
                 'status' => $request->input('status'),
+                'meeting_day' => $request->input('meeting_day'),
                 'parish_zone_id' => $request->input('parish_zone_id'),
                 'has_space' => $request->input('has_space'),
                 'sort_by' => $request->input('sort_by', 'created_at'),
@@ -221,22 +228,13 @@ class BCCController extends Controller
     public function destroy(string $id): JsonResponse
     {
         try {
-            $user = Auth::user();
-            $tenantId = $user->tenant_id;
-            $userId = $user->id;
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+            $userId = Auth::id();
             
             if (!$tenantId) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Tenant ID is required'
-                ], 403);
-            }
-
-            // SECURITY: Only Tenant Admins can delete BCCs
-            if (!$user->isTenantAdmin() && !$user->isSuperAdmin() && !$user->isEkklesiaAdmin()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized. Only Tenant Administrators can delete BCCs.',
                 ], 403);
             }
 
@@ -590,6 +588,12 @@ class BCCController extends Controller
                 'removed_count' => $count
             ]);
 
+        } catch (BccDomainException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'errors' => $e->errors,
+            ], $e->httpStatus);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,

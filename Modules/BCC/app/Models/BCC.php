@@ -133,6 +133,11 @@ class BCC extends Model
         return $this->hasMany(Family::class, 'bcc_id');
     }
 
+    public function memberships(): HasMany
+    {
+        return $this->hasMany(BccFamilyMembership::class, 'bcc_id');
+    }
+
     /**
      * Get active families in this BCC.
      */
@@ -248,7 +253,7 @@ class BCC extends Model
      */
     public function getIsAtCapacityAttribute(): bool
     {
-        return $this->current_family_count >= $this->max_families;
+        return false;
     }
 
     /**
@@ -258,11 +263,7 @@ class BCC extends Model
      */
     public function getCapacityPercentageAttribute(): float
     {
-        if ($this->max_families == 0) {
-            return 0;
-        }
-
-        return round(($this->current_family_count / $this->max_families) * 100, 2);
+        return 0;
     }
 
     /**
@@ -272,7 +273,7 @@ class BCC extends Model
      */
     public function canAcceptMoreFamilies(): bool
     {
-        return $this->current_family_count < $this->max_families;
+        return $this->status === 'active';
     }
 
     /**
@@ -282,7 +283,7 @@ class BCC extends Model
      */
     public function getRemainingCapacity(): int
     {
-        return max(0, $this->max_families - $this->current_family_count);
+        return 0;
     }
 }
 

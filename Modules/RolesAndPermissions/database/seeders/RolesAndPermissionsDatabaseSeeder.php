@@ -28,6 +28,10 @@ class RolesAndPermissionsDatabaseSeeder extends Seeder
             $this->call(\Modules\MinistriesAssociations\Database\Seeders\MinistriesAssociationsPermissionSeeder::class);
         }
 
+        if (class_exists(\Modules\BCC\Database\Seeders\BccPermissionSeeder::class)) {
+            $this->call(\Modules\BCC\Database\Seeders\BccPermissionSeeder::class);
+        }
+
         $this->command->line('');
         $this->command->info('✅ RolesAndPermissions Module seeded successfully!');
     }
