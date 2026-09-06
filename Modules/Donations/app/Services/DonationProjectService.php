@@ -7,13 +7,12 @@ use Modules\Donations\Models\DonationProject;
 use Modules\Donations\Models\ProjectFamilyAssignment;
 use Modules\Donations\Models\ProjectInstallmentDue;
 use Modules\Donations\Support\ContributionBalance;
+use Modules\Donations\Support\MoneyMath;
 use Modules\Family\Models\Family;
 
 class DonationProjectService
 {
-    public function __construct(private readonly DonationAuditService $auditService)
-    {
-    }
+    public function __construct(private readonly DonationAuditService $auditService) {}
 
     public function create(int $tenantId, int $userId, array $payload): DonationProject
     {
@@ -29,7 +28,7 @@ class DonationProjectService
 
             $project = DonationProject::create($payload);
 
-            if (!empty($assignments)) {
+            if (! empty($assignments)) {
                 $this->syncAssignments($tenantId, $userId, $project, $assignments);
             }
 
@@ -62,7 +61,7 @@ class DonationProjectService
     }
 
     /**
-     * @param array<int, array<string, mixed>> $assignments
+     * @param  array<int, array<string, mixed>>  $assignments
      */
     public function syncAssignments(int $tenantId, int $userId, DonationProject $project, array $assignments): void
     {
@@ -230,9 +229,9 @@ class DonationProjectService
         ];
     }
 
-    public function recordCollection(int $tenantId, DonationProject $project, string $familyId, float $amount): void
+    public function recordCollection(int $tenantId, DonationProject $project, string $familyId, string|float|int $amount): void
     {
-        $project->raised_amount = round((float) $project->raised_amount + $amount, 2);
+        $project->raised_amount = MoneyMath::add($project->raised_amount ?? 0, $amount);
         $project->save();
 
         $assignment = ProjectFamilyAssignment::forTenant($tenantId)
@@ -243,7 +242,7 @@ class DonationProjectService
             ->first();
 
         if ($assignment) {
-            $assignment->amount_collected = round((float) $assignment->amount_collected + $amount, 2);
+            $assignment->amount_collected = MoneyMath::add($assignment->amount_collected ?? 0, $amount);
             $assignment->save();
         }
 
@@ -266,7 +265,7 @@ class DonationProjectService
 
         foreach ($activeProjects as $project) {
             $enrolledIds = $this->getEnrolledFamilyIds($project, $asOfDate);
-            if (!in_array($familyId, $enrolledIds, true)) {
+            if (! in_array($familyId, $enrolledIds, true)) {
                 continue;
             }
 
@@ -331,9 +330,9 @@ class DonationProjectService
         ];
     }
 
-    public function reverseCollection(int $tenantId, DonationProject $project, string $familyId, float $amount): void
+    public function reverseCollection(int $tenantId, DonationProject $project, string $familyId, string|float|int $amount): void
     {
-        $project->raised_amount = max(0, round((float) $project->raised_amount - $amount, 2));
+        $project->raised_amount = MoneyMath::floorAtZero(MoneyMath::subtract($project->raised_amount ?? 0, $amount));
         $project->save();
 
         $assignment = ProjectFamilyAssignment::forTenant($tenantId)
@@ -344,7 +343,7 @@ class DonationProjectService
             ->first();
 
         if ($assignment) {
-            $assignment->amount_collected = max(0, round((float) $assignment->amount_collected - $amount, 2));
+            $assignment->amount_collected = MoneyMath::floorAtZero(MoneyMath::subtract($assignment->amount_collected ?? 0, $amount));
             $assignment->save();
         }
     }

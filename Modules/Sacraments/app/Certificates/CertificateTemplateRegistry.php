@@ -22,6 +22,8 @@ final class CertificateTemplateRegistry
 
     public const HOLY_ORDERS_V1 = 'holy_orders_v1';
 
+    public const RECONCILIATION_V1 = 'reconciliation_v1';
+
     /**
      * @return array{template_code:string, template_version:string, title:string}
      */
@@ -37,8 +39,8 @@ final class CertificateTemplateRegistry
             ],
             SacramentTypeCode::MATRIMONY => [
                 'template_code' => self::MARRIAGE_V1,
-                'template_version' => '1.0.0',
-                'title' => 'Certificate of Marriage',
+                'template_version' => '1.1.0',
+                'title' => 'Certificate of Holy Matrimony',
             ],
             SacramentTypeCode::CONFIRMATION => [
                 'template_code' => self::CONFIRMATION_V1,
@@ -59,6 +61,11 @@ final class CertificateTemplateRegistry
                 'template_code' => self::HOLY_ORDERS_V1,
                 'template_version' => '1.0.0',
                 'title' => 'Certificate of Holy Orders',
+            ],
+            SacramentTypeCode::RECONCILIATION => [
+                'template_code' => self::RECONCILIATION_V1,
+                'template_version' => '1.0.0',
+                'title' => 'Certificate of Reconciliation',
             ],
             default => throw new SacramentBusinessRuleException(
                 'certificate_not_supported',

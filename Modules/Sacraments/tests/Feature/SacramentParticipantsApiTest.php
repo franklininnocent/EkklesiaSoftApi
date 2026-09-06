@@ -239,6 +239,118 @@ class SacramentParticipantsApiTest extends TestCase
     }
 
     #[Test]
+    public function it_creates_baptism_with_member_recipient_using_canonical_dob_without_recipient_birth_date(): void
+    {
+        $payload = array_merge($this->baptismIdentity(), [
+            'sacrament_type_id' => $this->baptismType->id,
+            'date_administered' => '2026-08-01',
+            'family_member_id' => $this->member->id,
+            'participants' => [
+                [
+                    'role' => 'recipient',
+                    'source' => 'member',
+                    'family_member_id' => $this->member->id,
+                    'sort_order' => 0,
+                ],
+                [
+                    'role' => 'minister',
+                    'source' => 'external',
+                    'external_full_name' => 'Fr. Thomas',
+                    'external_title' => 'Fr.',
+                    'external_minister_role' => 'priest',
+                    'sort_order' => 0,
+                ],
+            ],
+        ]);
+        unset($payload['recipient_birth_date']);
+
+        $this->postJson('/api/sacraments', $payload)
+            ->assertCreated();
+    }
+
+    #[Test]
+    public function it_rejects_marriage_member_without_canonical_date_of_birth(): void
+    {
+        $brideWithoutDob = FamilyMember::factory()->create([
+            'family_id' => $this->family->id,
+            'first_name' => 'No',
+            'last_name' => 'Dob',
+            'date_of_birth' => null,
+            'gender' => 'female',
+        ]);
+        $brideWithoutDob->person?->update(['date_of_birth' => null]);
+
+        $response = $this->postJson('/api/sacraments', [
+            'sacrament_type_id' => $this->marriageType->id,
+            'date_administered' => '2026-08-10',
+            'place_administered' => 'Cathedral',
+            'participants' => [
+                [
+                    'role' => 'bride',
+                    'source' => 'member',
+                    'family_member_id' => $brideWithoutDob->id,
+                    'affiliation_type' => 'home_parish',
+                ],
+                [
+                    'role' => 'groom',
+                    'source' => 'external',
+                    'external_full_name' => 'External Groom',
+                    'external_date_of_birth' => '1990-06-20',
+                    'external_gender' => 'male',
+                    'affiliation_type' => 'home_parish',
+                ],
+                [
+                    'role' => 'minister',
+                    'source' => 'external',
+                    'external_full_name' => 'Fr. Wedding',
+                    'external_title' => 'Fr.',
+                    'external_minister_role' => 'priest',
+                ],
+            ],
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['bride_date_of_birth']);
+    }
+
+    #[Test]
+    public function it_rejects_external_marriage_participant_without_date_of_birth(): void
+    {
+        $response = $this->postJson('/api/sacraments', [
+            'sacrament_type_id' => $this->marriageType->id,
+            'date_administered' => '2026-08-10',
+            'place_administered' => 'Cathedral',
+            'participants' => [
+                [
+                    'role' => 'bride',
+                    'source' => 'external',
+                    'external_full_name' => 'External Bride',
+                    'external_gender' => 'female',
+                    'affiliation_type' => 'home_parish',
+                ],
+                [
+                    'role' => 'groom',
+                    'source' => 'external',
+                    'external_full_name' => 'External Groom',
+                    'external_date_of_birth' => '1990-06-20',
+                    'external_gender' => 'male',
+                    'affiliation_type' => 'home_parish',
+                ],
+                [
+                    'role' => 'minister',
+                    'source' => 'external',
+                    'external_full_name' => 'Fr. Wedding',
+                    'external_title' => 'Fr.',
+                    'external_minister_role' => 'priest',
+                ],
+            ],
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['bride_date_of_birth']);
+    }
+
+    #[Test]
     public function it_creates_marriage_member_member(): void
     {
         $this->assertMarriageCombo(

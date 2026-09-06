@@ -19,7 +19,7 @@ class SacramentDuplicateDetectorTest extends TestCase
         $this->assertNotNull($def);
         $this->assertSame(SacramentPrivacyClass::RESTRICTED, $def['privacy_class']);
         $this->assertFalse($def['gated']);
-        $this->assertFalse($def['certificate_supported']);
+        $this->assertTrue($def['certificate_supported']);
     }
 
     #[Test]

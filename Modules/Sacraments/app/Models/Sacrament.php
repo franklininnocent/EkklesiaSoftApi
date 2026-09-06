@@ -2,30 +2,30 @@
 
 namespace Modules\Sacraments\Models;
 
-use App\Models\User;
-use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Modules\Tenants\Models\Tenant;
-use Modules\Family\Models\Family;
+use Modules\Authentication\Models\User;
 use Modules\BCC\Models\BCC;
+use Modules\Family\Models\Family;
+use Modules\Family\Models\Person;
+use Modules\Sacraments\Database\Factories\SacramentFactory;
+use Modules\Sacraments\Support\SacramentStatus;
+use Modules\Tenants\Models\Tenant;
 
 /**
- * Sacrament Model
- * 
- * Represents individual sacrament administration records
+ * Sacrament Model — parish register record (ADR-07 / ADR-08).
  */
 class Sacrament extends Model
 {
     use HasFactory, SoftDeletes;
 
-    /**
-     * Create a new factory instance for the model.
-     */
     protected static function newFactory()
     {
-        return \Modules\Sacraments\Database\Factories\SacramentFactory::new();
+        return SacramentFactory::new();
     }
 
     protected $table = 'sacraments';
@@ -34,15 +34,22 @@ class Sacrament extends Model
         'tenant_id',
         'family_id',
         'bcc_id',
+        'person_id',
         'sacrament_type_id',
         'recipient_name',
         'date_administered',
         'place_administered',
+        'place_classification',
+        'event_subtype',
+        'typed_attributes',
+        'baptism_date',
         'minister_name',
         'minister_title',
         'certificate_number',
         'book_number',
         'page_number',
+        'registry_entry',
+        'lock_version',
         'recipient_birth_date',
         'recipient_birth_place',
         'recipient_gender',
@@ -57,6 +64,9 @@ class Sacrament extends Model
         'marriage_bride_church_type',
         'marriage_bride_church_name',
         'marriage_bride_church_address',
+        'marriage_bride_diocese_name',
+        'marriage_bride_diocese_region',
+        'marriage_bride_diocese_country',
         'marriage_groom_full_name',
         'marriage_groom_father_name',
         'marriage_groom_mother_name',
@@ -64,6 +74,10 @@ class Sacrament extends Model
         'marriage_groom_church_type',
         'marriage_groom_church_name',
         'marriage_groom_church_address',
+        'marriage_groom_diocese_name',
+        'marriage_groom_diocese_region',
+        'marriage_groom_diocese_country',
+        'marriage_canonical_classification',
         'witnesses',
         'notes',
         'document_path',
@@ -77,7 +91,10 @@ class Sacrament extends Model
     protected $casts = [
         'date_administered' => 'date',
         'recipient_birth_date' => 'date',
+        'baptism_date' => 'date',
         'conditional_date' => 'date',
+        'typed_attributes' => 'array',
+        'lock_version' => 'integer',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
         'deleted_at' => 'datetime',
@@ -87,145 +104,156 @@ class Sacrament extends Model
         'deleted_at',
     ];
 
-    /**
-     * Get the tenant (church) this sacrament belongs to
-     */
+    protected $attributes = [
+        'lock_version' => 0,
+        'status' => SacramentStatus::REGISTERED,
+    ];
+
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);
     }
 
-    /**
-     * Get the sacrament type
-     */
     public function sacramentType(): BelongsTo
     {
         return $this->belongsTo(SacramentType::class, 'sacrament_type_id');
     }
 
-    /**
-     * Get the family this sacrament belongs to
-     */
     public function family(): BelongsTo
     {
         return $this->belongsTo(Family::class);
     }
 
-    /**
-     * Get the BCC this sacrament belongs to
-     */
+    public function person(): BelongsTo
+    {
+        return $this->belongsTo(Person::class);
+    }
+
     public function bcc(): BelongsTo
     {
         return $this->belongsTo(BCC::class);
     }
 
-    /**
-     * Get the user who created this record
-     */
+    public function participants(): HasMany
+    {
+        return $this->hasMany(SacramentParticipant::class)->orderBy('sort_order');
+    }
+
+    public function certificates(): HasMany
+    {
+        return $this->hasMany(SacramentCertificate::class);
+    }
+
+    public function dispensations(): HasMany
+    {
+        return $this->hasMany(SacramentDispensation::class);
+    }
+
+    public function canonicalAnnotations(): HasMany
+    {
+        return $this->hasMany(SacramentCanonicalAnnotation::class)->orderBy('effective_date')->orderBy('id');
+    }
+
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
     }
 
-    /**
-     * Get the user who last updated this record
-     */
     public function updater(): BelongsTo
     {
         return $this->belongsTo(User::class, 'updated_by');
     }
 
-    /**
-     * Scope: Filter by tenant
-     */
     public function scopeForTenant($query, int $tenantId)
     {
         return $query->where('tenant_id', $tenantId);
     }
 
-    /**
-     * Scope: Filter by sacrament type
-     */
     public function scopeBySacramentType($query, int $typeId)
     {
         return $query->where('sacrament_type_id', $typeId);
     }
 
-    /**
-     * Scope: Filter by status
-     */
     public function scopeByStatus($query, string $status)
     {
-        return $query->where('status', $status);
+        $normalized = SacramentStatus::normalize($status) ?? $status;
+
+        return $query->where('status', $normalized);
     }
 
-    /**
-     * Scope: Search by recipient name
-     */
     public function scopeSearchRecipient($query, string $search)
     {
-        return $query->where('recipient_name', 'ILIKE', "%{$search}%");
+        return $query->where(function ($q) use ($search) {
+            $q->whereRaw('LOWER(recipient_name) LIKE ?', ['%'.mb_strtolower($search).'%']);
+        });
     }
 
-    /**
-     * Scope: Filter by date range
-     */
     public function scopeDateRange($query, $startDate, $endDate)
     {
         return $query->whereBetween('date_administered', [$startDate, $endDate]);
     }
 
-    /**
-     * Scope: Filter by minister name
-     */
     public function scopeByMinisterName($query, string $ministerName)
     {
-        return $query->where('minister_name', 'ILIKE', "%{$ministerName}%");
+        return $query->whereRaw('LOWER(minister_name) LIKE ?', ['%'.mb_strtolower($ministerName).'%']);
     }
 
-    /**
-     * Scope: Filter by certificate number
-     */
     public function scopeByCertificateNumber($query, string $certificateNumber)
     {
-        return $query->where('certificate_number', 'ILIKE', "%{$certificateNumber}%");
+        return $query->whereRaw('LOWER(certificate_number) LIKE ?', ['%'.mb_strtolower($certificateNumber).'%']);
     }
 
-    /**
-     * Scope: Filter by book number
-     */
     public function scopeByBookNumber($query, string $bookNumber)
     {
-        return $query->where('book_number', 'ILIKE', "%{$bookNumber}%");
+        return $query->whereRaw('LOWER(book_number) LIKE ?', ['%'.mb_strtolower($bookNumber).'%']);
     }
 
-    /**
-     * Scope: Filter by family ID
-     */
     public function scopeByFamily($query, string $familyId)
     {
         return $query->where('family_id', $familyId);
     }
 
     /**
-     * Scope: Filter by BCC ID
+     * Sacraments linked to a canonical family member (participant FK or parish Person).
+     *
+     * @param  Builder  $query
      */
+    public function scopeLinkedToFamilyMember($query, string $memberId, ?string $personId = null)
+    {
+        return $query->where(function ($outer) use ($memberId, $personId) {
+            $outer->whereHas('participants', function ($participantQuery) use ($memberId) {
+                $participantQuery
+                    ->where('family_member_id', $memberId)
+                    ->whereIn('role', ['recipient', 'bride', 'groom']);
+            });
+
+            if ($personId !== null && $personId !== '') {
+                $outer->orWhere('person_id', $personId);
+            }
+        });
+    }
+
     public function scopeByBCC($query, string $bccId)
     {
         return $query->where('bcc_id', $bccId);
     }
 
-    /**
-     * Check if sacrament is active
-     */
-    public function isActive(): bool
+    public function isRegistered(): bool
     {
-        return $this->status === 'active';
+        return SacramentStatus::normalize($this->status) === SacramentStatus::REGISTERED;
     }
 
-    /**
-     * Get full certificate reference
-     */
+    public function isVoided(): bool
+    {
+        return SacramentStatus::normalize($this->status) === SacramentStatus::VOIDED;
+    }
+
+    /** @deprecated Use isRegistered() — legacy alias for pre-Phase-1 status. */
+    public function isActive(): bool
+    {
+        return $this->isRegistered();
+    }
+
     public function getCertificateReferenceAttribute(): string
     {
         $parts = array_filter([
@@ -233,7 +261,7 @@ class Sacrament extends Model
             $this->page_number ? "Page: {$this->page_number}" : null,
             $this->certificate_number ? "Cert: {$this->certificate_number}" : null,
         ]);
-        
-        return !empty($parts) ? implode(' | ', $parts) : 'No reference';
+
+        return $parts !== [] ? implode(' | ', $parts) : 'No reference';
     }
 }

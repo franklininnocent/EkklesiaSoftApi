@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use Modules\Family\Models\FamilyMember;
 use Modules\Sacraments\Definitions\SacramentDefinitionRegistry;
 use Modules\Sacraments\Exceptions\SacramentBusinessRuleException;
 use Modules\Sacraments\Http\Requests\BulkUpdateSacramentStatusRequest;
@@ -19,6 +20,7 @@ use Modules\Sacraments\Http\Requests\VoidSacramentRequest;
 use Modules\Sacraments\Models\SacramentType;
 use Modules\Sacraments\Services\SacramentService;
 use Modules\Sacraments\Services\TenantSacramentSettingsService;
+use Modules\Sacraments\Support\MarriageRegisterFilter;
 use Modules\Sacraments\Support\SacramentFeatureFlags;
 use Modules\Sacraments\Support\SacramentPrivacyAccess;
 use Modules\Sacraments\Support\SacramentStatus;
@@ -70,14 +72,47 @@ class SacramentController extends Controller
                 'sacrament_type_id', 'status', 'search',
                 'date_from', 'date_to', 'per_page', 'sort_by', 'sort_dir',
                 'minister_name', 'certificate_number', 'book_number',
-                'family_id', 'bcc_id', 'event_subtype',
+                'family_id', 'bcc_id', 'event_subtype', 'family_member_id',
+                'marriage_register_filter',
             ]);
 
             if (isset($params['status'])) {
                 $params['status'] = SacramentStatus::normalize($params['status']) ?? $params['status'];
             }
 
-            $params['tenant_id'] = app(TenantContext::class)->requireEffectiveTenantId();
+            if (! empty($params['marriage_register_filter'])) {
+                $normalizedFilter = MarriageRegisterFilter::normalize($params['marriage_register_filter']);
+                if ($normalizedFilter === null) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Invalid marriage register filter.',
+                    ], 422);
+                }
+
+                $params['marriage_register_filter'] = $normalizedFilter;
+            }
+
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $params['tenant_id'] = $tenantId;
+
+            if (! empty($params['family_member_id'])) {
+                $member = FamilyMember::query()
+                    ->where('id', $params['family_member_id'])
+                    ->whereHas('family', fn ($query) => $query->where('tenant_id', $tenantId))
+                    ->first();
+
+                if (! $member) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Family member not found',
+                    ], 404);
+                }
+
+                $params['family_member_id'] = $member->id;
+                if ($member->person_id) {
+                    $params['linked_person_id'] = $member->person_id;
+                }
+            }
             $params['include_restricted'] = $this->privacyAccess->canViewRestricted($request->user());
 
             $sacraments = $this->service->getAll($params);
@@ -108,7 +143,8 @@ class SacramentController extends Controller
                 return $error;
             }
 
-            $sacrament = $this->service->getById($id);
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $sacrament = $this->service->getByIdForTenant($id, $tenantId);
 
             if (! $sacrament) {
                 return response()->json([
@@ -117,12 +153,7 @@ class SacramentController extends Controller
                 ], 404);
             }
 
-            if ($sacrament->tenant_id !== app(TenantContext::class)->requireEffectiveTenantId()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized. You can only access sacraments from your own tenant.',
-                ], 403);
-            }
+            $this->authorize('view', $sacrament);
 
             $this->privacyAccess->assertCanAccessSacrament($request->user(), $sacrament);
 
@@ -225,20 +256,14 @@ class SacramentController extends Controller
             }
 
             $user = $request->user();
-            $existingSacrament = $this->service->getById($id);
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $existingSacrament = $this->service->getByIdForTenant($id, $tenantId);
 
             if (! $existingSacrament) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Sacrament not found',
                 ], 404);
-            }
-
-            if ($existingSacrament->tenant_id !== app(TenantContext::class)->requireEffectiveTenantId()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized. You can only update sacraments from your own tenant.',
-                ], 403);
             }
 
             $this->privacyAccess->assertCanAccessSacrament($request->user(), $existingSacrament);
@@ -294,8 +319,8 @@ class SacramentController extends Controller
             }
 
             $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
-            $existing = $this->service->getById($id);
-            if (! $existing || $existing->tenant_id !== $tenantId) {
+            $existing = $this->service->getByIdForTenant($id, $tenantId);
+            if (! $existing) {
                 return response()->json(['success' => false, 'message' => 'Sacrament not found'], 404);
             }
             $this->privacyAccess->assertCanAccessSacrament($request->user(), $existing);
@@ -423,20 +448,14 @@ class SacramentController extends Controller
             }
 
             $user = $request->user();
-            $sacrament = $this->service->getById($id);
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $sacrament = $this->service->getByIdForTenant($id, $tenantId);
 
             if (! $sacrament) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Sacrament not found',
                 ], 404);
-            }
-
-            if ($sacrament->tenant_id !== app(TenantContext::class)->requireEffectiveTenantId()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized. You can only delete sacraments from your own tenant.',
-                ], 403);
             }
 
             $this->privacyAccess->assertCanAccessSacrament($request->user(), $sacrament);
@@ -556,16 +575,15 @@ class SacramentController extends Controller
             $ids = $validated['ids'];
 
             // Only update rows owned by this tenant.
-            $ownedIds = $this->service->getByIds($ids)
-                ->where('tenant_id', $tenantId)
+            $ownedIds = $this->service->getByIds($ids, $tenantId)
                 ->pluck('id')
                 ->all();
 
             if (count($ownedIds) !== count($ids)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized. One or more sacraments do not belong to your tenant.',
-                ], 403);
+                    'message' => 'Sacrament not found',
+                ], 404);
             }
 
             $updated = $this->service->bulkUpdateStatus($ownedIds, $status, $user->id);
@@ -608,16 +626,15 @@ class SacramentController extends Controller
             $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
             $ids = $validated['ids'];
 
-            $ownedIds = $this->service->getByIds($ids)
-                ->where('tenant_id', $tenantId)
+            $ownedIds = $this->service->getByIds($ids, $tenantId)
                 ->pluck('id')
                 ->all();
 
             if (count($ownedIds) !== count($ids)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized. One or more sacraments do not belong to your tenant.',
-                ], 403);
+                    'message' => 'Sacrament not found',
+                ], 404);
             }
 
             $deleted = $this->service->bulkDelete($ownedIds);

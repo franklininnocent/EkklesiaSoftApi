@@ -88,6 +88,10 @@ class SacramentLegacyDenormMapper
                     $attrs['marriage_bride_diocese_name'] = $p['affiliation_diocese_name'] ?? null;
                     $attrs['marriage_bride_diocese_region'] = $p['affiliation_diocese_region'] ?? null;
                     $attrs['marriage_bride_diocese_country'] = $p['affiliation_diocese_country'] ?? null;
+                    $attrs['marriage_bride_father_name'] = $snapshot['father_name'] ?? null;
+                    $attrs['marriage_bride_mother_name'] = $snapshot['mother_name'] ?? null;
+                    $attrs['marriage_bride_address'] = $snapshot['address']
+                        ?? ($p['external_address'] ?? null);
                     // recipient_name convenience for list search
                     $attrs['recipient_name'] = $attrs['recipient_name'] ?? $name;
                     break;
@@ -100,6 +104,10 @@ class SacramentLegacyDenormMapper
                     $attrs['marriage_groom_diocese_name'] = $p['affiliation_diocese_name'] ?? null;
                     $attrs['marriage_groom_diocese_region'] = $p['affiliation_diocese_region'] ?? null;
                     $attrs['marriage_groom_diocese_country'] = $p['affiliation_diocese_country'] ?? null;
+                    $attrs['marriage_groom_father_name'] = $snapshot['father_name'] ?? null;
+                    $attrs['marriage_groom_mother_name'] = $snapshot['mother_name'] ?? null;
+                    $attrs['marriage_groom_address'] = $snapshot['address']
+                        ?? ($p['external_address'] ?? null);
                     if (empty($attrs['recipient_name'])) {
                         $attrs['recipient_name'] = $name;
                     } else {

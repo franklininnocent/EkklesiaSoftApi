@@ -9,6 +9,7 @@ use Modules\Authentication\Models\Role;
 use Modules\Authentication\Models\User;
 use Modules\RolesAndPermissions\Http\Middleware\EnsureTenantAdmin;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Support\TenantContextBinder;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -57,6 +58,7 @@ class EnsureTenantAdminMiddlewareTest extends TestCase
         ]);
         $user = User::factory()->create(['tenant_id' => $tenant->id, 'role_id' => $adminRole->id]);
         $user->syncRoles([$adminRole->id]);
+        TenantContextBinder::bind($tenant->id, (int) $user->id, $tenant->id);
 
         $request = Request::create('/api/tenant/roles', 'POST');
         $request->setUserResolver(fn () => $user);

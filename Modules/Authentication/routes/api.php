@@ -19,9 +19,9 @@ Route::prefix('auth')->group(function () {
     })->where('any', '.*');
 
     // Public routes (no authentication required)
-    Route::post('register', [AuthenticationController::class, 'register']);
-    Route::post('login', [AuthenticationController::class, 'login']);
-    Route::post('refresh', [AuthenticationController::class, 'refresh']); // Refresh token doesn't need auth
+    Route::post('register', [AuthenticationController::class, 'register'])->middleware('api.throttle:auth');
+    Route::post('login', [AuthenticationController::class, 'login'])->middleware('api.throttle:auth');
+    Route::post('refresh', [AuthenticationController::class, 'refresh'])->middleware('api.throttle:auth');
     Route::post('logout', [AuthenticationController::class, 'logout']);
 
     // Protected routes (require authentication)

@@ -3,6 +3,8 @@
 namespace Modules\Donations\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+use Modules\Donations\Support\FinancialAmount;
 
 class CollectVoluntaryDonationRequest extends FormRequest
 {
@@ -11,8 +13,18 @@ class CollectVoluntaryDonationRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        $this->offsetUnset('tenant_id');
+        $this->offsetUnset('status');
+        $this->offsetUnset('receipt_number');
+        $this->offsetUnset('payment_number');
+    }
+
     public function rules(): array
     {
+        $method = $this->input('method');
+
         return [
             'donation_id' => ['nullable', 'uuid'],
             'donor_id' => ['nullable', 'uuid'],
@@ -24,12 +36,12 @@ class CollectVoluntaryDonationRequest extends FormRequest
             'family_member_id' => ['nullable', 'uuid'],
             'donation_category_id' => ['nullable', 'uuid'],
             'title' => ['nullable', 'string', 'max:180'],
-            'pledged_amount' => ['nullable', 'numeric', 'min:0'],
+            'pledged_amount' => FinancialAmount::optional(),
             'received_at' => ['nullable', 'date'],
             'financial_year' => ['nullable', 'string', 'max:20'],
             'is_anonymous' => ['nullable', 'boolean'],
             'notes' => ['nullable', 'string'],
-            'amount' => ['required', 'numeric', 'min:0.01'],
+            'amount' => FinancialAmount::required(),
             'currency' => ['nullable', 'string', 'max:10'],
             'method' => ['required', 'in:cash,bank_transfer,cheque,online_placeholder,adjustment'],
             'payment_date' => ['required', 'date'],
@@ -37,6 +49,12 @@ class CollectVoluntaryDonationRequest extends FormRequest
             'payer_email' => ['nullable', 'email', 'max:180'],
             'payer_phone' => ['nullable', 'string', 'max:60'],
             'payment_notes' => ['nullable', 'string'],
+            'gateway_reference' => [
+                Rule::requiredIf(in_array($method, ['cheque', 'bank_transfer'], true)),
+                'nullable',
+                'string',
+                'max:200',
+            ],
         ];
     }
 }

@@ -5,7 +5,6 @@ namespace Modules\MinistriesAssociations\Http\Controllers;
 use App\Http\Controllers\Controller;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Modules\MinistriesAssociations\Http\Requests\AssignLeadershipTermRequest;
 use Modules\MinistriesAssociations\Http\Requests\IndexLeadershipTimelineRequest;
@@ -16,14 +15,13 @@ use Modules\MinistriesAssociations\Models\Organization;
 use Modules\MinistriesAssociations\Models\OrganizationMembership;
 use Modules\MinistriesAssociations\Models\Position;
 use Modules\MinistriesAssociations\Services\MinistriesAuditService;
+use Modules\Tenants\Support\TenantContext;
 
 class OrganizationLeadershipController extends Controller
 {
     use AuthorizesRequests;
 
-    public function __construct(private readonly MinistriesAuditService $auditService)
-    {
-    }
+    public function __construct(private readonly MinistriesAuditService $auditService) {}
 
     public function current(string $organizationId): JsonResponse
     {
@@ -191,7 +189,7 @@ class OrganizationLeadershipController extends Controller
             'position_id' => $position->id,
             'appointment_date' => $payload['appointment_date'],
             'effective_from' => $payload['effective_from'],
-            'effective_to' => $payload['effective_to'],
+            'effective_to' => $payload['effective_to'] ?? null,
             'term_label' => $payload['term_label'] ?? null,
             'appointment_reference' => $payload['appointment_reference'] ?? null,
             'is_interim' => $payload['is_interim'] ?? false,
@@ -419,7 +417,7 @@ class OrganizationLeadershipController extends Controller
 
     private function tenantId(): int
     {
-        return app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+        return app(TenantContext::class)->requireEffectiveTenantId();
     }
 
     private function findOrganization(int $tenantId, string $organizationId): Organization

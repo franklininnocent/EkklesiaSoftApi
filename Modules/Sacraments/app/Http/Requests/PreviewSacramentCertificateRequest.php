@@ -19,6 +19,7 @@ class PreviewSacramentCertificateRequest extends FormRequest
         return [
             'language' => 'nullable|string|max:16',
             'locale' => 'nullable|string|max:32',
+            'paper' => 'nullable|in:A4,LETTER,a4,letter',
         ];
     }
 }

@@ -8,6 +8,8 @@ use Modules\Tenants\Support\TenantContext;
 
 class DonationAuditService
 {
+    public function __construct(private readonly DonationSecurityEventService $securityEvents) {}
+
     public function log(
         int $tenantId,
         string $event,
@@ -24,10 +26,19 @@ class DonationAuditService
             $supportSessionId = null;
         }
 
+        $requestId = $this->securityEvents->requestId();
+        $idempotencyKey = request()?->header('Idempotency-Key');
+        $metadata = array_merge($metadata, array_filter([
+            'request_id' => $requestId,
+            'idempotency_key' => $idempotencyKey ? substr((string) $idempotencyKey, 0, 80) : null,
+        ]));
+
         return DonationAuditLog::create([
             'tenant_id' => $tenantId,
             'actor_user_id' => Auth::id(),
             'support_session_id' => $supportSessionId,
+            'request_id' => $requestId,
+            'idempotency_key' => $idempotencyKey ? substr((string) $idempotencyKey, 0, 80) : null,
             'event' => $event,
             'target_type' => $targetType,
             'target_id' => $targetId,

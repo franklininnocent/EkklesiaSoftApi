@@ -8,6 +8,7 @@ use Illuminate\Support\Str;
 use Modules\Authentication\Models\User;
 use Modules\Authentication\Models\Role;
 use Modules\RolesAndPermissions\Models\Permission;
+use Modules\Tenants\Support\AuditPiiRedactor;
 
 /**
  * Service for logging permission and role changes for audit purposes.
@@ -16,6 +17,10 @@ use Modules\RolesAndPermissions\Models\Permission;
  */
 class PermissionAuditService
 {
+    public function __construct(
+        private readonly AuditPiiRedactor $piiRedactor,
+    ) {}
+
     /**
      * Log permission assignment to role.
      */
@@ -220,11 +225,11 @@ class PermissionAuditService
     private function log(array $data): void
     {
         // Add timestamp and IP address
-        $logData = array_merge($data, [
+        $logData = $this->piiRedactor->redact(array_merge($data, [
             'timestamp' => now()->toDateTimeString(),
             'ip_address' => request()->ip(),
             'user_agent' => request()->userAgent(),
-        ]);
+        ]));
 
         // Log to Laravel log file
         Log::channel('audit')->info('Permission audit', $logData);
@@ -252,7 +257,7 @@ class PermissionAuditService
                     'user_id' => $userId,
                     'assigned_by' => $assignedById,
                     'tenant_id' => $data['tenant_id'] ?? null,
-                    'metadata' => json_encode($data),
+                    'metadata' => json_encode($logData),
                     'ip_address' => request()->ip(),
                     'user_agent' => request()->userAgent(),
                     'created_at' => now(),

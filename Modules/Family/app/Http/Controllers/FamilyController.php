@@ -3,62 +3,336 @@
 namespace Modules\Family\app\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\ValidationException;
-use Modules\Family\app\Http\Requests\StoreFamilyRequest;
-use Modules\Family\app\Http\Requests\UpdateFamilyRequest;
+use Modules\Family\app\Exceptions\HouseholdTransitionException;
+use Modules\Family\app\Http\Requests\CorrectHouseholdHistoryRequest;
+use Modules\Family\app\Http\Requests\FamilyUpdateRequestRequest;
+use Modules\Family\app\Http\Requests\MarriageTransitionRequest;
+use Modules\Family\app\Http\Requests\MergeFamiliesRequest;
+use Modules\Family\app\Http\Requests\RelocateBccRequest;
+use Modules\Family\app\Http\Requests\SplitFamilyMemberRequest;
 use Modules\Family\app\Http\Requests\StoreFamilyMemberRequest;
+use Modules\Family\app\Http\Requests\StoreFamilyRequest;
 use Modules\Family\app\Http\Requests\UpdateFamilyMemberRequest;
+use Modules\Family\app\Http\Requests\UpdateFamilyRequest;
+use Modules\Family\app\Services\BccRelocationService;
+use Modules\Family\app\Services\FamilyMergeService;
 use Modules\Family\app\Services\FamilyService;
+use Modules\Family\app\Services\FamilySplitService;
+use Modules\Family\app\Services\HouseholdTransitionHistoryRecorder;
+use Modules\Family\app\Services\MarriageHouseholdService;
+use Modules\Family\app\Services\ParishionerFamilyAccessService;
+use Modules\Family\Models\Family;
+use Modules\Tenants\Support\TenantContext;
 
 class FamilyController extends Controller
 {
-    /**
-     * @var FamilyService
-     */
     protected FamilyService $familyService;
+
+    protected FamilySplitService $familySplitService;
+
+    protected FamilyMergeService $familyMergeService;
+
+    protected ParishionerFamilyAccessService $parishionerAccessService;
+
+    protected BccRelocationService $bccRelocationService;
+
+    protected MarriageHouseholdService $marriageHouseholdService;
+
+    protected HouseholdTransitionHistoryRecorder $historyRecorder;
 
     /**
      * FamilyController constructor.
-     *
-     * @param FamilyService $familyService
      */
-    public function __construct(FamilyService $familyService)
-    {
+    public function __construct(
+        FamilyService $familyService,
+        FamilySplitService $familySplitService,
+        FamilyMergeService $familyMergeService,
+        ParishionerFamilyAccessService $parishionerAccessService,
+        BccRelocationService $bccRelocationService,
+        MarriageHouseholdService $marriageHouseholdService,
+        HouseholdTransitionHistoryRecorder $historyRecorder,
+    ) {
         $this->familyService = $familyService;
+        $this->familySplitService = $familySplitService;
+        $this->familyMergeService = $familyMergeService;
+        $this->parishionerAccessService = $parishionerAccessService;
+        $this->bccRelocationService = $bccRelocationService;
+        $this->marriageHouseholdService = $marriageHouseholdService;
+        $this->historyRecorder = $historyRecorder;
+    }
+
+    private function parishionerMutationForbidden(): ?JsonResponse
+    {
+        $user = Auth::user();
+        if ($user && $this->parishionerAccessService->isParishioner($user)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Parishioners cannot modify family records. Submit an update request instead.',
+            ], 403);
+        }
+
+        return null;
+    }
+
+    private function denyUnlessCanViewFamilies(): ?JsonResponse
+    {
+        $user = Auth::user();
+
+        if (! $user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.',
+            ], 401);
+        }
+
+        if ($this->parishionerAccessService->isParishioner($user)) {
+            return null;
+        }
+
+        if ($user->isTenantAdmin()) {
+            return null;
+        }
+
+        if (! $user->hasPermission('families.view')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Insufficient permission for this tenant action.',
+                'missing_permissions' => ['families.view'],
+            ], 403);
+        }
+
+        return null;
+    }
+
+    private function transitionErrorResponse(HouseholdTransitionException $e): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'code' => $e->errorCode,
+            'message' => $e->getMessage(),
+            'errors' => $e->errors,
+        ], $e->httpStatus);
+    }
+
+    public function previewBccRelocation(Request $request, string $id): JsonResponse
+    {
+        try {
+            if ($response = $this->parishionerMutationForbidden()) {
+                return $response;
+            }
+
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $request->validate([
+                'target_bcc_id' => ['required', 'uuid'],
+            ]);
+
+            $preview = $this->bccRelocationService->previewImpact(
+                $id,
+                (string) $request->input('target_bcc_id'),
+                $tenantId,
+            );
+
+            return response()->json([
+                'success' => true,
+                'data' => $preview,
+            ]);
+        } catch (HouseholdTransitionException $e) {
+            return $this->transitionErrorResponse($e);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to preview BCC relocation',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function relocateBcc(RelocateBccRequest $request, string $id): JsonResponse
+    {
+        try {
+            if ($response = $this->parishionerMutationForbidden()) {
+                return $response;
+            }
+
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $userId = Auth::id();
+            $validated = $request->validated();
+
+            $result = $this->bccRelocationService->transferFamily(
+                $id,
+                $validated['target_bcc_id'],
+                $validated['effective_date'],
+                $validated['transition_id'],
+                $tenantId,
+                $userId,
+                $validated['historical_note'] ?? null,
+                hash('sha256', json_encode($validated)),
+            );
+
+            $status = isset($result['idempotent_replay']) && $result['idempotent_replay'] ? 200 : 200;
+
+            return response()->json([
+                'success' => true,
+                'message' => isset($result['idempotent_replay']) && $result['idempotent_replay']
+                    ? 'Transition already completed'
+                    : 'Family relocated to new BCC successfully',
+                'data' => $result,
+            ], $status);
+        } catch (HouseholdTransitionException $e) {
+            return $this->transitionErrorResponse($e);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to relocate family BCC',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function marriageTransition(MarriageTransitionRequest $request): JsonResponse
+    {
+        try {
+            if ($response = $this->parishionerMutationForbidden()) {
+                return $response;
+            }
+
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $userId = Auth::id();
+            $validated = $request->validated();
+            $validated['request_hash'] = hash('sha256', json_encode($validated));
+
+            $result = $this->marriageHouseholdService->processTransition($validated, $tenantId, $userId);
+
+            return response()->json([
+                'success' => true,
+                'message' => isset($result['idempotent_replay']) && $result['idempotent_replay']
+                    ? 'Transition already completed'
+                    : 'Marriage household transition completed successfully',
+                'data' => $result,
+            ]);
+        } catch (HouseholdTransitionException $e) {
+            return $this->transitionErrorResponse($e);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to process marriage transition',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function transitionHistory(string $id): JsonResponse
+    {
+        try {
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $family = $this->familyService->getFamilyById($id, $tenantId);
+
+            if (! $family) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Family not found',
+                ], 404);
+            }
+
+            $histories = $this->historyRecorder->forFamily($tenantId, $id);
+
+            return response()->json([
+                'success' => true,
+                'data' => $histories,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve transition history',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function correctHistory(CorrectHouseholdHistoryRequest $request): JsonResponse
+    {
+        try {
+            if ($response = $this->parishionerMutationForbidden()) {
+                return $response;
+            }
+
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $userId = Auth::id();
+
+            $record = $this->historyRecorder->correct($request->validated(), $tenantId, $userId);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'History correction recorded successfully',
+                'data' => $record,
+            ], 201);
+        } catch (HouseholdTransitionException $e) {
+            return $this->transitionErrorResponse($e);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to record history correction',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 
     /**
      * Display a listing of families
-     *
-     * @param Request $request
-     * @return JsonResponse
      */
     public function index(Request $request): JsonResponse
     {
         try {
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
-            
-            if (!$tenantId) {
+            $tenantId = app(TenantContext::class)->effectiveTenantId();
+
+            if (! $tenantId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tenant ID is required'
+                    'message' => 'Tenant ID is required',
                 ], 403);
+            }
+
+            if ($response = $this->denyUnlessCanViewFamilies()) {
+                return $response;
             }
 
             $filters = [
                 'search' => $request->input('search'),
                 'status' => $request->input('status'),
                 'bcc_id' => $request->input('bcc_id'),
+                'missing_sacrament' => $request->input('missing_sacrament'),
+                'progression' => $request->input('progression'),
                 'parish_zone_id' => $request->input('parish_zone_id'),
                 'city' => $request->input('city'),
                 'sort_by' => $request->input('sort_by', 'created_at'),
                 'sort_order' => $request->input('sort_order', 'desc'),
             ];
 
-            $perPage = $request->input('per_page', 15);
+            $user = Auth::user();
+            if ($user && $this->parishionerAccessService->isParishioner($user)) {
+                $ownFamilyId = $this->parishionerAccessService->activeFamilyIdForUser($user);
+                if ($ownFamilyId === null) {
+                    return response()->json([
+                        'success' => true,
+                        'data' => [],
+                        'total' => 0,
+                        'current_page' => 1,
+                        'last_page' => 1,
+                        'per_page' => (int) $request->input('per_page', 15),
+                        'from' => null,
+                        'to' => null,
+                    ]);
+                }
+
+                $filters['family_id'] = $ownFamilyId;
+            }
+
+            $perPage = max(1, min(100, (int) $request->input('per_page', 15)));
             $families = $this->familyService->getPaginatedFamilies($tenantId, $filters, $perPage);
 
             return response()->json([
@@ -76,27 +350,28 @@ class FamilyController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve families',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
 
     /**
      * Store a newly created family
-     *
-     * @param StoreFamilyRequest $request
-     * @return JsonResponse
      */
     public function store(StoreFamilyRequest $request): JsonResponse
     {
         try {
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+            if ($response = $this->parishionerMutationForbidden()) {
+                return $response;
+            }
+
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
-            
-            if (!$tenantId) {
+
+            if (! $tenantId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tenant ID is required'
+                    'message' => 'Tenant ID is required',
                 ], 403);
             }
 
@@ -109,97 +384,118 @@ class FamilyController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Family created successfully',
-                'data' => $family
+                'data' => $family,
             ], 201);
 
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to create family',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
 
     /**
      * Display the specified family
-     *
-     * @param string $id
-     * @return JsonResponse
      */
     public function show(string $id): JsonResponse
     {
         try {
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
-            
-            if (!$tenantId) {
+            if ($response = $this->denyUnlessCanViewFamilies()) {
+                return $response;
+            }
+
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+
+            if (! $tenantId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tenant ID is required'
+                    'message' => 'Tenant ID is required',
                 ], 403);
             }
 
             $family = $this->familyService->getFamilyById($id, $tenantId);
 
-            if (!$family) {
+            if (! $family) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Family not found'
+                    'message' => 'Family not found',
                 ], 404);
             }
 
+            $this->authorize('view', $family);
+
             return response()->json([
                 'success' => true,
-                'data' => $family
+                'data' => $family,
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve family',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
 
     /**
      * Update the specified family
-     *
-     * @param UpdateFamilyRequest $request
-     * @param string $id
-     * @return JsonResponse
      */
     public function update(UpdateFamilyRequest $request, string $id): JsonResponse
     {
         try {
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+            if ($response = $this->parishionerMutationForbidden()) {
+                return $response;
+            }
+
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
-            
-            if (!$tenantId) {
+
+            if (! $tenantId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tenant ID is required'
+                    'message' => 'Tenant ID is required',
                 ], 403);
             }
 
+            $family = $this->familyService->getFamilyById($id, $tenantId);
+            if (! $family) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Family not found',
+                ], 404);
+            }
+
+            $this->authorize('update', $family);
+
+            $validated = $request->validated();
+
             $family = $this->familyService->updateFamily(
                 $id,
-                $request->validated(),
+                $validated,
                 $tenantId,
                 $userId
             );
 
-            if (!$family) {
+            if (! $family) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Family not found'
+                    'message' => 'Family not found',
                 ], 404);
             }
 
             return response()->json([
                 'success' => true,
                 'message' => 'Family updated successfully',
-                'data' => $family
+                'data' => $family,
             ]);
 
         } catch (\RuntimeException $e) {
@@ -209,87 +505,92 @@ class FamilyController extends Controller
                     'message' => $e->getMessage(),
                 ], 409);
             }
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to update family',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to update family',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
 
     /**
      * Remove the specified family
-     * 
-     * SECURITY: Only Tenant Admins can delete families
      *
-     * @param string $id
-     * @return JsonResponse
+     * SECURITY: Only Tenant Admins can delete families
      */
     public function destroy(string $id): JsonResponse
     {
         try {
             $user = Auth::user();
-            $tenantId = $user->tenant_id;
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
             $userId = $user->id;
-            
-            if (!$tenantId) {
+
+            $family = Family::query()
+                ->where('tenant_id', $tenantId)
+                ->find($id);
+
+            if (! $family) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tenant ID is required'
-                ], 403);
+                    'message' => 'Family not found',
+                ], 404);
             }
 
-            // SECURITY: Only Tenant Admins can delete families
-            if (!$user->isTenantAdmin() && !$user->isSuperAdmin() && !$user->isEkklesiaAdmin()) {
+            $this->authorize('delete', $family);
+
+            $result = $this->familyService->deleteFamily(
+                $id,
+                $tenantId,
+                $userId,
+                (bool) request()->boolean('force_delete')
+            );
+
+            if (! $result) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized. Only Tenant Administrators can delete families.',
-                ], 403);
-            }
-
-            $result = $this->familyService->deleteFamily($id, $tenantId, $userId);
-
-            if (!$result) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Family not found or does not belong to your tenant'
+                    'message' => 'Family not found or does not belong to your tenant',
                 ], 404);
             }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Family deleted successfully'
+                'message' => 'Family deleted successfully',
             ]);
 
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to delete family',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
 
     /**
      * Get family statistics
-     *
-     * @return JsonResponse
      */
     public function statistics(): JsonResponse
     {
         try {
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
-            
-            if (!$tenantId) {
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+
+            if (! $tenantId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tenant ID is required'
+                    'message' => 'Tenant ID is required',
                 ], 403);
             }
 
@@ -297,33 +598,30 @@ class FamilyController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $statistics
+                'data' => $statistics,
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve statistics',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
 
     /**
      * Get families by BCC
-     *
-     * @param string $bccId
-     * @return JsonResponse
      */
     public function byBcc(string $bccId): JsonResponse
     {
         try {
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
-            
-            if (!$tenantId) {
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+
+            if (! $tenantId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tenant ID is required'
+                    'message' => 'Tenant ID is required',
                 ], 403);
             }
 
@@ -331,32 +629,30 @@ class FamilyController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $families
+                'data' => $families,
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve families',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
 
     /**
      * Get families without BCC assignment
-     *
-     * @return JsonResponse
      */
     public function withoutBcc(): JsonResponse
     {
         try {
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
-            
-            if (!$tenantId) {
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+
+            if (! $tenantId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tenant ID is required'
+                    'message' => 'Tenant ID is required',
                 ], 403);
             }
 
@@ -364,14 +660,14 @@ class FamilyController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $families
+                'data' => $families,
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve families',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -380,20 +676,34 @@ class FamilyController extends Controller
 
     /**
      * Get all members of a family
-     *
-     * @param string $familyId
-     * @return JsonResponse
      */
     public function members(string $familyId): JsonResponse
     {
         try {
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
-            
-            if (!$tenantId) {
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+
+            if (! $tenantId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tenant ID is required'
+                    'message' => 'Tenant ID is required',
                 ], 403);
+            }
+
+            $family = $this->familyService->getFamilyById($familyId, $tenantId);
+
+            if (! $family) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Family not found',
+                ], 404);
+            }
+
+            $user = Auth::user();
+            if ($user && ! $this->parishionerAccessService->canViewFamily($user, $family)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Family not found',
+                ], 404);
             }
 
             $members = $this->familyService->getFamilyMembers($familyId, $tenantId);
@@ -401,41 +711,41 @@ class FamilyController extends Controller
             if ($members === null) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Family not found'
+                    'message' => 'Family not found',
                 ], 404);
             }
 
             return response()->json([
                 'success' => true,
-                'data' => $members
+                'data' => $members,
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve family members',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
 
     /**
      * Add a member to a family
-     *
-     * @param StoreFamilyMemberRequest $request
-     * @param string $familyId
-     * @return JsonResponse
      */
     public function addMember(StoreFamilyMemberRequest $request, string $familyId): JsonResponse
     {
         try {
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+            if ($response = $this->parishionerMutationForbidden()) {
+                return $response;
+            }
+
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
-            
-            if (!$tenantId) {
+
+            if (! $tenantId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tenant ID is required'
+                    'message' => 'Tenant ID is required',
                 ], 403);
             }
 
@@ -446,17 +756,17 @@ class FamilyController extends Controller
                 $userId
             );
 
-            if (!$member) {
+            if (! $member) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Family not found'
+                    'message' => 'Family not found',
                 ], 404);
             }
 
             return response()->json([
                 'success' => true,
                 'message' => 'Family member added successfully',
-                'data' => $member
+                'data' => $member,
             ], 201);
 
         } catch (ValidationException $e) {
@@ -469,18 +779,13 @@ class FamilyController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to add family member',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
 
     /**
      * Update a family member
-     *
-     * @param UpdateFamilyMemberRequest $request
-     * @param string $familyId
-     * @param string $memberId
-     * @return JsonResponse
      */
     public function updateMember(UpdateFamilyMemberRequest $request, string $familyId, string $memberId): JsonResponse
     {
@@ -488,7 +793,7 @@ class FamilyController extends Controller
             // Sanitize UUIDs from route parameters - remove any whitespace or extra characters
             $familyId = trim($familyId);
             $memberId = trim($memberId);
-            
+
             // Extract UUID pattern (36 characters with hyphens) if there's any extra text
             if (preg_match('/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i', $familyId, $matches)) {
                 $familyId = $matches[1];
@@ -496,35 +801,39 @@ class FamilyController extends Controller
             if (preg_match('/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i', $memberId, $matches)) {
                 $memberId = $matches[1];
             }
-            
+
             // Validate UUIDs are properly formatted
-            if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $familyId)) {
+            if (! preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $familyId)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Invalid family ID format'
+                    'message' => 'Invalid family ID format',
                 ], 400);
             }
-            
-            if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $memberId)) {
+
+            if (! preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $memberId)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Invalid member ID format'
+                    'message' => 'Invalid member ID format',
                 ], 400);
             }
-            
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+
+            if ($response = $this->parishionerMutationForbidden()) {
+                return $response;
+            }
+
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
-            
-            if (!$tenantId) {
+
+            if (! $tenantId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tenant ID is required'
+                    'message' => 'Tenant ID is required',
                 ], 403);
             }
 
             // Get validated data - this ensures only valid fields are updated
             $validatedData = $request->validated();
-            
+
             // Convert empty strings to null for nullable fields only
             // Fields that are 'sometimes|required' should not be converted to null if empty
             $updateData = [];
@@ -546,41 +855,41 @@ class FamilyController extends Controller
                 $userId
             );
 
-            if (!$member) {
+            if (! $member) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Family member not found or does not belong to your tenant'
+                    'message' => 'Family member not found or does not belong to your tenant',
                 ], 404);
             }
 
             return response()->json([
                 'success' => true,
                 'message' => 'Family member updated successfully',
-                'data' => $member
+                'data' => $member,
             ]);
 
-        } catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validation failed',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+        } catch (ModelNotFoundException $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Family member not found'
+                'message' => 'Family member not found',
             ], 404);
         } catch (\Exception $e) {
             \Log::error('Error updating family member', [
                 'family_id' => $familyId,
                 'member_id' => $memberId,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to update family member: ' . $e->getMessage()
+                'message' => 'Failed to update family member: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -588,7 +897,7 @@ class FamilyController extends Controller
     /**
      * Check if a field is nullable in the validation rules
      */
-    private function isNullableField(string $field, \Illuminate\Http\Request $request): bool
+    private function isNullableField(string $field, Request $request): bool
     {
         // List of fields that are explicitly nullable in UpdateFamilyMemberRequest
         $nullableFields = [
@@ -613,78 +922,201 @@ class FamilyController extends Controller
             'skills_talents',
             'notes',
             'status',
-            'deceased_date'
+            'deceased_date',
         ];
-        
+
         return in_array($field, $nullableFields);
     }
 
     /**
      * Delete a family member
-     *
-     * @param string $familyId
-     * @param string $memberId
-     * @return JsonResponse
      */
     public function deleteMember(string $familyId, string $memberId): JsonResponse
     {
         try {
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+            if ($response = $this->parishionerMutationForbidden()) {
+                return $response;
+            }
+
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
-            
-            if (!$tenantId) {
+
+            if (! $tenantId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tenant ID is required'
+                    'message' => 'Tenant ID is required',
                 ], 403);
             }
 
             $result = $this->familyService->deleteMember($familyId, $memberId, $tenantId, $userId);
 
-            if (!$result) {
+            if (! $result) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Family member not found'
+                    'message' => 'Family member not found',
                 ], 404);
             }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Family member deleted successfully'
+                'message' => 'Family member deleted successfully',
             ]);
 
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to delete family member',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function splitMember(SplitFamilyMemberRequest $request, string $familyId): JsonResponse
+    {
+        try {
+            if ($response = $this->parishionerMutationForbidden()) {
+                return $response;
+            }
+
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $userId = Auth::id();
+
+            $validated = $request->validated();
+            $result = $this->familySplitService->splitMember(
+                $familyId,
+                $validated['member_id'],
+                $validated['new_family'],
+                $validated['member_overrides'] ?? [],
+                $tenantId,
+                $userId
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Family member split into new household successfully',
+                'data' => $result,
+            ], 201);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to split family member',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function mergeFamilies(MergeFamiliesRequest $request): JsonResponse
+    {
+        try {
+            if ($response = $this->parishionerMutationForbidden()) {
+                return $response;
+            }
+
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $userId = Auth::id();
+            $validated = $request->validated();
+
+            $result = $this->familyMergeService->mergeFamilies(
+                $validated['source_family_id'],
+                $validated['target_family_id'],
+                $tenantId,
+                $userId
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Families merged successfully',
+                'data' => $result,
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to merge families',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function submitUpdateRequest(FamilyUpdateRequestRequest $request, string $id): JsonResponse
+    {
+        try {
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $userId = Auth::id();
+            $user = Auth::user();
+
+            if (! $user || ! $this->parishionerAccessService->isParishioner($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Only parishioner accounts can submit update requests.',
+                ], 403);
+            }
+
+            $family = $this->familyService->getFamilyById($id, $tenantId);
+            if (! $family || ! $this->parishionerAccessService->canViewFamily($user, $family)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Family not found',
+                ], 404);
+            }
+
+            $this->familyService->submitUpdateRequest($id, $request->validated(), $tenantId, $userId);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Update request submitted successfully',
+            ], 201);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to submit update request',
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
 
     /**
      * Upload profile image for family head
-     *
-     * @param Request $request
-     * @param string $id
-     * @return JsonResponse
      */
     public function uploadProfileImage(Request $request, string $id): JsonResponse
     {
         try {
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
-            
-            if (!$tenantId) {
+
+            if (! $tenantId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tenant ID is required'
+                    'message' => 'Tenant ID is required',
                 ], 403);
             }
 
             // Validate image file
             $request->validate([
-                'profile_image' => ['required', 'image', 'mimes:jpeg,jpg,png,gif,webp', 'max:5120']
+                'profile_image' => ['required', 'image', 'mimes:jpeg,jpg,png,gif,webp', 'max:5120'],
             ]);
 
             $family = $this->familyService->uploadProfileImage(
@@ -694,100 +1126,93 @@ class FamilyController extends Controller
                 $userId
             );
 
-            if (!$family) {
+            if (! $family) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Family not found'
+                    'message' => 'Family not found',
                 ], 404);
             }
 
             return response()->json([
                 'success' => true,
                 'message' => 'Profile image uploaded successfully',
-                'data' => $family
+                'data' => $family,
             ]);
 
-        } catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validation failed',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to upload profile image',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
 
     /**
      * Delete profile image for family
-     *
-     * @param string $id
-     * @return JsonResponse
      */
     public function deleteProfileImage(string $id): JsonResponse
     {
         try {
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
-            
-            if (!$tenantId) {
+
+            if (! $tenantId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tenant ID is required'
+                    'message' => 'Tenant ID is required',
                 ], 403);
             }
 
             $family = $this->familyService->deleteProfileImage($id, $tenantId, $userId);
 
-            if (!$family) {
+            if (! $family) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Family not found'
+                    'message' => 'Family not found',
                 ], 404);
             }
 
             return response()->json([
                 'success' => true,
                 'message' => 'Profile image deleted successfully',
-                'data' => $family
+                'data' => $family,
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to delete profile image',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
 
     /**
      * Upload profile image for family head
-     *
-     * @param Request $request
-     * @param string $id
-     * @return JsonResponse
      */
     public function uploadHeadProfileImage(Request $request, string $id): JsonResponse
     {
         try {
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
-            
-            if (!$tenantId) {
+
+            if (! $tenantId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tenant ID is required'
+                    'message' => 'Tenant ID is required',
                 ], 403);
             }
 
             // Validate image file
             $request->validate([
-                'head_profile_image' => ['required', 'image', 'mimes:jpeg,jpg,png,gif,webp', 'max:5120']
+                'head_profile_image' => ['required', 'image', 'mimes:jpeg,jpg,png,gif,webp', 'max:5120'],
             ]);
 
             $family = $this->familyService->uploadHeadProfileImage(
@@ -797,92 +1222,94 @@ class FamilyController extends Controller
                 $userId
             );
 
-            if (!$family) {
+            if (! $family) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Family not found'
+                    'message' => 'Family not found',
                 ], 404);
             }
 
             return response()->json([
                 'success' => true,
                 'message' => 'Head profile image uploaded successfully',
-                'data' => $family
+                'data' => $family,
             ]);
 
-        } catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validation failed',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to upload head profile image',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
 
     /**
      * Delete profile image for family head
-     *
-     * @param string $id
-     * @return JsonResponse
      */
     public function deleteHeadProfileImage(string $id): JsonResponse
     {
         try {
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
-            
-            if (!$tenantId) {
+
+            if (! $tenantId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tenant ID is required'
+                    'message' => 'Tenant ID is required',
                 ], 403);
             }
 
             $family = $this->familyService->deleteHeadProfileImage($id, $tenantId, $userId);
 
-            if (!$family) {
+            if (! $family) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Family not found'
+                    'message' => 'Family not found',
                 ], 404);
             }
 
             return response()->json([
                 'success' => true,
                 'message' => 'Head profile image deleted successfully',
-                'data' => $family
+                'data' => $family,
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to delete head profile image',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
 
     /**
      * Get all members across all families for the current tenant
-     *
-     * @param Request $request
-     * @return JsonResponse
      */
     public function allMembers(Request $request): JsonResponse
     {
         try {
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
-            
-            if (!$tenantId) {
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+
+            if (! $tenantId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tenant ID is required'
+                    'message' => 'Tenant ID is required',
+                ], 403);
+            }
+
+            $user = Auth::user();
+            if ($user && $this->parishionerAccessService->isParishioner($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Parishioners cannot view the parish member directory.',
                 ], 403);
             }
 
@@ -891,6 +1318,7 @@ class FamilyController extends Controller
                 'status' => $request->input('status'),
                 'bcc_id' => $request->input('bcc_id'),
                 'is_head' => $request->input('is_head'),
+                'progression' => $request->input('progression'),
                 'sort_by' => $request->input('sort_by', 'last_name'),
                 'sort_order' => $request->input('sort_order', 'asc'),
             ];
@@ -914,7 +1342,7 @@ class FamilyController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve members',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }

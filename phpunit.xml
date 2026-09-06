@@ -32,5 +32,8 @@
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
+        <env name="TENANT_ORM_GLOBAL_SCOPE" value="false"/>
+        <env name="TENANT_RLS_ENABLED" value="false"/>
+        <env name="TENANT_API_RATE_LIMIT_ENABLED" value="false"/>
     </php>
 </phpunit>

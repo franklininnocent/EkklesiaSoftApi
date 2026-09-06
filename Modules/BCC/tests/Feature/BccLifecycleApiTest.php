@@ -233,9 +233,9 @@ class BccLifecycleApiTest extends TestCase
         ]);
         FamilyMember::factory()->create([
             'family_id' => $family->id,
-            'gender' => 'unknown',
+            'gender' => null,
             'status' => 'active',
-            'date_of_birth' => now()->subYears(10)->toDateString(),
+            'date_of_birth' => now()->subYears(8)->toDateString(),
         ]);
 
         $response = $this->getJson("/api/bccs/{$this->bcc->id}/dashboard");
@@ -326,7 +326,7 @@ class BccLifecycleApiTest extends TestCase
         // drill-down returns exactly the members it counted as unknown.
         $blankGender = FamilyMember::factory()->create([
             'family_id' => $family->id,
-            'gender' => '  ',
+            'gender' => null,
             'status' => 'active',
             'date_of_birth' => now()->subYears(70)->toDateString(),
         ]);
@@ -374,13 +374,13 @@ class BccLifecycleApiTest extends TestCase
         ]);
         FamilyMember::factory()->create([
             'family_id' => $family->id,
-            'gender' => 'MALE',
+            'gender' => 'male',
             'status' => 'active',
             'date_of_birth' => now()->subYears(40)->toDateString(),
         ]);
         FamilyMember::factory()->count(2)->create([
             'family_id' => $family->id,
-            'gender' => '',
+            'gender' => null,
             'status' => 'active',
             'date_of_birth' => null,
         ]);

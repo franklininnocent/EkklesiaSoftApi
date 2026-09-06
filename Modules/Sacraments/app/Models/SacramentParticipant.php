@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Family\Models\FamilyMember;
 use Modules\Family\Models\Person;
 use Modules\Tenants\Models\ChurchLeadership;
+use Modules\Tenants\Models\LeadershipAssignment;
 use Modules\Tenants\Models\Tenant;
 
 /**
@@ -27,6 +28,7 @@ class SacramentParticipant extends Model
         'family_member_id',
         'person_id',
         'church_leadership_id',
+        'leadership_assignment_id',
         'sort_order',
         'affiliation_type',
         'affiliation_parish_name',
@@ -34,6 +36,9 @@ class SacramentParticipant extends Model
         'affiliation_diocese_name',
         'affiliation_diocese_region',
         'affiliation_diocese_country',
+        'baptismal_status',
+        'ecclesial_affiliation_code',
+        'ecclesial_affiliation_label',
         'external_full_name',
         'external_date_of_birth',
         'external_gender',
@@ -41,6 +46,7 @@ class SacramentParticipant extends Model
         'external_contact_number',
         'external_title',
         'external_minister_role',
+        'canonical_delegation_status',
         'snapshot_json',
     ];
 
@@ -89,5 +95,10 @@ class SacramentParticipant extends Model
     public function churchLeadership(): BelongsTo
     {
         return $this->belongsTo(ChurchLeadership::class, 'church_leadership_id');
+    }
+
+    public function leadershipAssignment(): BelongsTo
+    {
+        return $this->belongsTo(LeadershipAssignment::class, 'leadership_assignment_id');
     }
 }

@@ -2,31 +2,29 @@
 
 namespace Modules\Tenants\Jobs;
 
-use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Cache\Lock;
-use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Foundation\Bus\Dispatchable;
-use Illuminate\Queue\InteractsWithQueue;
-use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
 use Modules\Tenants\Models\TenantDataExport;
 use Modules\Tenants\Services\TenantDataExportOrchestrator;
+use Modules\Tenants\Support\TenantQueueLimiter;
 
-class ProcessTenantDataExportJob implements ShouldQueue
+class ProcessTenantDataExportJob extends TenantAwareJob
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
-
     public int $tries = 3;
 
     public int $timeout;
 
-    public function __construct(private readonly string $exportId)
-    {
+    public function __construct(
+        int $tenantId,
+        ?int $actorUserId,
+        private readonly string $exportId,
+    ) {
+        parent::__construct($tenantId, $actorUserId);
+
         $this->timeout = max(60, (int) config('tenants.export.job_timeout', 1800));
         $this->onQueue((string) config('tenants.export.queue', 'tenant-exports'));
     }
 
-    public function handle(TenantDataExportOrchestrator $orchestrator): void
+    protected function handleWithTenantContext(): void
     {
         $export = TenantDataExport::find($this->exportId);
         if (! $export) {
@@ -41,33 +39,48 @@ class ProcessTenantDataExportJob implements ShouldQueue
             return;
         }
 
-        $maxGlobal = max(1, (int) config('tenants.export.max_concurrent_global', 2));
-        $lock = $this->acquireGlobalSlot($maxGlobal, (int) $this->timeout + 60);
+        $tenantLock = TenantQueueLimiter::acquireTenantSlot(
+            $this->tenantId,
+            (string) config('tenants.export.queue', 'tenant-exports'),
+        );
 
-        if ($lock === false) {
-            // No lock backend available (e.g. array cache in tests) — proceed without global cap.
-            $orchestrator->process($this->exportId);
+        if (! TenantQueueLimiter::releaseOrRequeue(
+            $tenantLock,
+            $this,
+            (int) config('tenants.queue.tenant_release_seconds', 30),
+        )) {
+            return;
+        }
+
+        $maxGlobal = max(1, (int) config('tenants.export.max_concurrent_global', 2));
+        $globalLock = $this->acquireGlobalSlot($maxGlobal, (int) $this->timeout + 60);
+
+        if ($globalLock === false) {
+            app(TenantDataExportOrchestrator::class)->process($this->exportId);
 
             return;
         }
 
-        if ($lock === null) {
+        if ($globalLock === null) {
             $this->release(30);
 
             return;
         }
 
         try {
-            $orchestrator->process($this->exportId);
+            app(TenantDataExportOrchestrator::class)->process($this->exportId);
         } finally {
-            $lock->release();
+            if ($tenantLock instanceof \Illuminate\Contracts\Cache\Lock) {
+                $tenantLock->release();
+            }
+            if ($globalLock instanceof \Illuminate\Contracts\Cache\Lock) {
+                $globalLock->release();
+            }
         }
     }
 
     /**
-     * Acquire one of N global export slots via cache locks.
-     *
-     * @return Lock|false|null Lock, null if busy, false if locks unsupported
+     * @return \Illuminate\Contracts\Cache\Lock|false|null
      */
     private function acquireGlobalSlot(int $maxSlots, int $seconds)
     {

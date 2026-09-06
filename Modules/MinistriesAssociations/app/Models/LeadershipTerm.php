@@ -34,6 +34,8 @@ class LeadershipTerm extends Model
 
     public const EXIT_REASON_CENSUS_CASCADE = 'census_cascade';
 
+    public const EXIT_REASON_MEMBERSHIP_STATUS_CHANGE = 'membership_status_change';
+
     protected $table = 'ma_leadership_terms';
 
     protected $fillable = [

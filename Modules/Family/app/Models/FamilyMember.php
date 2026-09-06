@@ -2,23 +2,27 @@
 
 namespace Modules\Family\Models;
 
+use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use App\Models\User;
+use Modules\BCC\Models\BCCLeader;
 use Modules\Family\Database\Factories\FamilyMemberFactory;
+use Modules\Tenants\Models\Concerns\BelongsToTenant;
 
 class FamilyMember extends Model
 {
-    use HasFactory, HasUuids, SoftDeletes;
+    use BelongsToTenant, HasFactory, HasUuids, SoftDeletes;
 
     /**
      * Create a new factory instance for the model.
      *
-     * @return \Illuminate\Database\Eloquent\Factories\Factory
+     * @return Factory
      */
     protected static function newFactory()
     {
@@ -38,6 +42,7 @@ class FamilyMember extends Model
      * @var array<string>
      */
     protected $fillable = [
+        'tenant_id',
         'family_id',
         'person_id',
         'first_name',
@@ -125,11 +130,19 @@ class FamilyMember extends Model
     }
 
     /**
+     * Canonical parish Person for this membership (ADR-24).
+     */
+    public function person(): BelongsTo
+    {
+        return $this->belongsTo(Person::class);
+    }
+
+    /**
      * Get BCC leadership roles for this member.
      */
     public function bccLeaderships(): HasMany
     {
-        return $this->hasMany(\Modules\BCC\Models\BCCLeader::class, 'family_member_id');
+        return $this->hasMany(BCCLeader::class, 'family_member_id');
     }
 
     /**
@@ -137,7 +150,7 @@ class FamilyMember extends Model
      */
     public function activeBccLeaderships(): HasMany
     {
-        return $this->hasMany(\Modules\BCC\Models\BCCLeader::class, 'family_member_id')
+        return $this->hasMany(BCCLeader::class, 'family_member_id')
             ->where('is_active', true);
     }
 
@@ -160,8 +173,8 @@ class FamilyMember extends Model
     /**
      * Scope a query to only include active members.
      *
-     * @param \Illuminate\Database\Eloquent\Builder $query
-     * @return \Illuminate\Database\Eloquent\Builder
+     * @param  Builder  $query
+     * @return Builder
      */
     public function scopeActive($query)
     {
@@ -171,9 +184,8 @@ class FamilyMember extends Model
     /**
      * Scope a query to filter by gender.
      *
-     * @param \Illuminate\Database\Eloquent\Builder $query
-     * @param string $gender
-     * @return \Illuminate\Database\Eloquent\Builder
+     * @param  Builder  $query
+     * @return Builder
      */
     public function scopeGender($query, string $gender)
     {
@@ -183,9 +195,8 @@ class FamilyMember extends Model
     /**
      * Scope a query to filter by relationship.
      *
-     * @param \Illuminate\Database\Eloquent\Builder $query
-     * @param string $relationship
-     * @return \Illuminate\Database\Eloquent\Builder
+     * @param  Builder  $query
+     * @return Builder
      */
     public function scopeRelationship($query, string $relationship)
     {
@@ -195,8 +206,8 @@ class FamilyMember extends Model
     /**
      * Scope a query to include baptized members.
      *
-     * @param \Illuminate\Database\Eloquent\Builder $query
-     * @return \Illuminate\Database\Eloquent\Builder
+     * @param  Builder  $query
+     * @return Builder
      */
     public function scopeBaptized($query)
     {
@@ -206,8 +217,8 @@ class FamilyMember extends Model
     /**
      * Scope a query to include confirmed members.
      *
-     * @param \Illuminate\Database\Eloquent\Builder $query
-     * @return \Illuminate\Database\Eloquent\Builder
+     * @param  Builder  $query
+     * @return Builder
      */
     public function scopeConfirmed($query)
     {
@@ -216,12 +227,10 @@ class FamilyMember extends Model
 
     /**
      * Get the member's age.
-     *
-     * @return int|null
      */
     public function getAgeAttribute(): ?int
     {
-        if (!$this->date_of_birth) {
+        if (! $this->date_of_birth) {
             return null;
         }
 
@@ -230,8 +239,6 @@ class FamilyMember extends Model
 
     /**
      * Get the member's full name.
-     *
-     * @return string
      */
     public function getFullNameDisplayAttribute(): string
     {
@@ -246,28 +253,22 @@ class FamilyMember extends Model
 
     /**
      * Check if the member is baptized.
-     *
-     * @return bool
      */
     public function isBaptized(): bool
     {
-        return !is_null($this->baptism_date);
+        return ! is_null($this->baptism_date);
     }
 
     /**
      * Check if the member is confirmed.
-     *
-     * @return bool
      */
     public function isConfirmed(): bool
     {
-        return !is_null($this->confirmation_date);
+        return ! is_null($this->confirmation_date);
     }
 
     /**
      * Check if the member is married.
-     *
-     * @return bool
      */
     public function isMarried(): bool
     {
@@ -276,13 +277,9 @@ class FamilyMember extends Model
 
     /**
      * Check if the member is a BCC leader.
-     *
-     * @return bool
      */
     public function isBCCLeader(): bool
     {
         return $this->activeBccLeaderships()->exists();
     }
 }
-
-

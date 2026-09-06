@@ -88,6 +88,11 @@ class TenantPermissionCatalogSeeder extends Seeder
             // Tenant data export (Settings → Data Export)
             ['name' => 'tenant.data.export', 'display_name' => 'Export Tenant Data', 'description' => 'Request, view, and download parish business data exports', 'module' => 'TenantDataExport', 'category' => 'settings'],
 
+            // Pastoral care (staff-only visit requests)
+            ['name' => 'pastoral.care.view', 'display_name' => 'View Pastoral Care', 'description' => 'View visit requests and pastoral workflow', 'module' => 'PastoralCare', 'category' => 'pastoral'],
+            ['name' => 'pastoral.care.create', 'display_name' => 'Request a Visit', 'description' => 'Create pastoral visit requests for a family', 'module' => 'PastoralCare', 'category' => 'pastoral'],
+            ['name' => 'pastoral.care.assign', 'display_name' => 'Assign Pastoral Follow-ups', 'description' => 'Assign visit requests to pastoral staff', 'module' => 'PastoralCare', 'category' => 'pastoral'],
+
             // Support Access (parish self-serve windows)
             ['name' => 'support.grants.parish.view', 'display_name' => 'View Support Access Windows', 'description' => 'View customer-granted support access windows for this parish', 'module' => 'SupportAccess', 'category' => 'support'],
             ['name' => 'support.grants.parish.manage', 'display_name' => 'Manage Support Access Windows', 'description' => 'Create and revoke support access windows for this parish', 'module' => 'SupportAccess', 'category' => 'support'],

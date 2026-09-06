@@ -2,25 +2,32 @@
 
 namespace Modules\Sacraments\Services\Certificates;
 
+use Modules\Sacraments\Certificates\CertificateThemeCatalog;
+use Modules\Sacraments\Certificates\CertificateViewAssembler;
+use Modules\Sacraments\Certificates\DenominationMapper;
 use Modules\Sacraments\Definitions\SacramentDefinitionRegistry;
 use Modules\Sacraments\Exceptions\SacramentBusinessRuleException;
 use Modules\Sacraments\Models\Sacrament;
 use Modules\Sacraments\Support\SacramentTypeCode;
+use Modules\Tenants\Models\Tenant;
 
 /**
  * Builds certificate projection_json from sacrament + participant snapshots only (ADR-02 / ADR-09).
  * Never reads live FamilyMember / ChurchLeadership for issuance content.
+ * Schema v2 freezes church identity and render metadata at issue time.
  */
 class CertificateProjectionBuilder
 {
     public function __construct(
-        protected SacramentDefinitionRegistry $definitions
+        protected SacramentDefinitionRegistry $definitions,
+        protected CertificateViewAssembler $views
     ) {}
 
     /**
+     * @param  array{paper?:string, theme_id?:string, emblem?:string}  $options
      * @return array<string, mixed>
      */
-    public function build(Sacrament $sacrament, string $language = 'en', string $locale = 'en_US'): array
+    public function build(Sacrament $sacrament, string $language = 'en', string $locale = 'en_US', array $options = []): array
     {
         $sacrament->loadMissing(['sacramentType', 'participants']);
 
@@ -62,9 +69,15 @@ class CertificateProjectionBuilder
             ->all();
 
         $code = SacramentTypeCode::normalize((string) $type->code) ?? strtoupper((string) $type->code);
+        $church = $this->freezeChurch((int) $sacrament->tenant_id);
+        $denominationType = (string) $church['denomination_type'];
+        $engineType = DenominationMapper::engineSacramentType($code, $denominationType);
+        $themeId = $options['theme_id'] ?? DenominationMapper::themeId($denominationType);
+        $paper = strtoupper((string) ($options['paper'] ?? 'A4')) === 'LETTER' ? 'LETTER' : 'A4';
+        $emblem = $options['emblem'] ?? CertificateThemeCatalog::CANONICAL_EMBLEM;
 
-        return [
-            'schema_version' => 1,
+        $projection = [
+            'schema_version' => 2,
             'language' => $language,
             'locale' => $locale,
             'sacrament' => [
@@ -82,7 +95,6 @@ class CertificateProjectionBuilder
                 'page_number' => $sacrament->page_number,
                 'registry_entry' => $sacrament->registry_entry,
                 'status' => $sacrament->status,
-                // Denorm names kept as fallback when participants empty (legacy records).
                 'recipient_name' => $sacrament->recipient_name,
                 'minister_name' => $sacrament->minister_name,
                 'minister_title' => $sacrament->minister_title,
@@ -91,12 +103,77 @@ class CertificateProjectionBuilder
                 'godparent1_name' => $sacrament->godparent1_name,
                 'godparent2_name' => $sacrament->godparent2_name,
                 'marriage_bride_full_name' => $sacrament->marriage_bride_full_name,
+                'marriage_bride_father_name' => $sacrament->marriage_bride_father_name,
+                'marriage_bride_mother_name' => $sacrament->marriage_bride_mother_name,
+                'marriage_bride_address' => $sacrament->marriage_bride_address,
+                'marriage_bride_church_name' => $sacrament->marriage_bride_church_name,
+                'marriage_bride_church_address' => $sacrament->marriage_bride_church_address,
                 'marriage_groom_full_name' => $sacrament->marriage_groom_full_name,
+                'marriage_groom_father_name' => $sacrament->marriage_groom_father_name,
+                'marriage_groom_mother_name' => $sacrament->marriage_groom_mother_name,
+                'marriage_groom_address' => $sacrament->marriage_groom_address,
+                'marriage_groom_church_name' => $sacrament->marriage_groom_church_name,
+                'marriage_groom_church_address' => $sacrament->marriage_groom_church_address,
                 'marriage_bride_diocese_name' => $sacrament->marriage_bride_diocese_name ?? null,
                 'marriage_groom_diocese_name' => $sacrament->marriage_groom_diocese_name ?? null,
+                'recipient_birth_date' => optional($sacrament->recipient_birth_date)?->format('Y-m-d')
+                    ?? $sacrament->recipient_birth_date,
+                'recipient_birth_place' => $sacrament->recipient_birth_place,
             ],
             'participants' => $participants,
+            'church' => $church,
+            'render' => [
+                'template_code' => null,
+                'template_version' => null,
+                'theme_id' => $themeId,
+                'paper' => $paper,
+                'locale' => $locale,
+                'emblem' => $emblem,
+            ],
             'built_at' => now()->toIso8601String(),
+        ];
+
+        $projection['certificate_view'] = $this->views->assemble($projection);
+
+        return $projection;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function freezeChurch(int $tenantId): array
+    {
+        $tenant = Tenant::query()
+            ->with(['churchProfile.denomination', 'churchProfile.archdiocese', 'addresses'])
+            ->find($tenantId);
+
+        $profile = $tenant?->churchProfile;
+        $denominationCode = $profile?->denomination?->code ?? 'GENERIC';
+        $address = $tenant?->addresses
+            ->firstWhere('address_type', 'official')
+            ?? $tenant?->addresses->first();
+        $addressText = null;
+        if ($address) {
+            $addressText = trim(implode(', ', array_filter([
+                $address->line1 ?? null,
+                $address->line2 ?? null,
+                $address->city ?? null,
+                $address->state_province ?? null,
+                $address->country ?? null,
+                $address->pin_zip_code ?? null,
+            ])));
+        }
+
+        return [
+            'name' => $tenant?->name ?? 'Parish Church',
+            'diocese' => $profile?->archdiocese?->name,
+            'address' => $addressText ?: null,
+            'logo_url' => null,
+            'logo_hash' => null,
+            'seal_url' => null,
+            'denomination_code' => $denominationCode,
+            'denomination_type' => DenominationMapper::map(is_string($denominationCode) ? $denominationCode : null),
+            'parish_code' => $tenant?->slug ?: (string) $tenantId,
         ];
     }
 }

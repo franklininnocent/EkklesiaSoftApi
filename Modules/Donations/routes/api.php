@@ -1,40 +1,40 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Donations\Http\Controllers\CollectionForecastController;
 use Modules\Donations\Http\Controllers\ContributionDuesController;
 use Modules\Donations\Http\Controllers\ContributionPlanAssignmentsController;
 use Modules\Donations\Http\Controllers\ContributionPlansController;
 use Modules\Donations\Http\Controllers\ContributionScheduleController;
 use Modules\Donations\Http\Controllers\DonationApprovalsController;
 use Modules\Donations\Http\Controllers\DonationAuditLogsController;
+use Modules\Donations\Http\Controllers\DonationCampaignsController;
 use Modules\Donations\Http\Controllers\DonationCategoriesController;
 use Modules\Donations\Http\Controllers\DonationDashboardController;
 use Modules\Donations\Http\Controllers\DonationNotificationsController;
 use Modules\Donations\Http\Controllers\DonationPaymentsController;
 use Modules\Donations\Http\Controllers\DonationProjectsController;
-use Modules\Donations\Http\Controllers\ProjectFamilyAssignmentsController;
-use Modules\Donations\Http\Controllers\ProjectInstallmentDuesController;
 use Modules\Donations\Http\Controllers\DonationReceiptsController;
 use Modules\Donations\Http\Controllers\DonationReportsController;
-use Modules\Donations\Http\Controllers\DonationSettingsController;
+use Modules\Donations\Http\Controllers\DonationSavedViewsController;
 use Modules\Donations\Http\Controllers\DonationsController;
+use Modules\Donations\Http\Controllers\DonationSettingsController;
 use Modules\Donations\Http\Controllers\DonorsController;
 use Modules\Donations\Http\Controllers\FinancialAiController;
+use Modules\Donations\Http\Controllers\FinancialGlobalSearchController;
 use Modules\Donations\Http\Controllers\FundsController;
+use Modules\Donations\Http\Controllers\OperationsDashboardController;
 use Modules\Donations\Http\Controllers\ParishExpensesController;
 use Modules\Donations\Http\Controllers\PaymentBatchesController;
-use Modules\Donations\Http\Controllers\PaymentWebhooksController;
-use Modules\Donations\Http\Controllers\CollectionForecastController;
 use Modules\Donations\Http\Controllers\PaymentOcrController;
+use Modules\Donations\Http\Controllers\PaymentWebhooksController;
+use Modules\Donations\Http\Controllers\ProjectFamilyAssignmentsController;
+use Modules\Donations\Http\Controllers\ProjectInstallmentDuesController;
 use Modules\Donations\Http\Controllers\RecurringDonationSchedulesController;
 use Modules\Donations\Http\Controllers\UpiPaymentController;
 use Modules\Donations\Http\Controllers\WhatsAppOutreachController;
-use Modules\Donations\Http\Controllers\DonationCampaignsController;
-use Modules\Donations\Http\Controllers\OperationsDashboardController;
-use Modules\Donations\Http\Controllers\DonationSavedViewsController;
-use Modules\Donations\Http\Controllers\FinancialGlobalSearchController;
 
-Route::prefix('tenant/donations')->middleware(['auth:api', 'tenant.feature.donations', 'tenant.permission:donations.view'])->group(function () {
+Route::prefix('tenant/donations')->middleware(['donations.security.log', 'auth:api', 'tenant.feature.donations', 'tenant.permission:donations.view'])->group(function () {
     Route::get('/dashboard/summary', [DonationDashboardController::class, 'summary']);
     Route::get('/dashboard/command-center', [DonationDashboardController::class, 'commandCenter']);
     Route::get('/dashboard/operations', [OperationsDashboardController::class, 'summary']);
@@ -136,6 +136,8 @@ Route::prefix('tenant/donations')->middleware(['auth:api', 'tenant.feature.donat
     Route::get('/payments/{paymentId}/receipt/print', [DonationReceiptsController::class, 'printByPayment']);
     Route::get('/receipts', [DonationReceiptsController::class, 'index']);
     Route::get('/receipts/{id}', [DonationReceiptsController::class, 'show']);
+    Route::post('/receipts/{id}/void', [DonationReceiptsController::class, 'voidReceipt'])->middleware('tenant.permission:donations.manage');
+    Route::post('/receipts/{id}/reissue', [DonationReceiptsController::class, 'reissue'])->middleware('tenant.permission:donations.manage');
 
     Route::get('/approvals', [DonationApprovalsController::class, 'index'])->middleware('tenant.permission:donations.approvals');
     Route::post('/approvals/{id}/decision', [DonationApprovalsController::class, 'decide'])->middleware('tenant.permission:donations.approvals');

@@ -39,7 +39,7 @@ class DonationReportsController extends Controller
             'updated_by' => $userId,
         ]);
 
-        ProcessDonationExportJob::dispatch($report->id);
+        ProcessDonationExportJob::dispatch($tenantId, $userId, $report->id);
 
         $this->auditService->log($tenantId, 'report.exported', 'report_export', $report->id, null, $report->toArray());
 

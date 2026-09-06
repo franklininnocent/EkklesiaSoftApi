@@ -11,6 +11,9 @@ use Modules\Tenants\Http\Controllers\ChurchLeadershipController;
 use Modules\Tenants\Http\Controllers\ChurchStatisticsController;
 use Modules\Tenants\Http\Controllers\ChurchSocialMediaController;
 use Modules\Tenants\Http\Controllers\PopeDetailsController;
+use Modules\Tenants\Http\Controllers\PlatformHealthController;
+use Modules\Tenants\Http\Controllers\TenantDataExportController;
+use Modules\Tenants\Http\Middleware\VerifyPlatformHealthToken;
 
 /*
  *--------------------------------------------------------------------------
@@ -21,6 +24,10 @@ use Modules\Tenants\Http\Controllers\PopeDetailsController;
  * All routes require authentication via Passport.
  *
  */
+
+Route::get('/platform/health', [PlatformHealthController::class, 'show'])
+    ->middleware(VerifyPlatformHealthToken::class)
+    ->name('platform.health');
 
 Route::middleware('auth:api')->group(function () {
     
@@ -170,6 +177,23 @@ Route::middleware('auth:api')->group(function () {
         Route::get('/{id}', [ChurchSocialMediaController::class, 'show'])->where('id', '[0-9]+');
         Route::put('/{id}', [ChurchSocialMediaController::class, 'update'])->where('id', '[0-9]+')->middleware('tenant.permission:church.settings.edit');
         Route::delete('/{id}', [ChurchSocialMediaController::class, 'destroy'])->where('id', '[0-9]+')->middleware('tenant.permission:church.settings.delete');
+    });
+
+    // Tenant Data Export (Settings → Data Export)
+    Route::prefix('tenant/export')->middleware('tenant.permission:tenant.data.export')->group(function () {
+        Route::get('/modules', [TenantDataExportController::class, 'modules']);
+        Route::prefix('bulk')->group(function () {
+            Route::get('/', [TenantDataExportController::class, 'index']);
+            Route::post('/', [TenantDataExportController::class, 'store']);
+            Route::get('/{id}', [TenantDataExportController::class, 'show'])
+                ->whereUuid('id');
+            Route::get('/{id}/download', [TenantDataExportController::class, 'download'])
+                ->whereUuid('id');
+            Route::post('/{id}/cancel', [TenantDataExportController::class, 'cancel'])
+                ->whereUuid('id');
+            Route::post('/{id}/retry', [TenantDataExportController::class, 'retry'])
+                ->whereUuid('id');
+        });
     });
 });
 

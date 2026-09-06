@@ -2,25 +2,30 @@
 
 namespace Modules\Family\Tests\Feature;
 
-use Tests\TestCase;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\WithFaker;
+use Illuminate\Support\Str;
+use Laravel\Passport\Passport;
+use Modules\Authentication\Models\Role;
+use Modules\Authentication\Models\User;
+use Modules\BCC\Models\BCC;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
-use Modules\BCC\Models\BCC;
+use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Tenants\Models\Tenant;
-use Modules\Authentication\Models\User;
-use Laravel\Passport\Passport;
-use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\TestCase;
 
 class FamilyApiTest extends TestCase
 {
     use RefreshDatabase, WithFaker;
 
     protected User $user;
+
     protected Tenant $tenant;
+
     protected Family $family;
+
     protected BCC $bcc;
 
     protected function setUp(): void
@@ -49,6 +54,48 @@ class FamilyApiTest extends TestCase
 
         // Authenticate user for API requests
         Passport::actingAs($this->user);
+        $this->grantFamilyPermissions($this->user);
+    }
+
+    private function grantFamilyPermissions(User $user): void
+    {
+        $names = ['families.view', 'families.create', 'families.edit', 'families.delete'];
+        $ids = [];
+
+        foreach ($names as $name) {
+            $permission = Permission::query()->firstOrCreate(
+                ['name' => $name],
+                [
+                    'display_name' => $name,
+                    'module' => 'Families',
+                    'category' => 'families',
+                    'scope' => Permission::SCOPE_TENANT,
+                    'active' => 1,
+                    'tenant_id' => null,
+                    'is_custom' => false,
+                ]
+            );
+            $ids[] = $permission->id;
+        }
+
+        $user->permissions()->syncWithoutDetaching($ids);
+        $user->clearPermissionsCache();
+        $user->clearRequestPermissionCache();
+    }
+
+    /**
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
+     */
+    private function memberPayload(array $overrides = []): array
+    {
+        return array_merge([
+            'first_name' => 'John',
+            'last_name' => 'Doe',
+            'relationship_to_head' => 'self',
+            'date_of_birth' => '1990-06-15',
+            'gender' => 'male',
+        ], $overrides);
     }
 
     // ==================== FAMILY CRUD OPERATIONS ====================
@@ -76,7 +123,7 @@ class FamilyApiTest extends TestCase
                         'family_name',
                         'status',
                         'created_at',
-                    ]
+                    ],
                 ],
                 'total',
                 'current_page',
@@ -99,11 +146,11 @@ class FamilyApiTest extends TestCase
     {
         // Arrange: Create families for different tenants
         $otherTenant = Tenant::factory()->create();
-        
+
         Family::factory()->count(5)->create([
             'tenant_id' => $this->tenant->id,
         ]);
-        
+
         Family::factory()->count(3)->create([
             'tenant_id' => $otherTenant->id,
         ]);
@@ -128,7 +175,7 @@ class FamilyApiTest extends TestCase
         Family::factory()->count(3)->active()->create([
             'tenant_id' => $this->tenant->id,
         ]);
-        
+
         Family::factory()->count(2)->inactive()->create([
             'tenant_id' => $this->tenant->id,
         ]);
@@ -189,7 +236,7 @@ class FamilyApiTest extends TestCase
             'tenant_id' => $this->tenant->id,
             'family_name' => 'Smith Family',
         ]);
-        
+
         Family::factory()->create([
             'tenant_id' => $this->tenant->id,
             'family_name' => 'Johnson Family',
@@ -258,7 +305,7 @@ class FamilyApiTest extends TestCase
                 'data' => [
                     'id' => $family->id,
                     'family_name' => 'Test Family',
-                ]
+                ],
             ]);
     }
 
@@ -266,13 +313,13 @@ class FamilyApiTest extends TestCase
     public function it_returns_404_for_non_existent_family()
     {
         // Act
-        $response = $this->getJson('/api/families/' . Str::uuid());
+        $response = $this->getJson('/api/families/'.Str::uuid());
 
         // Assert
         $response->assertStatus(404)
             ->assertJson([
                 'success' => false,
-                'message' => 'Family not found'
+                'message' => 'Family not found',
             ]);
     }
 
@@ -322,7 +369,7 @@ class FamilyApiTest extends TestCase
                 'data' => [
                     'family_name' => 'New Family',
                     'head_of_family' => 'John Doe',
-                ]
+                ],
             ]);
 
         $this->assertDatabaseHas('families', [
@@ -341,18 +388,20 @@ class FamilyApiTest extends TestCase
             'head_of_family' => 'John Doe',
             'status' => 'active',
             'members' => [
-                [
+                $this->memberPayload([
                     'first_name' => 'John',
                     'last_name' => 'Doe',
                     'relationship_to_head' => 'self',
+                    'date_of_birth' => '1980-01-15',
                     'gender' => 'male',
-                ],
-                [
+                ]),
+                $this->memberPayload([
                     'first_name' => 'Jane',
                     'last_name' => 'Doe',
                     'relationship_to_head' => 'spouse',
+                    'date_of_birth' => '1982-03-20',
                     'gender' => 'female',
-                ],
+                ]),
             ],
         ];
 
@@ -472,7 +521,7 @@ class FamilyApiTest extends TestCase
                 'data' => [
                     'family_name' => 'Updated Name',
                     'head_of_family' => 'Updated Head',
-                ]
+                ],
             ]);
 
         $this->assertDatabaseHas('families', [
@@ -483,10 +532,84 @@ class FamilyApiTest extends TestCase
     }
 
     #[Test]
+    public function it_creates_person_when_family_update_adds_member_without_id()
+    {
+        $family = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'family_name' => 'Anderson Household',
+        ]);
+
+        $response = $this->putJson("/api/families/{$family->id}", [
+            'family_name' => 'Anderson Household',
+            'members' => [
+                [
+                    'first_name' => 'Alexander',
+                    'last_name' => 'Anderson',
+                    'phone' => '+12025550123',
+                    'email' => 'alexander.anderson@example.com',
+                ],
+            ],
+        ]);
+
+        $response->assertStatus(200)->assertJson(['success' => true]);
+
+        $member = FamilyMember::query()
+            ->where('family_id', $family->id)
+            ->where('first_name', 'Alexander')
+            ->where('last_name', 'Anderson')
+            ->first();
+
+        $this->assertNotNull($member);
+        $this->assertNotNull($member->person_id);
+        $this->assertDatabaseHas('persons', [
+            'id' => $member->person_id,
+            'tenant_id' => $this->tenant->id,
+            'first_name' => 'Alexander',
+            'last_name' => 'Anderson',
+        ]);
+    }
+
+    #[Test]
+    public function it_updates_existing_member_when_family_update_includes_member_id()
+    {
+        $family = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'family_name' => 'Anderson Household',
+        ]);
+        $member = FamilyMember::factory()->create([
+            'family_id' => $family->id,
+            'first_name' => 'Alexander',
+            'last_name' => 'Anderson',
+            'created_by' => $this->user->id,
+            'updated_by' => $this->user->id,
+        ]);
+        $originalPersonId = $member->person_id;
+
+        $response = $this->putJson("/api/families/{$family->id}", [
+            'family_name' => 'Anderson Household',
+            'members' => [
+                [
+                    'id' => $member->id,
+                    'first_name' => 'Alexander',
+                    'last_name' => 'Anderson',
+                    'phone' => '+12025550123',
+                    'email' => 'alexander.anderson@example.com',
+                ],
+            ],
+        ]);
+
+        $response->assertStatus(200)->assertJson(['success' => true]);
+        $this->assertEquals(1, FamilyMember::query()->where('family_id', $family->id)->count());
+        $member->refresh();
+        $this->assertEquals($originalPersonId, $member->person_id);
+        $this->assertEquals('alexander.anderson@example.com', $member->email);
+    }
+
+    #[Test]
     public function it_returns_404_when_updating_non_existent_family()
     {
         // Act
-        $response = $this->putJson('/api/families/' . Str::uuid(), [
+        $response = $this->putJson('/api/families/'.Str::uuid(), [
             'family_name' => 'Updated Name',
         ]);
 
@@ -494,7 +617,7 @@ class FamilyApiTest extends TestCase
         $response->assertStatus(404)
             ->assertJson([
                 'success' => false,
-                'message' => 'Family not found'
+                'message' => 'Family not found',
             ]);
     }
 
@@ -506,6 +629,23 @@ class FamilyApiTest extends TestCase
             'tenant_id' => $this->tenant->id,
         ]);
 
+        $role = Role::create([
+            'name' => Role::TENANT_ADMINISTRATOR,
+            'description' => 'Tenant Administrator',
+            'level' => 1,
+            'active' => 1,
+            'tenant_id' => $this->tenant->id,
+            'is_custom' => false,
+            'role_type' => Role::ROLE_TYPE_TENANT,
+        ]);
+        $admin = User::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'role_id' => $role->id,
+        ]);
+        $admin->syncRoles([$role->id]);
+        $this->grantFamilyPermissions($admin);
+        Passport::actingAs($admin);
+
         // Act
         $response = $this->deleteJson("/api/families/{$family->id}");
 
@@ -513,7 +653,7 @@ class FamilyApiTest extends TestCase
         $response->assertStatus(200)
             ->assertJson([
                 'success' => true,
-                'message' => 'Family deleted successfully'
+                'message' => 'Family deleted successfully',
             ]);
 
         $this->assertSoftDeleted('families', [
@@ -522,16 +662,81 @@ class FamilyApiTest extends TestCase
     }
 
     #[Test]
+    public function it_forbids_non_admin_from_deleting_family()
+    {
+        $family = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+        ]);
+
+        $viewerRole = Role::create([
+            'name' => 'Family Viewer',
+            'description' => 'View only',
+            'level' => 3,
+            'active' => 1,
+            'tenant_id' => $this->tenant->id,
+            'is_custom' => true,
+            'role_type' => Role::ROLE_TYPE_TENANT,
+        ]);
+        $viewPermission = Permission::query()->firstOrCreate(
+            ['name' => 'families.view'],
+            [
+                'display_name' => 'families.view',
+                'module' => 'Families',
+                'category' => 'families',
+                'scope' => Permission::SCOPE_TENANT,
+                'active' => 1,
+                'tenant_id' => null,
+                'is_custom' => false,
+            ]
+        );
+        $viewerRole->permissions()->sync([$viewPermission->id]);
+
+        $viewer = User::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'role_id' => $viewerRole->id,
+        ]);
+        $viewer->syncRoles([$viewerRole->id]);
+        $viewer->clearPermissionsCache();
+        Passport::actingAs($viewer);
+
+        $response = $this->deleteJson("/api/families/{$family->id}");
+
+        $response->assertForbidden();
+
+        $this->assertDatabaseHas('families', [
+            'id' => $family->id,
+            'deleted_at' => null,
+        ]);
+    }
+
+    #[Test]
     public function it_returns_404_when_deleting_non_existent_family()
     {
+        $role = Role::create([
+            'name' => Role::TENANT_ADMINISTRATOR,
+            'description' => 'Tenant Administrator',
+            'level' => 1,
+            'active' => 1,
+            'tenant_id' => $this->tenant->id,
+            'is_custom' => false,
+            'role_type' => Role::ROLE_TYPE_TENANT,
+        ]);
+        $admin = User::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'role_id' => $role->id,
+        ]);
+        $admin->syncRoles([$role->id]);
+        $this->grantFamilyPermissions($admin);
+        Passport::actingAs($admin);
+
         // Act
-        $response = $this->deleteJson('/api/families/' . Str::uuid());
+        $response = $this->deleteJson('/api/families/'.Str::uuid());
 
         // Assert
         $response->assertStatus(404)
             ->assertJson([
                 'success' => false,
-                'message' => 'Family not found'
+                'message' => 'Family not found',
             ]);
     }
 
@@ -561,7 +766,7 @@ class FamilyApiTest extends TestCase
                     'total_families',
                     'active_families',
                     'inactive_families',
-                ]
+                ],
             ]);
 
         $stats = $response->json('data');
@@ -601,8 +806,8 @@ class FamilyApiTest extends TestCase
                         'id',
                         'family_name',
                         'bcc_id',
-                    ]
-                ]
+                    ],
+                ],
             ]);
 
         $data = $response->json('data');
@@ -643,8 +848,8 @@ class FamilyApiTest extends TestCase
                         'id',
                         'family_name',
                         'bcc_id',
-                    ]
-                ]
+                    ],
+                ],
             ]);
 
         $data = $response->json('data');
@@ -660,11 +865,11 @@ class FamilyApiTest extends TestCase
         // Note: Testing authentication in Laravel Passport tests is complex because
         // Passport::actingAs() persists across tests. Instead, we'll verify that
         // authenticated requests work and that the auth middleware is properly configured.
-        
+
         // For now, we'll verify that the endpoint requires proper authentication
         // by ensuring authenticated requests work correctly
         $response = $this->getJson('/api/families');
-        
+
         // If authenticated, should return 200 (not 401)
         // This confirms the auth middleware is working
         $this->assertNotEquals(401, $response->status(), 'Authenticated request should succeed');
@@ -687,7 +892,7 @@ class FamilyApiTest extends TestCase
         $response->assertStatus(403)
             ->assertJson([
                 'success' => false,
-                'message' => 'Tenant ID is required'
+                'message' => 'Tenant ID is required',
             ]);
     }
 
@@ -697,13 +902,13 @@ class FamilyApiTest extends TestCase
         // Arrange: Create families with distinct creation times and names for easy identification
         $oldFamily = Family::factory()->create([
             'tenant_id' => $this->tenant->id,
-            'family_name' => 'Oldest Test Family ' . time(),
+            'family_name' => 'Oldest Test Family '.time(),
             'created_at' => now()->subDays(5),
         ]);
 
         $newFamily = Family::factory()->create([
             'tenant_id' => $this->tenant->id,
-            'family_name' => 'Newest Test Family ' . time(),
+            'family_name' => 'Newest Test Family '.time(),
             'created_at' => now(),
         ]);
 
@@ -715,7 +920,7 @@ class FamilyApiTest extends TestCase
             ->assertJson(['success' => true]);
 
         $allData = $response->json('data');
-        
+
         // Find the indices of our test families
         $newIndex = collect($allData)->search(function ($item) use ($newFamily) {
             return $item['id'] === $newFamily->id;
@@ -723,7 +928,7 @@ class FamilyApiTest extends TestCase
         $oldIndex = collect($allData)->search(function ($item) use ($oldFamily) {
             return $item['id'] === $oldFamily->id;
         });
-        
+
         // Both should be found, and newest should come before oldest in descending order
         $this->assertNotFalse($newIndex, 'New family should be in results');
         $this->assertNotFalse($oldIndex, 'Old family should be in results');
@@ -797,8 +1002,8 @@ class FamilyApiTest extends TestCase
                         'first_name',
                         'last_name',
                         'relationship_to_head',
-                    ]
-                ]
+                    ],
+                ],
             ]);
 
         $data = $response->json('data');
@@ -809,13 +1014,13 @@ class FamilyApiTest extends TestCase
     public function it_returns_404_when_getting_members_for_non_existent_family()
     {
         // Act
-        $response = $this->getJson('/api/families/' . Str::uuid() . '/members');
+        $response = $this->getJson('/api/families/'.Str::uuid().'/members');
 
         // Assert
         $response->assertStatus(404)
             ->assertJson([
                 'success' => false,
-                'message' => 'Family not found'
+                'message' => 'Family not found',
             ]);
     }
 
@@ -857,7 +1062,7 @@ class FamilyApiTest extends TestCase
                     'family_id',
                     'first_name',
                     'last_name',
-                ]
+                ],
             ]);
 
         $this->assertDatabaseHas('family_members', [
@@ -865,6 +1070,35 @@ class FamilyApiTest extends TestCase
             'first_name' => 'John',
             'last_name' => 'Doe',
         ]);
+    }
+
+    #[Test]
+    public function it_defaults_null_baptism_priest_is_home_when_adding_member()
+    {
+        $family = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+        ]);
+
+        $response = $this->postJson("/api/families/{$family->id}/members", [
+            'first_name' => 'Amanda',
+            'last_name' => 'Williams',
+            'relationship_to_head' => 'mother',
+            'date_of_birth' => '1989-07-08',
+            'gender' => 'female',
+            'baptism_date' => '1990-10-10',
+            'baptism_priest_is_home' => null,
+        ]);
+
+        $response->assertStatus(201)
+            ->assertJsonPath('success', true);
+
+        $member = FamilyMember::query()
+            ->where('family_id', $family->id)
+            ->where('first_name', 'Amanda')
+            ->first();
+
+        $this->assertNotNull($member);
+        $this->assertFalse((bool) $member->baptism_priest_is_home);
     }
 
     #[Test]
@@ -886,6 +1120,41 @@ class FamilyApiTest extends TestCase
         // Assert
         $response->assertStatus(422)
             ->assertJsonValidationErrors(['last_name', 'relationship_to_head']);
+    }
+
+    #[Test]
+    public function it_rejects_member_creation_without_date_of_birth()
+    {
+        $family = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+        ]);
+
+        $response = $this->postJson("/api/families/{$family->id}/members", [
+            'first_name' => 'John',
+            'last_name' => 'Doe',
+            'relationship_to_head' => 'son',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['date_of_birth']);
+    }
+
+    #[Test]
+    public function it_rejects_member_creation_with_future_date_of_birth()
+    {
+        $family = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+        ]);
+
+        $response = $this->postJson("/api/families/{$family->id}/members", [
+            'first_name' => 'John',
+            'last_name' => 'Doe',
+            'relationship_to_head' => 'son',
+            'date_of_birth' => now()->addDay()->toDateString(),
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['date_of_birth']);
     }
 
     #[Test]
@@ -1029,7 +1298,7 @@ class FamilyApiTest extends TestCase
         ]);
 
         // Act
-        $response = $this->putJson("/api/families/{$family->id}/members/" . Str::uuid(), [
+        $response = $this->putJson("/api/families/{$family->id}/members/".Str::uuid(), [
             'first_name' => 'Updated',
         ]);
 
@@ -1037,7 +1306,7 @@ class FamilyApiTest extends TestCase
         $response->assertStatus(404)
             ->assertJson([
                 'success' => false,
-                'message' => 'Family member not found or does not belong to your tenant'
+                'message' => 'Family member not found or does not belong to your tenant',
             ]);
     }
 
@@ -1053,6 +1322,14 @@ class FamilyApiTest extends TestCase
             'family_id' => $family->id,
             'first_name' => 'John',
             'last_name' => 'Doe',
+            'status' => 'active',
+        ]);
+
+        FamilyMember::factory()->create([
+            'family_id' => $family->id,
+            'first_name' => 'Jane',
+            'last_name' => 'Doe',
+            'status' => 'active',
         ]);
 
         // Act
@@ -1062,7 +1339,7 @@ class FamilyApiTest extends TestCase
         $response->assertStatus(200)
             ->assertJson([
                 'success' => true,
-                'message' => 'Family member deleted successfully'
+                'message' => 'Family member deleted successfully',
             ]);
 
         $this->assertSoftDeleted('family_members', [
@@ -1079,13 +1356,13 @@ class FamilyApiTest extends TestCase
         ]);
 
         // Act
-        $response = $this->deleteJson("/api/families/{$family->id}/members/" . Str::uuid());
+        $response = $this->deleteJson("/api/families/{$family->id}/members/".Str::uuid());
 
         // Assert
         $response->assertStatus(404)
             ->assertJson([
                 'success' => false,
-                'message' => 'Family member not found'
+                'message' => 'Family member not found',
             ]);
     }
 
@@ -1101,6 +1378,7 @@ class FamilyApiTest extends TestCase
             'first_name' => 'John',
             'last_name' => 'Doe',
             'relationship_to_head' => 'self',
+            'date_of_birth' => '1995-06-15',
             'baptism_date' => '2000-01-15',
             'baptism_place' => 'St. Mary Church',
             'first_communion_date' => '2008-05-20',
@@ -1140,15 +1418,12 @@ class FamilyApiTest extends TestCase
             'tenant_id' => $this->tenant->id,
         ]);
 
-        $data = [
-            'first_name' => 'John',
-            'last_name' => 'Doe',
-            'relationship_to_head' => 'self',
+        $data = array_merge($this->memberPayload(), [
             'occupation' => 'Software Engineer',
             'education' => 'Bachelor of Science',
             'skills_talents' => 'Programming, Music, Teaching',
             'notes' => 'Active in youth ministry',
-        ];
+        ]);
 
         // Act
         $response = $this->postJson("/api/families/{$family->id}/members", $data);
@@ -1254,5 +1529,297 @@ class FamilyApiTest extends TestCase
         $data = $response->json('data');
         $this->assertGreaterThanOrEqual(1, count($data));
     }
-}
 
+    #[Test]
+    public function it_filters_families_by_missing_sacrament(): void
+    {
+        $familyMissingBaptism = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'bcc_id' => $this->bcc->id,
+            'status' => 'active',
+        ]);
+
+        FamilyMember::factory()->active()->create([
+            'family_id' => $familyMissingBaptism->id,
+            'date_of_birth' => '2020-01-15',
+            'baptism_date' => null,
+            'deceased_date' => null,
+        ]);
+
+        $familyBaptized = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'bcc_id' => $this->bcc->id,
+            'status' => 'active',
+        ]);
+
+        FamilyMember::factory()->active()->create([
+            'family_id' => $familyBaptized->id,
+            'date_of_birth' => '2020-01-15',
+            'baptism_date' => '2020-03-01',
+            'deceased_date' => null,
+        ]);
+
+        $response = $this->getJson('/api/families?missing_sacrament=BAPTISM');
+
+        $response->assertOk()
+            ->assertJsonPath('success', true);
+
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertContains($familyMissingBaptism->id, $ids);
+        $this->assertNotContains($familyBaptized->id, $ids);
+    }
+
+    #[Test]
+    public function it_filters_families_by_baptized_without_communion_progression(): void
+    {
+        $familyNeedsCommunion = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+        ]);
+
+        FamilyMember::factory()->active()->create([
+            'family_id' => $familyNeedsCommunion->id,
+            'date_of_birth' => '2015-01-15',
+            'baptism_date' => '2015-03-01',
+            'first_communion_date' => null,
+            'deceased_date' => null,
+        ]);
+
+        $familyComplete = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+        ]);
+
+        FamilyMember::factory()->active()->create([
+            'family_id' => $familyComplete->id,
+            'date_of_birth' => '2015-01-15',
+            'baptism_date' => '2015-03-01',
+            'first_communion_date' => '2023-05-01',
+            'deceased_date' => null,
+        ]);
+
+        $response = $this->getJson('/api/families?progression=baptized_without_communion');
+
+        $response->assertOk();
+
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertContains($familyNeedsCommunion->id, $ids);
+        $this->assertNotContains($familyComplete->id, $ids);
+    }
+
+    #[Test]
+    public function it_filters_families_by_baptized_without_confirmation_progression(): void
+    {
+        $familyNeedsConfirmation = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+        ]);
+
+        FamilyMember::factory()->active()->create([
+            'family_id' => $familyNeedsConfirmation->id,
+            'date_of_birth' => '2015-01-15',
+            'baptism_date' => '2015-03-01',
+            'confirmation_date' => null,
+            'deceased_date' => null,
+        ]);
+
+        $familyConfirmed = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+        ]);
+
+        FamilyMember::factory()->active()->create([
+            'family_id' => $familyConfirmed->id,
+            'date_of_birth' => '2015-01-15',
+            'baptism_date' => '2015-03-01',
+            'confirmation_date' => '2023-05-01',
+            'deceased_date' => null,
+        ]);
+
+        $response = $this->getJson('/api/families?progression=baptized_without_confirmation');
+
+        $response->assertOk();
+
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertContains($familyNeedsConfirmation->id, $ids);
+        $this->assertNotContains($familyConfirmed->id, $ids);
+    }
+
+    #[Test]
+    public function it_filters_members_by_baptized_without_communion_progression(): void
+    {
+        $family = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+        ]);
+
+        $needsCommunion = FamilyMember::factory()->active()->create([
+            'family_id' => $family->id,
+            'date_of_birth' => '2015-01-15',
+            'baptism_date' => '2015-03-01',
+            'first_communion_date' => null,
+            'deceased_date' => null,
+        ]);
+
+        $hasCommunion = FamilyMember::factory()->active()->create([
+            'family_id' => $family->id,
+            'date_of_birth' => '2015-02-15',
+            'baptism_date' => '2015-04-01',
+            'first_communion_date' => '2023-05-01',
+            'deceased_date' => null,
+        ]);
+
+        $response = $this->getJson('/api/members?progression=baptized_without_communion');
+
+        $response->assertOk()
+            ->assertJsonPath('total', 1)
+            ->assertJsonPath('data.0.id', $needsCommunion->id);
+
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertNotContains($hasCommunion->id, $ids);
+    }
+
+    #[Test]
+    public function it_filters_members_by_baptized_without_confirmation_progression(): void
+    {
+        $family = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+        ]);
+
+        $needsConfirmation = FamilyMember::factory()->active()->create([
+            'family_id' => $family->id,
+            'date_of_birth' => '2015-01-15',
+            'baptism_date' => '2015-03-01',
+            'confirmation_date' => null,
+            'deceased_date' => null,
+        ]);
+
+        $confirmed = FamilyMember::factory()->active()->create([
+            'family_id' => $family->id,
+            'date_of_birth' => '2015-03-15',
+            'baptism_date' => '2015-05-01',
+            'confirmation_date' => '2023-05-01',
+            'deceased_date' => null,
+        ]);
+
+        $response = $this->getJson('/api/members?progression=baptized_without_confirmation');
+
+        $response->assertOk()
+            ->assertJsonPath('total', 1)
+            ->assertJsonPath('data.0.id', $needsConfirmation->id);
+
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertNotContains($confirmed->id, $ids);
+    }
+
+    #[Test]
+    public function it_filters_members_by_female_unmarried_over_18_progression(): void
+    {
+        $family = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+        ]);
+
+        $eligible = FamilyMember::factory()->active()->create([
+            'family_id' => $family->id,
+            'gender' => 'female',
+            'marital_status' => 'single',
+            'date_of_birth' => now()->subYears(25)->toDateString(),
+            'marriage_date' => null,
+            'deceased_date' => null,
+        ]);
+
+        $married = FamilyMember::factory()->active()->create([
+            'family_id' => $family->id,
+            'gender' => 'female',
+            'marital_status' => 'married',
+            'date_of_birth' => now()->subYears(28)->toDateString(),
+            'deceased_date' => null,
+        ]);
+
+        $response = $this->getJson('/api/members?progression=female_unmarried_over_18');
+
+        $response->assertOk()
+            ->assertJsonPath('total', 1)
+            ->assertJsonPath('data.0.id', $eligible->id);
+
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertNotContains($married->id, $ids);
+    }
+
+    #[Test]
+    public function it_filters_members_by_male_unmarried_over_23_progression(): void
+    {
+        $family = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+        ]);
+
+        $eligible = FamilyMember::factory()->active()->create([
+            'family_id' => $family->id,
+            'gender' => 'male',
+            'marital_status' => 'single',
+            'date_of_birth' => now()->subYears(30)->toDateString(),
+            'marriage_date' => null,
+            'deceased_date' => null,
+        ]);
+
+        $tooYoung = FamilyMember::factory()->active()->create([
+            'family_id' => $family->id,
+            'gender' => 'male',
+            'marital_status' => 'single',
+            'date_of_birth' => now()->subYears(23)->toDateString(),
+            'marriage_date' => null,
+            'deceased_date' => null,
+        ]);
+
+        $response = $this->getJson('/api/members?progression=male_unmarried_over_23');
+
+        $response->assertOk()
+            ->assertJsonPath('total', 1)
+            ->assertJsonPath('data.0.id', $eligible->id);
+
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertNotContains($tooYoung->id, $ids);
+    }
+
+    #[Test]
+    public function it_filters_families_by_female_unmarried_over_18_progression(): void
+    {
+        $familyEligible = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+        ]);
+
+        FamilyMember::factory()->active()->create([
+            'family_id' => $familyEligible->id,
+            'gender' => 'female',
+            'marital_status' => 'single',
+            'date_of_birth' => now()->subYears(25)->toDateString(),
+            'marriage_date' => null,
+            'deceased_date' => null,
+        ]);
+
+        $familyMarried = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+        ]);
+
+        FamilyMember::factory()->active()->create([
+            'family_id' => $familyMarried->id,
+            'gender' => 'female',
+            'marital_status' => 'married',
+            'date_of_birth' => now()->subYears(28)->toDateString(),
+            'deceased_date' => null,
+        ]);
+
+        $response = $this->getJson('/api/families?progression=female_unmarried_over_18');
+
+        $response->assertOk();
+
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertContains($familyEligible->id, $ids);
+        $this->assertNotContains($familyMarried->id, $ids);
+    }
+}

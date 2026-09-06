@@ -3,18 +3,21 @@
 namespace Modules\MinistriesAssociations\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Modules\Family\Models\FamilyMember;
 use Modules\MinistriesAssociations\Http\Requests\IndexOrganizationMembershipRequest;
 use Modules\MinistriesAssociations\Http\Requests\ReEnrollOrganizationMembershipRequest;
 use Modules\MinistriesAssociations\Http\Requests\StoreOrganizationMembershipRequest;
 use Modules\MinistriesAssociations\Http\Requests\UpdateOrganizationMembershipStatusRequest;
+use Modules\MinistriesAssociations\Models\LeadershipTerm;
 use Modules\MinistriesAssociations\Models\Organization;
 use Modules\MinistriesAssociations\Models\OrganizationMembership;
 use Modules\MinistriesAssociations\Services\MinistriesAuditService;
+use Modules\Tenants\Support\TenantContext;
 
 class OrganizationMembershipController extends Controller
 {
@@ -31,9 +34,7 @@ class OrganizationMembershipController extends Controller
     /** @var list<string> */
     private const INELIGIBLE_FAMILY_STATUSES = ['deceased', 'migrated'];
 
-    public function __construct(private readonly MinistriesAuditService $auditService)
-    {
-    }
+    public function __construct(private readonly MinistriesAuditService $auditService) {}
 
     public function index(IndexOrganizationMembershipRequest $request, string $organizationId): JsonResponse
     {
@@ -257,28 +258,61 @@ class OrganizationMembershipController extends Controller
         }
 
         $oldValues = $this->auditSnapshot($membership);
+        $isExit = in_array($status, self::EXIT_STATUSES, true);
+        $isSuspended = $status === OrganizationMembership::STATUS_SUSPENDED;
+
         $updates = [
             'status' => $status,
             'exit_reason' => $payload['exit_reason'] ?? null,
         ];
 
-        if (in_array($status, self::EXIT_STATUSES, true)) {
+        if ($isExit) {
             $updates['exit_date'] = $exitDate;
             $updates['is_current'] = false;
+        } elseif ($status === OrganizationMembership::STATUS_ACTIVE || $isSuspended) {
+            // Current interval stays open; suspension is not an exit.
+            $updates['exit_date'] = null;
+            $updates['is_current'] = true;
         }
 
-        $membership->update($updates);
-        $membership->refresh()->load(['familyMember.family', 'guestMember']);
-
-        $this->auditService->log(
+        $membership = DB::transaction(function () use (
             $tenantId,
-            'membership.status_changed',
-            'membership',
-            $membership->id,
-            $oldValues,
-            $this->auditSnapshot($membership),
             $organizationId,
-        );
+            $membership,
+            $updates,
+            $oldValues,
+            $isExit,
+            $isSuspended,
+            $exitDate,
+        ): OrganizationMembership {
+            $membership->update($updates);
+            $membership->refresh()->load(['familyMember.family', 'guestMember']);
+
+            if ($isExit || $isSuspended) {
+                $effectiveDate = $isExit
+                    ? (string) $exitDate
+                    : now()->toDateString();
+
+                $this->vacateActiveLeadershipForMembership(
+                    $tenantId,
+                    $organizationId,
+                    $membership->id,
+                    $effectiveDate,
+                );
+            }
+
+            $this->auditService->log(
+                $tenantId,
+                'membership.status_changed',
+                'membership',
+                $membership->id,
+                $oldValues,
+                $this->auditSnapshot($membership),
+                $organizationId,
+            );
+
+            return $membership;
+        });
 
         return response()->json([
             'success' => true,
@@ -380,7 +414,7 @@ class OrganizationMembershipController extends Controller
 
     private function tenantId(): int
     {
-        return app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+        return app(TenantContext::class)->requireEffectiveTenantId();
     }
 
     private function findOrganization(int $tenantId, string $organizationId): Organization
@@ -463,7 +497,6 @@ class OrganizationMembershipController extends Controller
             ->forTenant($tenantId)
             ->where('organization_id', $organizationId)
             ->where('is_current', true)
-            ->where('status', OrganizationMembership::STATUS_ACTIVE)
             ->where('member_source', $memberSource);
 
         if ($memberSource === OrganizationMembership::SOURCE_PARISH) {
@@ -485,8 +518,58 @@ class OrganizationMembershipController extends Controller
         ], 422);
     }
 
+    private function vacateActiveLeadershipForMembership(
+        int $tenantId,
+        string $organizationId,
+        string $membershipId,
+        string $effectiveDate,
+    ): void {
+        $terms = LeadershipTerm::query()
+            ->forTenant($tenantId)
+            ->where('organization_id', $organizationId)
+            ->where('membership_id', $membershipId)
+            ->where('status', LeadershipTerm::STATUS_ACTIVE)
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($terms as $term) {
+            $oldValues = [
+                'status' => $term->status,
+                'effective_to' => $term->effective_to?->toDateString(),
+                'exit_reason' => $term->exit_reason,
+            ];
+
+            $effectiveTo = $effectiveDate;
+            if ($term->effective_from !== null && $effectiveTo < $term->effective_from->toDateString()) {
+                $effectiveTo = $term->effective_from->toDateString();
+            }
+
+            $term->update([
+                'status' => LeadershipTerm::STATUS_VACATED,
+                'exit_reason' => LeadershipTerm::EXIT_REASON_MEMBERSHIP_STATUS_CHANGE,
+                'effective_to' => $effectiveTo,
+            ]);
+            $term->refresh();
+
+            $this->auditService->log(
+                $tenantId,
+                'leadership.vacated_on_membership_status',
+                'leadership_term',
+                $term->id,
+                $oldValues,
+                [
+                    'status' => $term->status,
+                    'effective_to' => $term->effective_to?->toDateString(),
+                    'exit_reason' => $term->exit_reason,
+                ],
+                $organizationId,
+                ['membership_id' => $membershipId],
+            );
+        }
+    }
+
     /**
-     * @return \Illuminate\Database\Eloquent\Collection<int, OrganizationMembership>
+     * @return Collection<int, OrganizationMembership>
      */
     private function membershipHistory(int $tenantId, string $organizationId, OrganizationMembership $membership)
     {

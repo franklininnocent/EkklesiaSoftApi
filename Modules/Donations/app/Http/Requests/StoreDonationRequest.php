@@ -11,6 +11,13 @@ class StoreDonationRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        $this->offsetUnset('tenant_id');
+        $this->offsetUnset('status');
+        $this->offsetUnset('collected_amount');
+    }
+
     public function rules(): array
     {
         return [
@@ -20,10 +27,9 @@ class StoreDonationRequest extends FormRequest
             'donation_category_id' => ['nullable', 'uuid'],
             'project_id' => ['nullable', 'uuid'],
             'title' => ['nullable', 'string', 'max:180'],
-            'pledged_amount' => ['required', 'numeric', 'min:0'],
+            'pledged_amount' => ['required', 'numeric', 'min:0', 'max:999999999999.99', 'decimal:0,2'],
             'received_at' => ['nullable', 'date'],
             'financial_year' => ['nullable', 'string', 'max:20'],
-            'status' => ['nullable', 'in:pledged,partially_paid,paid,cancelled'],
             'notes' => ['nullable', 'string'],
             'is_anonymous' => ['nullable', 'boolean'],
         ];

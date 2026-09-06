@@ -2,64 +2,108 @@
 
 namespace Modules\Family\app\Repositories;
 
+use App\Support\CaseInsensitiveSearch;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
+use Modules\Family\Services\ParishMemberMissingSacramentQuery;
+use Modules\Family\Support\ParishProgressionFilter;
 
 class FamilyRepository
 {
     /**
      * Get paginated families for a tenant with optional filters
-     *
-     * @param string $tenantId
-     * @param array $filters
-     * @param int $perPage
-     * @return LengthAwarePaginator
      */
     public function getPaginatedFamilies(string $tenantId, array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
         $query = Family::where('tenant_id', $tenantId)
-            ->with(['bcc:id,name', 'members']);
+            ->with([
+                'bcc:id,name',
+                'members' => fn ($memberQuery) => $memberQuery->select([
+                    'id',
+                    'family_id',
+                    'first_name',
+                    'last_name',
+                    'relationship_to_head',
+                    'is_primary_contact',
+                    'status',
+                    'phone',
+                    'email',
+                ])->where('status', 'active'),
+            ]);
+
+        if (! empty($filters['family_id'])) {
+            $query->where('id', $filters['family_id']);
+        }
 
         // Apply filters
-        if (!empty($filters['search'])) {
+        if (! empty($filters['search'])) {
             $search = $filters['search'];
-            $query->where(function ($q) use ($search) {
-                $q->where('family_name', 'ILIKE', "%{$search}%")
-                    ->orWhere('family_code', 'ILIKE', "%{$search}%")
-                    ->orWhere('head_of_family', 'ILIKE', "%{$search}%")
-                    ->orWhereHas('members', function ($memberQuery) use ($search) {
-                        $memberQuery->where(function ($mq) use ($search) {
-                            $mq->whereRaw(
-                                "CONCAT(first_name, ' ', COALESCE(middle_name, ''), ' ', last_name) ILIKE ?",
-                                ["%{$search}%"]
-                            )
-                                ->orWhere('phone', 'ILIKE', "%{$search}%")
-                                ->orWhere('email', 'ILIKE', "%{$search}%");
-                        });
+            $pattern = "%{$search}%";
+            $query->where(function ($q) use ($pattern) {
+                CaseInsensitiveSearch::applyColumnLike($q, 'family_name', $pattern);
+                CaseInsensitiveSearch::applyColumnLike($q, 'family_code', $pattern, 'or');
+                CaseInsensitiveSearch::applyColumnLike($q, 'head_of_family', $pattern, 'or');
+                $q->orWhereHas('members', function ($memberQuery) use ($pattern) {
+                    $memberQuery->where(function ($mq) use ($pattern) {
+                        CaseInsensitiveSearch::applyMemberFullNameLike($mq, $pattern);
+                        CaseInsensitiveSearch::applyColumnLike($mq, 'phone', $pattern, 'or');
+                        CaseInsensitiveSearch::applyColumnLike($mq, 'email', $pattern, 'or');
                     });
+                });
             });
         }
 
-        if (!empty($filters['status'])) {
+        if (! empty($filters['status'])) {
             $query->where('status', $filters['status']);
         }
 
-        if (!empty($filters['bcc_id'])) {
+        if (! empty($filters['bcc_id'])) {
             $query->where('bcc_id', $filters['bcc_id']);
         }
 
         // Parish Zone removed
 
-        if (!empty($filters['city'])) {
-            $query->where('city', 'ILIKE', "%{$filters['city']}%");
+        if (! empty($filters['city'])) {
+            CaseInsensitiveSearch::applyColumnLike($query, 'city', "%{$filters['city']}%");
+        }
+
+        if (! empty($filters['missing_sacrament'])) {
+            $familyIds = app(ParishMemberMissingSacramentQuery::class)->familyIdsForMissingSacrament(
+                $tenantId,
+                (string) $filters['missing_sacrament'],
+                ! empty($filters['bcc_id']) ? (string) $filters['bcc_id'] : null
+            );
+
+            if ($familyIds === []) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereIn('id', $familyIds);
+            }
+        } elseif (! empty($filters['progression'])) {
+            $progression = ParishProgressionFilter::normalize((string) $filters['progression']);
+            if ($progression === null) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $familyIds = app(ParishMemberMissingSacramentQuery::class)->familyIdsForProgression(
+                    $tenantId,
+                    $progression,
+                    ! empty($filters['bcc_id']) ? (string) $filters['bcc_id'] : null
+                );
+
+                if ($familyIds === []) {
+                    $query->whereRaw('1 = 0');
+                } else {
+                    $query->whereIn('id', $familyIds);
+                }
+            }
         }
 
         // Sorting
         $sortBy = $filters['sort_by'] ?? 'created_at';
         $sortOrder = $filters['sort_order'] ?? 'desc';
-        
+
         // Handle sorting by BCC name (requires subquery to avoid join conflicts)
         if ($sortBy === 'bcc_name') {
             $query->orderByRaw(
@@ -75,9 +119,6 @@ class FamilyRepository
 
     /**
      * Get all families for a tenant
-     *
-     * @param string $tenantId
-     * @return Collection
      */
     public function getAllFamilies(string $tenantId): Collection
     {
@@ -89,10 +130,6 @@ class FamilyRepository
 
     /**
      * Find family by ID
-     *
-     * @param string $id
-     * @param string $tenantId
-     * @return Family|null
      */
     public function findById(string $id, string $tenantId): ?Family
     {
@@ -106,17 +143,13 @@ class FamilyRepository
                     $query->orderBy('relationship_to_head');
                 },
                 'creator:id,name',
-                'updater:id,name'
+                'updater:id,name',
             ])
             ->first();
     }
 
     /**
      * Find family by family code
-     *
-     * @param string $familyCode
-     * @param string $tenantId
-     * @return Family|null
      */
     public function findByFamilyCode(string $familyCode, string $tenantId): ?Family
     {
@@ -127,9 +160,6 @@ class FamilyRepository
 
     /**
      * Create a new family
-     *
-     * @param array $data
-     * @return Family
      */
     public function create(array $data): Family
     {
@@ -138,10 +168,6 @@ class FamilyRepository
 
     /**
      * Update family
-     *
-     * @param Family $family
-     * @param array $data
-     * @return bool
      */
     public function update(Family $family, array $data): bool
     {
@@ -150,9 +176,6 @@ class FamilyRepository
 
     /**
      * Delete family (soft delete)
-     *
-     * @param Family $family
-     * @return bool|null
      */
     public function delete(Family $family): ?bool
     {
@@ -161,10 +184,6 @@ class FamilyRepository
 
     /**
      * Get families by BCC
-     *
-     * @param string $bccId
-     * @param string $tenantId
-     * @return Collection
      */
     public function getFamiliesByBCC(string $bccId, string $tenantId): Collection
     {
@@ -177,10 +196,6 @@ class FamilyRepository
 
     /**
      * Get families by parish zone
-     *
-     * @param string $parishZoneId
-     * @param string $tenantId
-     * @return Collection
      */
     public function getFamiliesByParishZone(string $parishZoneId, string $tenantId): Collection
     {
@@ -193,9 +208,6 @@ class FamilyRepository
 
     /**
      * Get families without BCC
-     *
-     * @param string $tenantId
-     * @return Collection
      */
     public function getFamiliesWithoutBCC(string $tenantId): Collection
     {
@@ -207,9 +219,6 @@ class FamilyRepository
 
     /**
      * Get family statistics for tenant
-     *
-     * @param string $tenantId
-     * @return array
      */
     public function getStatistics(string $tenantId): array
     {
@@ -242,75 +251,69 @@ class FamilyRepository
 
     /**
      * Add member to family
-     *
-     * @param Family $family
-     * @param array $memberData
-     * @return FamilyMember
      */
     public function addMember(Family $family, array $memberData): FamilyMember
     {
         $memberData['family_id'] = $family->id;
+        if (! array_key_exists('baptism_priest_is_home', $memberData) || $memberData['baptism_priest_is_home'] === null) {
+            $memberData['baptism_priest_is_home'] = false;
+        }
         $member = FamilyMember::create($memberData);
-        
+
         // Auto-sync head_of_family if this member is designated as head
         if (isset($memberData['relationship_to_head']) && in_array(strtolower($memberData['relationship_to_head']), ['self', 'head'])) {
             $this->syncHeadOfFamily($family->id);
         }
-        
+
         return $member;
     }
 
     /**
      * Update family member
-     *
-     * @param FamilyMember $member
-     * @param array $data
-     * @return bool
      */
     public function updateMember(FamilyMember $member, array $data): bool
     {
         // CRITICAL: Ensure we're updating an existing model, not creating a new one
-        if (!$member->exists) {
+        if (! $member->exists) {
             \Log::error('Attempted to update non-existent member model', [
                 'member_id' => $member->id ?? 'none',
-                'family_id' => $member->family_id ?? 'none'
+                'family_id' => $member->family_id ?? 'none',
             ]);
+
             return false;
         }
-        
+
         // Store original ID to verify it doesn't change
         $originalId = $member->id;
-        
+
         $updated = $member->update($data);
-        
+
         if ($updated) {
             // Verify the ID hasn't changed (should never happen, but safety check)
             if ($member->id !== $originalId) {
                 \Log::error('CRITICAL: Member ID changed during update - this should never happen!', [
                     'original_id' => $originalId,
                     'new_id' => $member->id,
-                    'family_id' => $member->family_id
+                    'family_id' => $member->family_id,
                 ]);
+
                 return false;
             }
-            
+
             // Refresh the model to ensure we have the latest data
             $member->refresh();
-            
+
             // Auto-sync head_of_family if relationship_to_head was changed
             if (isset($data['relationship_to_head']) && in_array(strtolower($data['relationship_to_head']), ['self', 'head'])) {
                 $this->syncHeadOfFamily($member->family_id);
             }
         }
-        
+
         return $updated;
     }
 
     /**
      * Delete family member
-     *
-     * @param FamilyMember $member
-     * @return bool|null
      */
     public function deleteMember(FamilyMember $member): ?bool
     {
@@ -319,10 +322,6 @@ class FamilyRepository
 
     /**
      * Get member by ID
-     *
-     * @param string $memberId
-     * @param string $familyId
-     * @return FamilyMember|null
      */
     public function findMemberById(string $memberId, string $familyId): ?FamilyMember
     {
@@ -333,51 +332,46 @@ class FamilyRepository
 
     /**
      * Get all members of a family
-     *
-     * @param string $familyId
-     * @return Collection
      */
     public function getFamilyMembers(string $familyId): Collection
     {
         return FamilyMember::where('family_id', $familyId)
+            ->with('person:id,date_of_birth,gender,father_name,mother_name')
             ->orderBy('relationship_to_head')
             ->orderBy('date_of_birth')
             ->get();
     }
-    
+
     /**
      * Sync the family's head_of_family field from active members
-     *
-     * @param string $familyId
-     * @return void
      */
     public function syncHeadOfFamily(string $familyId): void
     {
         $family = Family::find($familyId);
-        if (!$family) {
+        if (! $family) {
             return;
         }
-        
+
         // Find active member with relationship='self' or 'head'
         $headMember = FamilyMember::where('family_id', $familyId)
             ->whereIn('relationship_to_head', ['self', 'head'])
             ->where('status', 'active')
             ->first();
-        
+
         if ($headMember) {
             // Update head_of_family to match the active head member's full name
             $family->update([
-                'head_of_family' => trim("{$headMember->first_name} {$headMember->last_name}")
+                'head_of_family' => trim("{$headMember->first_name} {$headMember->last_name}"),
             ]);
         } else {
             // If no active head member, try to find any member with relationship='self' or 'head'
             $headMember = FamilyMember::where('family_id', $familyId)
                 ->whereIn('relationship_to_head', ['self', 'head'])
                 ->first();
-            
+
             if ($headMember) {
                 $family->update([
-                    'head_of_family' => trim("{$headMember->first_name} {$headMember->last_name}")
+                    'head_of_family' => trim("{$headMember->first_name} {$headMember->last_name}"),
                 ]);
             }
         }
@@ -385,71 +379,85 @@ class FamilyRepository
 
     /**
      * Get all members across all families for a tenant with pagination and filters
-     *
-     * @param string $tenantId
-     * @param array $filters
-     * @param int $perPage
-     * @return LengthAwarePaginator
      */
     public function getAllMembers(string $tenantId, array $filters = [], int $perPage = 10, int $page = 1): LengthAwarePaginator
     {
         $query = FamilyMember::whereHas('family', function ($q) use ($tenantId) {
             $q->where('tenant_id', $tenantId);
         })
-        ->with(['family' => function ($q) {
-            $q->with(['bcc:id,name,bcc_code']);
-        }]);
+            ->with(['family' => function ($q) {
+                $q->with(['bcc:id,name,bcc_code']);
+            }, 'person:id,date_of_birth,gender,father_name,mother_name']);
 
         // Apply search filter
-        if (!empty($filters['search'])) {
-            $search = $filters['search'];
-            $query->where(function ($q) use ($search) {
-                $q->whereRaw("CONCAT(first_name, ' ', COALESCE(middle_name, ''), ' ', last_name) ILIKE ?", ["%{$search}%"])
-                    ->orWhere('first_name', 'ILIKE', "%{$search}%")
-                    ->orWhere('last_name', 'ILIKE', "%{$search}%")
-                    ->orWhere('phone', 'ILIKE', "%{$search}%")
-                    ->orWhere('email', 'ILIKE', "%{$search}%");
+        if (! empty($filters['search'])) {
+            $pattern = "%{$filters['search']}%";
+            $query->where(function ($q) use ($pattern) {
+                CaseInsensitiveSearch::applyMemberFullNameLike($q, $pattern);
+                CaseInsensitiveSearch::applyColumnLike($q, 'first_name', $pattern, 'or');
+                CaseInsensitiveSearch::applyColumnLike($q, 'last_name', $pattern, 'or');
+                CaseInsensitiveSearch::applyColumnLike($q, 'phone', $pattern, 'or');
+                CaseInsensitiveSearch::applyColumnLike($q, 'email', $pattern, 'or');
             });
         }
 
         // Apply status filter
-        if (!empty($filters['status'])) {
+        if (! empty($filters['status'])) {
             $query->where('status', $filters['status']);
         }
 
         // Apply BCC filter
-        if (!empty($filters['bcc_id'])) {
+        if (! empty($filters['bcc_id'])) {
             $query->whereHas('family', function ($q) use ($filters) {
                 $q->where('bcc_id', $filters['bcc_id']);
             });
         }
 
         // Apply relationship filter (to identify family heads)
-        if (!empty($filters['is_head'])) {
+        if (! empty($filters['is_head'])) {
             if ($filters['is_head'] === 'true' || $filters['is_head'] === true) {
                 $query->whereIn('relationship_to_head', ['self', 'head']);
+            }
+        }
+
+        if (! empty($filters['progression'])) {
+            $progression = ParishProgressionFilter::normalize((string) $filters['progression']);
+            if ($progression === null) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $memberIds = app(ParishMemberMissingSacramentQuery::class)->memberIdsForProgression(
+                    $tenantId,
+                    $progression,
+                    ! empty($filters['bcc_id']) ? (string) $filters['bcc_id'] : null
+                );
+
+                if ($memberIds === []) {
+                    $query->whereRaw('1 = 0');
+                } else {
+                    $query->whereIn('family_members.id', $memberIds);
+                }
             }
         }
 
         // Sorting
         $sortBy = $filters['sort_by'] ?? 'last_name';
         $sortOrder = $filters['sort_order'] ?? 'asc';
-        
+
         // Handle special sorting cases
         if ($sortBy === 'name') {
             $query->orderBy('last_name', $sortOrder)
-                  ->orderBy('first_name', $sortOrder);
+                ->orderBy('first_name', $sortOrder);
         } elseif ($sortBy === 'address') {
             // Sort by family address (address_line_1)
             $query->join('families', 'family_members.family_id', '=', 'families.id')
-                  ->orderBy('families.address_line_1', $sortOrder)
-                  ->select('family_members.*'); // Select only member columns to avoid conflicts
+                ->orderBy('families.address_line_1', $sortOrder)
+                ->select('family_members.*'); // Select only member columns to avoid conflicts
         } elseif ($sortBy === 'bcc') {
             // Sort by BCC name
             $query->join('families', 'family_members.family_id', '=', 'families.id')
-                  ->leftJoin('bccs', 'families.bcc_id', '=', 'bccs.id')
-                  ->orderBy('bccs.name', $sortOrder)
-                  ->select('family_members.*'); // Select only member columns to avoid conflicts
+                ->leftJoin('bccs', 'families.bcc_id', '=', 'bccs.id')
+                ->orderBy('bccs.name', $sortOrder)
+                ->select('family_members.*'); // Select only member columns to avoid conflicts
         } elseif ($sortBy === 'father_name') {
             // Sort by father's name - this requires a subquery or complex join
             // For now, we'll sort by a placeholder or skip sorting by father_name
@@ -466,5 +474,3 @@ class FamilyRepository
         return $query->paginate($perPage, ['*'], 'page', $page);
     }
 }
-
-

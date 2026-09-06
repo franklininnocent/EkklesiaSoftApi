@@ -290,4 +290,214 @@ class SacramentCertificateApiTest extends TestCase
             ->assertStatus(422)
             ->assertJsonPath('code', 'certificate_not_issued');
     }
+
+    #[Test]
+    public function preview_snapshot_freezes_church_and_template_version(): void
+    {
+        $this->tenant->update(['name' => 'St. Anne Parish']);
+        $sacrament = $this->createBaptism();
+
+        $response = $this->postJson("/api/sacraments/{$sacrament->id}/certificates/preview");
+        $response->assertCreated();
+
+        $projection = $response->json('data.projection');
+        $this->assertSame(2, $projection['schema_version']);
+        $this->assertSame('St. Anne Parish', $projection['church']['name']);
+        $this->assertSame('baptism_v1', $projection['render']['template_code']);
+        $this->assertSame('1.0.0', $projection['render']['template_version']);
+        $this->assertSame('BAPTISM', $projection['certificate_view']['sacramentType']);
+        $this->assertArrayNotHasKey('tenant_id', $projection['certificate_view']);
+        $this->assertArrayNotHasKey('logoDataUri', $projection['certificate_view']['church'] ?? []);
+        $this->assertArrayNotHasKey('logo_data_uri', $projection['church'] ?? []);
+        $this->assertNull($projection['certificate_view']['church']['logoUrl'] ?? null);
+    }
+
+    #[Test]
+    public function historical_print_ignores_later_parish_rename(): void
+    {
+        $this->tenant->update(['name' => 'Original Parish']);
+        $sacrament = $this->createBaptism();
+        $gen = $this->postJson("/api/sacraments/{$sacrament->id}/certificates/generate");
+        $gen->assertCreated();
+        $certId = $gen->json('data.id');
+
+        $this->tenant->update(['name' => 'Renamed After Issue']);
+
+        $print = $this->get("/api/sacraments/certificates/{$certId}/print");
+        $print->assertOk();
+        $html = $print->getContent();
+        $this->assertStringContainsString('Original Parish', $html);
+        $this->assertStringNotContainsString('Renamed After Issue', $html);
+        $this->assertStringNotContainsString('<script>', $html);
+        $this->assertStringNotContainsString('class="logo"', $html);
+        $this->assertDoesNotMatchRegularExpression('/<img[^>]+(logoUrl|logoDataUri|tenants\/\d+\/logos)/', $html);
+    }
+
+    #[Test]
+    public function generate_ignores_client_status_tenant_and_token(): void
+    {
+        $other = Tenant::factory()->create();
+        $sacrament = $this->createBaptism();
+        $response = $this->postJson("/api/sacraments/{$sacrament->id}/certificates/generate", [
+            'tenant_id' => $other->id,
+            'status' => SacramentCertificateStatus::VOIDED,
+            'verification_token' => 'forged-token',
+            'certificate_number' => 'HACKED',
+            'template_version' => '99.0.0',
+        ]);
+        $response->assertCreated()
+            ->assertJsonPath('data.status', SacramentCertificateStatus::ISSUED);
+        $this->assertArrayNotHasKey('verification_token', $response->json('data'));
+
+        $cert = SacramentCertificate::findOrFail($response->json('data.id'));
+        $this->assertSame($this->tenant->id, (int) $cert->tenant_id);
+        $this->assertSame(SacramentCertificateStatus::ISSUED, $cert->status);
+        $this->assertNotSame('forged-token', $cert->verification_token);
+        $this->assertSame('1.0.0', $cert->template_version);
+        $this->assertNotEmpty($cert->html_storage_key);
+    }
+
+    #[Test]
+    public function print_and_download_are_tenant_isolated(): void
+    {
+        $sacrament = $this->createBaptism();
+        $gen = $this->postJson("/api/sacraments/{$sacrament->id}/certificates/generate");
+        $certId = $gen->json('data.id');
+
+        $otherTenant = Tenant::factory()->create();
+        $role = Role::create([
+            'name' => 'Other Tenant Administrator',
+            'description' => 'Other admin',
+            'level' => 1,
+            'active' => 1,
+            'tenant_id' => $otherTenant->id,
+            'is_custom' => false,
+            'role_type' => Role::ROLE_TYPE_TENANT,
+        ]);
+        $otherUser = User::factory()->create([
+            'tenant_id' => $otherTenant->id,
+            'role_id' => $role->id,
+        ]);
+        $otherUser->syncRoles([$role->id]);
+        $this->grantPermissions($role);
+        Passport::actingAs($otherUser);
+        User::flushRequestPermissionCache();
+
+        $this->getJson("/api/sacraments/certificates/{$certId}/print")->assertStatus(404);
+        $this->getJson("/api/sacraments/certificates/{$certId}/download")->assertStatus(404);
+    }
+
+    #[Test]
+    public function public_verify_returns_approved_fields_only_and_void_revokes(): void
+    {
+        $sacrament = $this->createBaptism();
+        $gen = $this->postJson("/api/sacraments/{$sacrament->id}/certificates/generate");
+        $gen->assertCreated();
+        $cert = SacramentCertificate::findOrFail($gen->json('data.id'));
+        $token = $cert->verification_token;
+        $this->assertNotEmpty($token);
+
+        $verify = $this->getJson('/api/public/sacrament-certificates/verify/'.$token);
+        $verify->assertOk()->assertJsonPath('data.status', 'issued');
+        $payload = $verify->json('data');
+        $this->assertArrayNotHasKey('tenant_id', $payload);
+        $this->assertArrayNotHasKey('sponsors', $payload);
+        $this->assertArrayNotHasKey('godparents', $payload);
+        $this->assertArrayNotHasKey('id', $payload);
+
+        $this->postJson("/api/sacraments/certificates/{$cert->id}/void")->assertOk();
+
+        $after = $this->getJson('/api/public/sacrament-certificates/verify/'.$token);
+        $after->assertOk()->assertJsonPath('data.status', 'voided');
+    }
+
+    #[Test]
+    public function reissue_creates_a_new_certificate_version(): void
+    {
+        $sacrament = $this->createBaptism();
+        $gen = $this->postJson("/api/sacraments/{$sacrament->id}/certificates/generate");
+        $gen->assertCreated();
+        $originalId = (int) $gen->json('data.id');
+
+        $reissue = $this->postJson("/api/sacraments/certificates/{$originalId}/reissue");
+        $reissue->assertCreated()
+            ->assertJsonPath('success', true);
+
+        $newId = (int) $reissue->json('data.id');
+        $this->assertNotSame($originalId, $newId);
+        $this->assertSame('issued', $reissue->json('data.status'));
+    }
+
+    #[Test]
+    public function certificate_view_details_returns_latest_and_history(): void
+    {
+        $sacrament = $this->createBaptism();
+        $gen = $this->postJson("/api/sacraments/{$sacrament->id}/certificates/generate");
+        $gen->assertCreated();
+        $certId = (int) $gen->json('data.id');
+
+        $this->get("/api/sacraments/certificates/{$certId}/download", [
+            'REMOTE_ADDR' => '10.0.0.5',
+            'HTTP_USER_AGENT' => 'PHPUnit Test Agent',
+        ])->assertOk();
+
+        $view = $this->getJson("/api/sacraments/{$sacrament->id}/certificate-view");
+        $view->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.latest_certificate.id', $certId)
+            ->assertJsonPath('data.latest_certificate.status', SacramentCertificateStatus::ISSUED)
+            ->assertJsonPath('data.download_history.0.version', 1)
+            ->assertJsonPath('data.download_history.0.user_name', $this->user->name)
+            ->assertJsonPath('data.download_history.0.ip_address', '10.0.0.5');
+
+        $this->assertNotNull($view->json('data.latest_certificate.projection'));
+    }
+
+    #[Test]
+    public function download_latest_streams_pdf_and_audits(): void
+    {
+        $sacrament = $this->createBaptism();
+        $this->postJson("/api/sacraments/{$sacrament->id}/certificates/generate")->assertCreated();
+
+        $download = $this->get("/api/sacraments/{$sacrament->id}/certificates/latest/download", [
+            'REMOTE_ADDR' => '192.168.1.42',
+            'HTTP_USER_AGENT' => 'Mozilla/5.0 Test',
+        ]);
+        $download->assertOk();
+        $this->assertStringContainsString('application/pdf', (string) $download->headers->get('Content-Type'));
+        $this->assertStringStartsWith('%PDF', $download->getContent());
+
+        $this->assertDatabaseHas('sacrament_audit_logs', [
+            'event' => 'certificate_download',
+            'target_type' => 'sacrament_certificate',
+        ]);
+    }
+
+    #[Test]
+    public function download_history_includes_ip_and_device_in_metadata(): void
+    {
+        $sacrament = $this->createBaptism();
+        $gen = $this->postJson("/api/sacraments/{$sacrament->id}/certificates/generate");
+        $certId = (int) $gen->json('data.id');
+
+        $this->get("/api/sacraments/certificates/{$certId}/download", [
+            'REMOTE_ADDR' => '203.0.113.9',
+            'HTTP_USER_AGENT' => 'Chrome/120 Linux',
+        ])->assertOk();
+
+        $view = $this->getJson("/api/sacraments/{$sacrament->id}/certificate-view");
+        $view->assertOk()
+            ->assertJsonPath('data.download_history.0.ip_address', '203.0.113.9')
+            ->assertJsonPath('data.download_history.0.device_snapshot', 'Chrome/120 Linux');
+    }
+
+    #[Test]
+    public function download_latest_returns_404_when_no_issued_certificate(): void
+    {
+        $sacrament = $this->createBaptism();
+
+        $this->getJson("/api/sacraments/{$sacrament->id}/certificates/latest/download")
+            ->assertStatus(404)
+            ->assertJsonPath('code', 'certificate_not_found');
+    }
 }

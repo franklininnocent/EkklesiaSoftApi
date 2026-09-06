@@ -32,13 +32,38 @@ class SacramentCertificateResource extends JsonResource
             'mime_type' => $this->mime_type,
             'size_bytes' => $this->size_bytes,
             'has_file' => ! empty($this->storage_key),
+            'has_html' => ! empty($this->html_storage_key),
+            'pdf_engine' => data_get($this->projection_json, 'render.pdf_engine'),
             'projection' => $this->when(
                 $this->status === 'draft_preview' || $request->boolean('include_projection'),
-                $this->projection_json
+                $this->clientSafeProjection($this->projection_json)
             ),
             'supersedes_certificate_id' => $this->supersedes_certificate_id,
             'created_at' => optional($this->created_at)?->toIso8601String(),
             'updated_at' => optional($this->updated_at)?->toIso8601String(),
         ];
+    }
+
+    /**
+     * Drop leftover logo bytes from older frozen projections. Certificates do not display a parish logo.
+     *
+     * @param  array<string, mixed>|null  $projection
+     * @return array<string, mixed>|null
+     */
+    private function clientSafeProjection(mixed $projection): mixed
+    {
+        if (! is_array($projection)) {
+            return $projection;
+        }
+
+        $out = $projection;
+        if (isset($out['church']) && is_array($out['church'])) {
+            unset($out['church']['logo_data_uri']);
+        }
+        if (isset($out['certificate_view']['church']) && is_array($out['certificate_view']['church'])) {
+            unset($out['certificate_view']['church']['logoDataUri']);
+        }
+
+        return $out;
     }
 }

@@ -685,8 +685,12 @@ class TenantDataExportApiTest extends TestCase
 
         $this->tenant->update(['active' => 0]);
 
-        $job = new ProcessTenantDataExportJob($exportId);
-        $job->handle(app(TenantDataExportOrchestrator::class));
+        $job = new ProcessTenantDataExportJob(
+            (int) $this->tenant->id,
+            (int) $this->tenantAdminUser->id,
+            (string) $exportId,
+        );
+        $job->handle();
 
         $export = TenantDataExport::findOrFail($exportId);
         $this->assertSame(TenantDataExport::STATUS_FAILED, $export->status);

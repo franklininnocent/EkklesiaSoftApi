@@ -3,6 +3,11 @@
 namespace Modules\Sacraments\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Modules\Sacraments\Support\BaptismalStatus;
+use Modules\Sacraments\Support\CanonicalDelegationStatus;
+use Modules\Sacraments\Support\EcclesialAffiliation;
+use Modules\Sacraments\Support\MarriageCanonicalClassification;
+use Modules\Sacraments\Support\SacramentDispensationType;
 use Modules\Sacraments\Support\SacramentParticipantRole;
 use Modules\Sacraments\Support\SacramentParticipantSource;
 use Modules\Sacraments\Support\SacramentStatus;
@@ -46,6 +51,18 @@ class CorrectSacramentRequest extends FormRequest
             'participants.*.external_contact_number' => 'nullable|string|max:20',
             'participants.*.external_title' => 'nullable|string|max:50',
             'participants.*.external_minister_role' => 'nullable|string|max:80',
+            'participants.*.baptismal_status' => ['nullable', BaptismalStatus::rule()],
+            'participants.*.ecclesial_affiliation_code' => ['nullable', EcclesialAffiliation::rule()],
+            'participants.*.ecclesial_affiliation_label' => 'nullable|string|max:255',
+            'participants.*.canonical_delegation_status' => ['nullable', CanonicalDelegationStatus::rule()],
+            'participants.*.father_name' => 'nullable|string|max:255',
+            'participants.*.mother_name' => 'nullable|string|max:255',
+            'marriage_canonical_classification' => ['nullable', MarriageCanonicalClassification::rule()],
+            'dispensations' => 'nullable|array',
+            'dispensations.*.dispensation_type' => ['required_with:dispensations', SacramentDispensationType::rule()],
+            'dispensations.*.granting_authority' => 'nullable|string|max:255',
+            'dispensations.*.protocol_number' => 'nullable|string|max:80',
+            'dispensations.*.date_granted' => 'nullable|date',
             'participants.*.snapshot_json' => 'prohibited',
         ];
     }

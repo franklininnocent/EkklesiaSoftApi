@@ -6,22 +6,30 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Modules\Donations\Http\Controllers\Concerns\HandlesDonationIdempotency;
+use Modules\Donations\Http\Requests\ReissueReceiptRequest;
+use Modules\Donations\Http\Requests\VoidReceiptRequest;
 use Modules\Donations\Models\DonationPayment;
 use Modules\Donations\Models\DonationReceipt;
+use Modules\Donations\Services\DonationIdempotencyService;
 use Modules\Donations\Services\DonationReceiptPrintService;
 use Modules\Donations\Services\DonationReceiptService;
+use Modules\Donations\Support\MoneyMath;
+use Modules\Tenants\Support\TenantContext;
 
 class DonationReceiptsController extends Controller
 {
+    use HandlesDonationIdempotency;
+
     public function __construct(
         private readonly DonationReceiptService $receiptService,
-        private readonly DonationReceiptPrintService $printService
-    ) {
-    }
+        private readonly DonationReceiptPrintService $printService,
+        private readonly DonationIdempotencyService $idempotency
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
-        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
         $query = DonationReceipt::forTenant($tenantId)
             ->with([
                 'payment:id,payment_number,payer_name,amount,payment_date,method,status,family_id,is_anonymous',
@@ -66,16 +74,18 @@ class DonationReceiptsController extends Controller
 
         $paginator->getCollection()->transform(function (DonationReceipt $receipt): array {
             $payment = $receipt->payment;
+            $amount = $receipt->snapshot['totals']['amount'] ?? ($payment?->amount ?? 0);
 
             return [
                 'id' => $receipt->id,
                 'receipt_number' => $receipt->receipt_number,
                 'issued_on' => $receipt->issued_on?->toDateString(),
                 'is_void' => (bool) $receipt->is_void,
+                'void_reason' => $receipt->void_reason,
                 'payment_id' => $receipt->payment_id,
                 'payment_number' => $payment?->payment_number,
                 'payer_name' => $payment?->is_anonymous ? 'Anonymous' : $payment?->payer_name,
-                'amount' => $payment ? (float) $payment->amount : 0.0,
+                'amount' => MoneyMath::toApiNumber($amount),
                 'payment_date' => $payment?->payment_date?->toDateString(),
                 'method' => $payment?->method,
                 'status' => $payment?->status,
@@ -93,14 +103,14 @@ class DonationReceiptsController extends Controller
 
     public function showByPayment(string $paymentId): JsonResponse
     {
-        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
 
         $payment = DonationPayment::forTenant($tenantId)
-            ->with(['allocations', 'receipt', 'family', 'donor'])
+            ->with(['allocations', 'receipts', 'family', 'donor'])
             ->findOrFail($paymentId);
 
-        $receipt = $payment->receipt;
-        if (!$receipt) {
+        $receipt = $this->receiptService->latestReceipt($payment);
+        if (! $receipt) {
             return response()->json([
                 'success' => false,
                 'message' => 'Receipt not found for payment.',
@@ -115,14 +125,14 @@ class DonationReceiptsController extends Controller
 
     public function printByPayment(string $paymentId)
     {
-        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
 
         $payment = DonationPayment::forTenant($tenantId)
-            ->with(['allocations', 'receipt', 'family', 'donor'])
+            ->with(['allocations', 'receipts', 'family', 'donor'])
             ->findOrFail($paymentId);
 
-        $receipt = $payment->receipt;
-        if (!$receipt) {
+        $receipt = $this->receiptService->latestReceipt($payment);
+        if (! $receipt) {
             return response()->json([
                 'success' => false,
                 'message' => 'Receipt not found for payment.',
@@ -139,13 +149,13 @@ class DonationReceiptsController extends Controller
 
     public function show(string $id): JsonResponse
     {
-        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
         $receipt = DonationReceipt::forTenant($tenantId)
             ->with(['payment.allocations', 'payment.family', 'payment.donor'])
             ->findOrFail($id);
 
         $payment = $receipt->payment;
-        if (!$payment) {
+        if (! $payment) {
             return response()->json([
                 'success' => true,
                 'data' => ['receipt' => $receipt],
@@ -156,5 +166,52 @@ class DonationReceiptsController extends Controller
             'success' => true,
             'data' => $this->receiptService->buildReceiptPayload($tenantId, $payment, $receipt),
         ]);
+    }
+
+    public function voidReceipt(string $id, VoidReceiptRequest $request): JsonResponse
+    {
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+        $userId = (int) Auth::id();
+
+        return $this->withIdempotency($this->idempotency, $tenantId, 'receipt.void', $request, function () use ($tenantId, $userId, $id, $request) {
+            $receipt = DonationReceipt::forTenant($tenantId)->lockForUpdate()->findOrFail($id);
+            $voided = $this->receiptService->voidReceipt($tenantId, $userId, $receipt, $request->string('reason')->toString());
+
+            return [
+                'status' => 200,
+                'message' => 'Receipt voided.',
+                'data' => $voided,
+                'resource_type' => 'receipt',
+                'resource_id' => $voided->id,
+            ];
+        });
+    }
+
+    public function reissue(string $id, ReissueReceiptRequest $request): JsonResponse
+    {
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+        $userId = (int) Auth::id();
+
+        return $this->withIdempotency($this->idempotency, $tenantId, 'receipt.reissue', $request, function () use ($tenantId, $userId, $id, $request) {
+            $receipt = DonationReceipt::forTenant($tenantId)->with('payment')->lockForUpdate()->findOrFail($id);
+            $payment = $receipt->payment;
+            if (! $payment) {
+                throw new \RuntimeException('Receipt is not linked to a payment.');
+            }
+            $replacement = $this->receiptService->reissueReceipt(
+                $tenantId,
+                $userId,
+                $payment,
+                $request->string('reason')->toString()
+            );
+
+            return [
+                'status' => 201,
+                'message' => 'Replacement receipt issued.',
+                'data' => $replacement,
+                'resource_type' => 'receipt',
+                'resource_id' => $replacement->id,
+            ];
+        });
     }
 }

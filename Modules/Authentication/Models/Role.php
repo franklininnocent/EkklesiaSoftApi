@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Support\Facades\Cache;
 use Modules\RolesAndPermissions\Models\Permission;
+use Modules\Tenants\Support\TenantCacheVersion;
 
 class Role extends Model
 {
@@ -441,6 +442,10 @@ class Role extends Model
                 $user->clearPermissionsCache();
             }
         });
+
+        if ($this->tenant_id !== null) {
+            TenantCacheVersion::bump((int) $this->tenant_id);
+        }
     }
 }
 

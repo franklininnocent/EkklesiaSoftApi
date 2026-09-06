@@ -7,6 +7,7 @@ use Modules\Donations\Models\Donation;
 use Modules\Donations\Models\DonationPayment;
 use Modules\Donations\Models\DonationSetting;
 use Modules\Donations\Models\Donor;
+use Modules\Donations\Support\MoneyMath;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
 
@@ -16,8 +17,7 @@ class VoluntaryDonationService
         private readonly DonationLedgerService $ledgerService,
         private readonly DonationEntryBalanceService $balanceService,
         private readonly DonationAuditService $auditService
-    ) {
-    }
+    ) {}
 
     /**
      * @return array{donation: Donation, payment: DonationPayment}
@@ -28,14 +28,14 @@ class VoluntaryDonationService
             $this->validateFamilyReferences($tenantId, $payload);
 
             $isAnonymous = (bool) ($payload['is_anonymous'] ?? false);
-            $amount = round((float) $payload['amount'], 2);
+            $amount = MoneyMath::normalize($payload['amount'] ?? 0);
             $donor = $this->resolveDonor($tenantId, $userId, $payload, $isAnonymous);
 
-            if (!empty($payload['donation_id'])) {
+            if (! empty($payload['donation_id'])) {
                 $donation = Donation::forTenant($tenantId)->findOrFail($payload['donation_id']);
             } else {
                 $pledgedAmount = isset($payload['pledged_amount'])
-                    ? round((float) $payload['pledged_amount'], 2)
+                    ? MoneyMath::normalize($payload['pledged_amount'])
                     : $amount;
 
                 $donation = Donation::create([
@@ -117,8 +117,13 @@ class VoluntaryDonationService
             return null;
         }
 
-        if (!empty($payload['donor_id'])) {
-            return Donor::forTenant($tenantId)->find($payload['donor_id']);
+        if (! empty($payload['donor_id'])) {
+            $donor = Donor::forTenant($tenantId)->find($payload['donor_id']);
+            if (! $donor) {
+                throw new \RuntimeException('Donor does not belong to the tenant.');
+            }
+
+            return $donor;
         }
 
         if (empty($payload['donor_name'])) {
@@ -132,7 +137,7 @@ class VoluntaryDonationService
             'name' => $payload['donor_name'],
             'email' => $payload['donor_email'] ?? null,
             'phone' => $payload['donor_phone'] ?? null,
-            'donor_type' => $payload['donor_type'] ?? (!empty($payload['family_id']) ? 'family' : 'external'),
+            'donor_type' => $payload['donor_type'] ?? (! empty($payload['family_id']) ? 'family' : 'external'),
             'is_anonymous' => false,
             'created_by' => $userId,
             'updated_by' => $userId,
@@ -145,22 +150,22 @@ class VoluntaryDonationService
 
     private function validateFamilyReferences(int $tenantId, array $payload): void
     {
-        if (!empty($payload['family_id'])) {
+        if (! empty($payload['family_id'])) {
             $familyExists = Family::query()
                 ->where('id', $payload['family_id'])
                 ->where('tenant_id', $tenantId)
                 ->exists();
-            if (!$familyExists) {
+            if (! $familyExists) {
                 throw new \RuntimeException('Family does not belong to the tenant.');
             }
         }
 
-        if (!empty($payload['family_member_id'])) {
+        if (! empty($payload['family_member_id'])) {
             $memberExists = FamilyMember::query()
                 ->where('id', $payload['family_member_id'])
                 ->whereHas('family', fn ($q) => $q->where('tenant_id', $tenantId))
                 ->exists();
-            if (!$memberExists) {
+            if (! $memberExists) {
                 throw new \RuntimeException('Family member does not belong to the tenant.');
             }
         }

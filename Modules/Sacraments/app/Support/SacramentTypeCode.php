@@ -21,6 +21,12 @@ final class SacramentTypeCode
 
     public const MATRIMONY = 'MATRIMONY';
 
+    /** @var list<string> Types omitted from age distribution and monthly trend dashboard charts. */
+    private const STANDARD_DASHBOARD_CHART_EXCLUSIONS = [
+        self::RECONCILIATION,
+        self::ANOINTING,
+    ];
+
     private const ALIASES = [
         'BAPTISM' => self::BAPTISM,
         'BAPTISMO' => self::BAPTISM,
@@ -63,5 +69,13 @@ final class SacramentTypeCode
     public static function isMatrimony(?string $code): bool
     {
         return self::normalize($code) === self::MATRIMONY;
+    }
+
+    public static function isExcludedFromStandardDashboardCharts(?string $code): bool
+    {
+        $normalized = self::normalize($code);
+
+        return $normalized !== null
+            && in_array($normalized, self::STANDARD_DASHBOARD_CHART_EXCLUSIONS, true);
     }
 }

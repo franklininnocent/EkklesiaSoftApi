@@ -82,7 +82,7 @@ class TenantDataExportService
             ]);
         });
 
-        ProcessTenantDataExportJob::dispatch($export->id)
+        ProcessTenantDataExportJob::dispatch($tenantId, $userId, $export->id)
             ->onQueue((string) config('tenants.export.queue', 'tenant-exports'))
             ->afterResponse();
 

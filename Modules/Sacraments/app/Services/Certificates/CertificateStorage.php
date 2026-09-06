@@ -3,18 +3,15 @@
 namespace Modules\Sacraments\Services\Certificates;
 
 use Illuminate\Contracts\Filesystem\Filesystem;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Modules\Tenants\Support\TenantPrivateStorage;
 use RuntimeException;
 
-/**
- * Private-disk storage for sacrament certificates (ADR-09 — no public URLs).
- */
 class CertificateStorage
 {
     public function disk(): Filesystem
     {
-        return Storage::disk((string) config('sacraments.certificates.disk', 'local'));
+        return TenantPrivateStorage::disk((string) config('sacraments.certificates.disk', 'local'));
     }
 
     /**
@@ -22,15 +19,10 @@ class CertificateStorage
      */
     public function store(int $tenantId, int $sacramentId, int $version, string $pdfBytes): array
     {
-        $key = sprintf(
-            'sacrament-certificates/%d/%d/v%d-%s.pdf',
-            $tenantId,
-            $sacramentId,
-            $version,
-            Str::uuid()->toString()
-        );
+        $filename = sprintf('v%d-%s.pdf', $version, Str::uuid()->toString());
+        $key = TenantPrivateStorage::relativePath($tenantId, 'sacrament-certificates/'.$sacramentId, $filename);
 
-        if (! $this->disk()->put($key, $pdfBytes)) {
+        if (! TenantPrivateStorage::put($key, $pdfBytes, (string) config('sacraments.certificates.disk', 'local'))) {
             throw new RuntimeException('Failed to store certificate PDF.');
         }
 
@@ -42,12 +34,30 @@ class CertificateStorage
         ];
     }
 
-    public function get(string $storageKey): string
+    public function storeHtml(int $tenantId, int $sacramentId, int $version, string $html): string
     {
-        if (! $this->disk()->exists($storageKey)) {
-            throw new RuntimeException('Certificate file not found.');
+        $filename = sprintf('v%d-%s.html', $version, Str::uuid()->toString());
+        $key = TenantPrivateStorage::relativePath($tenantId, 'sacrament-certificates/'.$sacramentId, $filename);
+
+        if (! TenantPrivateStorage::put($key, $html, (string) config('sacraments.certificates.disk', 'local'))) {
+            throw new RuntimeException('Failed to store certificate HTML.');
         }
 
-        return (string) $this->disk()->get($storageKey);
+        return $key;
+    }
+
+    public function get(string $storageKey): string
+    {
+        $diskName = (string) config('sacraments.certificates.disk', 'local');
+
+        if (TenantPrivateStorage::exists($storageKey, $diskName)) {
+            return TenantPrivateStorage::get($storageKey, $diskName);
+        }
+
+        if ($this->disk()->exists($storageKey)) {
+            return (string) $this->disk()->get($storageKey);
+        }
+
+        throw new RuntimeException('Certificate file not found.');
     }
 }

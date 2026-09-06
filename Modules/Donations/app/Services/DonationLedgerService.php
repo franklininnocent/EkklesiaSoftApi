@@ -2,147 +2,120 @@
 
 namespace Modules\Donations\Services;
 
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
-use Modules\Donations\Models\ContributionPlan;
-use Modules\Donations\Models\Donation;
 use Modules\Donations\Jobs\SendPaymentReceiptJob;
 use Modules\Donations\Models\ContributionDue;
+use Modules\Donations\Models\ContributionPlan;
+use Modules\Donations\Models\Donation;
 use Modules\Donations\Models\DonationApproval;
 use Modules\Donations\Models\DonationPayment;
 use Modules\Donations\Models\DonationProject;
 use Modules\Donations\Models\DonationRefund;
+use Modules\Donations\Models\Donor;
 use Modules\Donations\Models\Fund;
 use Modules\Donations\Models\PaymentAllocation;
 use Modules\Donations\Models\PaymentReversal;
 use Modules\Donations\Models\ProjectInstallmentDue;
+use Modules\Donations\Support\ContributionBalance;
+use Modules\Donations\Support\MoneyMath;
 use Modules\Family\Models\Family;
 
 class DonationLedgerService
 {
+    /** @var array<int, string> */
+    private const UNWIND_ORDER = [
+        'due',
+        'project_installment',
+        'donation',
+        'project',
+        'fund',
+        'plan',
+        'advance',
+    ];
+
     public function __construct(
         private readonly DonationAuditService $auditService,
         private readonly DonationProjectService $projectService,
         private readonly ProjectInstallmentDueService $projectInstallmentService,
         private readonly DonationEntryBalanceService $donationBalanceService,
-        private readonly DonationReceiptService $receiptService
-    ) {
-    }
+        private readonly DonationReceiptService $receiptService,
+        private readonly DonationNumberSequenceService $sequences,
+        private readonly DonationSecurityEventService $securityEvents
+    ) {}
 
     public function createPayment(int $tenantId, int $userId, array $payload): DonationPayment
     {
         return DB::transaction(function () use ($tenantId, $userId, $payload): DonationPayment {
-            if (!empty($payload['family_id'])) {
-                $familyExists = Family::query()
-                    ->where('id', $payload['family_id'])
-                    ->where('tenant_id', $tenantId)
-                    ->exists();
-                if (!$familyExists) {
-                    throw new \RuntimeException('Family does not belong to the tenant.');
-                }
+            $this->assertFamilyInTenant($tenantId, $payload['family_id'] ?? null);
+            $this->assertDonorInTenant($tenantId, $payload['donor_id'] ?? null);
+
+            $amount = MoneyMath::normalize($payload['amount'] ?? 0);
+            if (! MoneyMath::isPositive($amount)) {
+                throw new \RuntimeException('Payment amount must be greater than zero.');
             }
+
+            $reference = $this->normalizeReference($payload['gateway_reference'] ?? null);
+            $this->assertUniqueReference($tenantId, $reference);
 
             $payment = DonationPayment::create([
                 'tenant_id' => $tenantId,
                 'family_id' => $payload['family_id'] ?? null,
                 'donor_id' => $payload['donor_id'] ?? null,
                 'payment_batch_id' => $payload['payment_batch_id'] ?? null,
-                'payment_number' => $this->buildPaymentNumber($tenantId),
+                'payment_number' => $this->sequences->nextPaymentNumber($tenantId),
                 'payer_name' => $payload['payer_name'],
                 'payer_email' => $payload['payer_email'] ?? null,
                 'payer_phone' => $payload['payer_phone'] ?? null,
                 'payment_date' => $payload['payment_date'],
-                'amount' => $payload['amount'],
+                'amount' => $amount,
+                'refunded_amount' => '0.00',
                 'currency' => $payload['currency'] ?? 'INR',
                 'method' => $payload['method'],
-                'gateway_reference' => $payload['gateway_reference'] ?? null,
-                'status' => $payload['status'] ?? 'succeeded',
+                'gateway_reference' => $reference,
+                'status' => 'succeeded',
                 'source_type' => $payload['source_type'] ?? 'general',
                 'is_anonymous' => (bool) ($payload['is_anonymous'] ?? false),
                 'notes' => $payload['notes'] ?? null,
+                'idempotency_key' => $payload['idempotency_key'] ?? null,
                 'created_by' => $userId,
                 'updated_by' => $userId,
             ]);
 
-            $allocatedTotal = 0;
+            $allocatedTotal = '0.00';
             foreach ($payload['allocations'] ?? [] as $allocation) {
-                $amount = (float) $allocation['amount'];
-                $allocatedTotal += $amount;
-                $allocatableType = $allocation['allocatable_type'];
-                $allocatableId = $allocation['allocatable_id'];
-
-                if ($allocatableType !== 'advance' && !$this->isValidAllocatable($tenantId, $allocatableType, $allocatableId)) {
-                    throw new \RuntimeException("Invalid {$allocatableType} allocation target for tenant.");
+                $requested = MoneyMath::normalize($allocation['amount'] ?? 0);
+                if (! MoneyMath::isPositive($requested)) {
+                    continue;
                 }
 
-                PaymentAllocation::create([
-                    'tenant_id' => $tenantId,
-                    'payment_id' => $payment->id,
-                    'allocatable_type' => $allocatableType,
-                    'allocatable_id' => $allocatableId,
-                    'amount' => $allocation['amount'],
-                    'notes' => $allocation['notes'] ?? null,
-                    'created_by' => $userId,
-                    'updated_by' => $userId,
-                ]);
-
-                if ($allocatableType === 'due') {
-                    $due = ContributionDue::forTenant($tenantId)->find($allocatableId);
-                    if ($due) {
-                        $due->amount_paid = (float) $due->amount_paid + $amount;
-                        $due->status = $due->amount_paid >= (float) $due->amount_due ? 'paid' : 'partially_paid';
-                        $due->updated_by = $userId;
-                        $due->save();
-                    }
-                }
-
-                if ($allocatableType === 'project_installment') {
-                    $installment = ProjectInstallmentDue::forTenant($tenantId)->find($allocatableId);
-                    if ($installment) {
-                        $this->projectInstallmentService->applyPayment($tenantId, $userId, $installment, $amount);
-                    }
-                }
-
-                if ($allocatableType === 'project') {
-                    $project = DonationProject::forTenant($tenantId)->find($allocatableId);
-                    if ($project) {
-                        $familyId = $payload['family_id'] ?? null;
-                        if ($familyId) {
-                            $this->projectService->recordCollection($tenantId, $project, $familyId, $amount);
-                        } else {
-                            $project->raised_amount = round((float) $project->raised_amount + $amount, 2);
-                            $project->save();
-                            $this->projectService->maybeMarkCompleted($project->fresh());
-                        }
-                    }
-                }
-
-                if ($allocatableType === 'donation') {
-                    $donation = Donation::forTenant($tenantId)->find($allocatableId);
-                    if ($donation) {
-                        $this->donationBalanceService->applyPayment($userId, $donation, $amount);
-                    }
-                }
+                $applied = $this->persistAllocation(
+                    $tenantId,
+                    $userId,
+                    $payment,
+                    (string) $allocation['allocatable_type'],
+                    (string) ($allocation['allocatable_id'] ?? $payment->id),
+                    $requested,
+                    $allocation['notes'] ?? null
+                );
+                $allocatedTotal = MoneyMath::add($allocatedTotal, $applied);
             }
 
-            $paymentAmount = round((float) $payload['amount'], 2);
-            $allocatedTotal = round($allocatedTotal, 2);
-
-            if (!empty($payload['allocations']) && $allocatedTotal > $paymentAmount) {
+            if (MoneyMath::compare($allocatedTotal, $amount) > 0) {
                 throw new \RuntimeException('Allocated amount cannot exceed payment amount.');
             }
 
-            // Automatically store any unallocated balance as an advance credit.
-            if ($paymentAmount > $allocatedTotal) {
-                PaymentAllocation::create([
-                    'tenant_id' => $tenantId,
-                    'payment_id' => $payment->id,
-                    'allocatable_type' => 'advance',
-                    'allocatable_id' => $payment->id,
-                    'amount' => $paymentAmount - $allocatedTotal,
-                    'notes' => 'Auto-created advance balance',
-                    'created_by' => $userId,
-                    'updated_by' => $userId,
-                ]);
+            if (MoneyMath::compare($amount, $allocatedTotal) > 0) {
+                $remainder = MoneyMath::subtract($amount, $allocatedTotal);
+                $this->persistAllocation(
+                    $tenantId,
+                    $userId,
+                    $payment,
+                    'advance',
+                    $payment->id,
+                    $remainder,
+                    'Auto-created advance balance'
+                );
             }
 
             $receipt = $this->receiptService->createReceipt($tenantId, $userId, $payment);
@@ -153,29 +126,31 @@ class DonationLedgerService
                 'payment',
                 $payment->id,
                 null,
-                $payment->toArray(),
+                $payment->fresh()->toArray(),
                 ['receipt_id' => $receipt->id]
             );
 
-            if (!empty($payment->payer_email)) {
+            if (! empty($payment->payer_email)) {
                 SendPaymentReceiptJob::dispatch($tenantId, $payment->id);
             }
 
-            return $payment->load(['allocations', 'receipt']);
+            return $payment->load(['allocations', 'receipt', 'receipts']);
         });
     }
 
     public function requestRefund(int $tenantId, int $userId, string $paymentId, array $payload): DonationRefund
     {
         return DB::transaction(function () use ($tenantId, $userId, $paymentId, $payload): DonationRefund {
-            $payment = DonationPayment::forTenant($tenantId)->findOrFail($paymentId);
+            $payment = $this->lockPayment($tenantId, $paymentId);
 
             if (in_array($payment->status, ['reversed', 'refunded'], true)) {
                 throw new \RuntimeException('Refund is not allowed for reversed/refunded payments.');
             }
 
-            if ((float) $payload['amount'] > (float) $payment->amount) {
-                throw new \RuntimeException('Refund amount cannot exceed payment amount.');
+            $requested = MoneyMath::normalize($payload['amount'] ?? 0);
+            $remaining = $this->refundableRemaining($payment);
+            if (MoneyMath::compare($requested, $remaining) > 0) {
+                throw new \RuntimeException('Refund amount cannot exceed the remaining refundable amount.');
             }
 
             $approval = DonationApproval::create([
@@ -194,7 +169,7 @@ class DonationLedgerService
                 'tenant_id' => $tenantId,
                 'payment_id' => $payment->id,
                 'approval_id' => $approval->id,
-                'amount' => $payload['amount'],
+                'amount' => $requested,
                 'refund_date' => $payload['refund_date'],
                 'status' => 'pending',
                 'reason' => $payload['reason'] ?? null,
@@ -216,66 +191,72 @@ class DonationLedgerService
         });
     }
 
+    public function completeApprovedRefund(int $tenantId, int $userId, DonationRefund $refund): DonationRefund
+    {
+        return DB::transaction(function () use ($tenantId, $userId, $refund): DonationRefund {
+            $payment = $this->lockPayment($tenantId, $refund->payment_id);
+            if (in_array($payment->status, ['reversed', 'refunded'], true)) {
+                throw new \RuntimeException('Refund is not allowed for reversed/refunded payments.');
+            }
+
+            $amount = MoneyMath::normalize($refund->amount);
+            $remaining = $this->refundableRemaining($payment);
+            if (MoneyMath::compare($amount, $remaining) > 0) {
+                throw new \RuntimeException('Refund amount cannot exceed the remaining refundable amount.');
+            }
+
+            $this->unwindAmount($tenantId, $userId, $payment, $amount);
+
+            $payment->refunded_amount = MoneyMath::add($payment->refunded_amount ?? 0, $amount);
+            if (! MoneyMath::isPositive($this->refundableRemaining($payment))) {
+                $payment->status = 'refunded';
+                $currentReceipt = $this->receiptService->currentReceipt($payment);
+                if ($currentReceipt) {
+                    $this->receiptService->voidReceipt($tenantId, $userId, $currentReceipt, 'Payment fully refunded.');
+                }
+            }
+            $payment->updated_by = $userId;
+            $payment->save();
+
+            $refund->status = 'completed';
+            $refund->updated_by = $userId;
+            $refund->save();
+
+            $this->auditService->log(
+                $tenantId,
+                'refund.completed',
+                'refund',
+                $refund->id,
+                null,
+                $refund->toArray(),
+                ['payment_id' => $payment->id]
+            );
+
+            return $refund->fresh(['approval', 'payment']);
+        });
+    }
+
     public function reversePayment(int $tenantId, int $userId, string $paymentId, string $reason): DonationPayment
     {
         return DB::transaction(function () use ($tenantId, $userId, $paymentId, $reason): DonationPayment {
-            $payment = DonationPayment::forTenant($tenantId)->with('allocations')->findOrFail($paymentId);
+            $payment = $this->lockPayment($tenantId, $paymentId);
             $oldValues = $payment->toArray();
 
             if (in_array($payment->status, ['reversed', 'refunded'], true)) {
                 throw new \RuntimeException('Payment is already reversed or refunded.');
             }
 
-            foreach ($payment->allocations as $allocation) {
-                $amount = (float) $allocation->amount;
-
-                if ($allocation->allocatable_type === 'due') {
-                    $due = ContributionDue::forTenant($tenantId)->find($allocation->allocatable_id);
-                    if (!$due) {
-                        continue;
-                    }
-
-                    $due->amount_paid = max(0, (float) $due->amount_paid - $amount);
-                    $due->status = (float) $due->amount_paid <= 0 ? 'pending' : 'partially_paid';
-                    $due->updated_by = $userId;
-                    $due->save();
-                    continue;
-                }
-
-                if ($allocation->allocatable_type === 'project_installment') {
-                    $installment = ProjectInstallmentDue::forTenant($tenantId)->find($allocation->allocatable_id);
-                    if ($installment) {
-                        $this->projectInstallmentService->reversePayment($tenantId, $userId, $installment, $amount);
-                    }
-                    continue;
-                }
-
-                if ($allocation->allocatable_type === 'project') {
-                    $project = DonationProject::forTenant($tenantId)->find($allocation->allocatable_id);
-                    if ($project) {
-                        $familyId = $payment->family_id;
-                        if ($familyId) {
-                            $this->projectService->reverseCollection($tenantId, $project, $familyId, $amount);
-                        } else {
-                            $project->raised_amount = max(0, round((float) $project->raised_amount - $amount, 2));
-                            $project->save();
-                        }
-                    }
-                    continue;
-                }
-
-                if ($allocation->allocatable_type === 'donation') {
-                    $donation = Donation::forTenant($tenantId)->find($allocation->allocatable_id);
-                    if ($donation) {
-                        $this->donationBalanceService->reversePayment($userId, $donation, $amount);
-                    }
-                }
-            }
+            $this->unwindAmount($tenantId, $userId, $payment, MoneyMath::subtract($payment->amount, $payment->refunded_amount ?? 0));
 
             $payment->status = 'reversed';
             $payment->notes = trim(($payment->notes ?? '').' Reversal reason: '.$reason);
             $payment->updated_by = $userId;
             $payment->save();
+
+            $currentReceipt = $this->receiptService->currentReceipt($payment);
+            if ($currentReceipt) {
+                $this->receiptService->voidReceipt($tenantId, $userId, $currentReceipt, $reason);
+            }
 
             PaymentReversal::create([
                 'tenant_id' => $tenantId,
@@ -293,19 +274,209 @@ class DonationLedgerService
                 'payment',
                 $payment->id,
                 $oldValues,
-                $payment->toArray(),
+                $payment->fresh()->toArray(),
                 ['reason' => $reason]
             );
 
-            return $payment;
+            return $payment->fresh(['allocations', 'receipts']);
         });
     }
 
-    private function buildPaymentNumber(int $tenantId): string
+    public function refundableRemaining(DonationPayment $payment): string
     {
-        $datePart = now()->format('Ymd');
-        $count = DonationPayment::forTenant($tenantId)->whereDate('created_at', now()->toDateString())->count() + 1;
-        return sprintf('PAY-%d-%s-%04d', $tenantId, $datePart, $count);
+        return MoneyMath::floorAtZero(MoneyMath::subtract($payment->amount, $payment->refunded_amount ?? 0));
+    }
+
+    private function lockPayment(int $tenantId, string $paymentId): DonationPayment
+    {
+        $payment = DonationPayment::forTenant($tenantId)->where('id', $paymentId)->lockForUpdate()->first();
+        if ($payment) {
+            return $payment->load('allocations');
+        }
+
+        $foreign = DonationPayment::query()->where('id', $paymentId)->first();
+        if ($foreign) {
+            $this->securityEvents->record('idor_denied', $tenantId, 'payment', $paymentId, 404, [
+                'foreign_tenant_id' => $foreign->tenant_id,
+            ]);
+        }
+
+        throw new ModelNotFoundException;
+    }
+
+    private function persistAllocation(
+        int $tenantId,
+        int $userId,
+        DonationPayment $payment,
+        string $type,
+        string $allocatableId,
+        string $amount,
+        ?string $notes
+    ): string {
+        if ($type !== 'advance' && ! $this->isValidAllocatable($tenantId, $type, $allocatableId)) {
+            $this->securityEvents->record('cross_tenant_allocation', $tenantId, $type, $allocatableId, 422);
+            throw new \RuntimeException("Invalid {$type} allocation target for tenant.");
+        }
+
+        $applied = $amount;
+        $advanceRemainder = '0.00';
+
+        if ($type === 'due') {
+            $due = ContributionDue::forTenant($tenantId)->find($allocatableId);
+            if (! $due) {
+                throw new \RuntimeException('Invalid due allocation target for tenant.');
+            }
+            if (in_array($due->status, ['waived', 'cancelled'], true)) {
+                throw new \RuntimeException('Cannot allocate a payment to a waived or cancelled contribution.');
+            }
+            $outstanding = ContributionBalance::outstandingString($due);
+            $applied = MoneyMath::min($amount, $outstanding);
+            $advanceRemainder = MoneyMath::subtract($amount, $applied);
+            if (MoneyMath::isPositive($applied)) {
+                ContributionBalance::applyPaid($due, $applied);
+                $due->status = ContributionBalance::statusFromPaid($due);
+                $due->updated_by = $userId;
+                $due->save();
+            }
+        } elseif ($type === 'project_installment') {
+            $installment = ProjectInstallmentDue::forTenant($tenantId)->find($allocatableId);
+            if (! $installment) {
+                throw new \RuntimeException('Invalid project installment allocation target for tenant.');
+            }
+            $outstanding = ContributionBalance::outstandingString($installment);
+            $applied = MoneyMath::min($amount, $outstanding);
+            $advanceRemainder = MoneyMath::subtract($amount, $applied);
+            if (MoneyMath::isPositive($applied)) {
+                $this->projectInstallmentService->applyPayment($tenantId, $userId, $installment, $applied);
+            }
+        } elseif ($type === 'donation') {
+            $donation = Donation::forTenant($tenantId)->find($allocatableId);
+            if (! $donation) {
+                throw new \RuntimeException('Invalid donation allocation target for tenant.');
+            }
+            $pledged = MoneyMath::normalize($donation->pledged_amount ?? 0);
+            if (MoneyMath::isPositive($pledged)) {
+                $outstanding = MoneyMath::outstanding($pledged, $donation->collected_amount ?? 0);
+                $applied = MoneyMath::min($amount, $outstanding);
+                $advanceRemainder = MoneyMath::subtract($amount, $applied);
+            }
+            if (MoneyMath::isPositive($applied)) {
+                $this->donationBalanceService->applyPayment($userId, $donation, $applied);
+            }
+        } elseif ($type === 'project') {
+            $project = DonationProject::forTenant($tenantId)->find($allocatableId);
+            if ($project) {
+                $familyId = $payment->family_id;
+                if ($familyId) {
+                    $this->projectService->recordCollection($tenantId, $project, $familyId, $applied);
+                } else {
+                    $project->raised_amount = MoneyMath::add($project->raised_amount ?? 0, $applied);
+                    $project->save();
+                    $this->projectService->maybeMarkCompleted($project->fresh());
+                }
+            }
+        }
+
+        if (MoneyMath::isPositive($applied)) {
+            PaymentAllocation::create([
+                'tenant_id' => $tenantId,
+                'payment_id' => $payment->id,
+                'allocatable_type' => $type,
+                'allocatable_id' => $type === 'advance' ? $payment->id : $allocatableId,
+                'amount' => $applied,
+                'notes' => $notes,
+                'created_by' => $userId,
+                'updated_by' => $userId,
+            ]);
+        }
+
+        if (MoneyMath::isPositive($advanceRemainder)) {
+            PaymentAllocation::create([
+                'tenant_id' => $tenantId,
+                'payment_id' => $payment->id,
+                'allocatable_type' => 'advance',
+                'allocatable_id' => $payment->id,
+                'amount' => $advanceRemainder,
+                'notes' => 'Surplus over target recorded as unallocated family credit',
+                'created_by' => $userId,
+                'updated_by' => $userId,
+            ]);
+
+            return MoneyMath::add($applied, $advanceRemainder);
+        }
+
+        return $applied;
+    }
+
+    private function unwindAmount(int $tenantId, int $userId, DonationPayment $payment, string $amount): void
+    {
+        $remaining = $amount;
+        $allocations = $payment->allocations->sortBy(function (PaymentAllocation $allocation) {
+            $index = array_search($allocation->allocatable_type, self::UNWIND_ORDER, true);
+
+            return $index === false ? 99 : $index;
+        });
+
+        foreach ($allocations as $allocation) {
+            if (! MoneyMath::isPositive($remaining)) {
+                break;
+            }
+
+            $take = MoneyMath::min($remaining, $allocation->amount);
+            $this->unwindAllocation($tenantId, $userId, $payment, $allocation, $take);
+            $remaining = MoneyMath::subtract($remaining, $take);
+        }
+    }
+
+    private function unwindAllocation(
+        int $tenantId,
+        int $userId,
+        DonationPayment $payment,
+        PaymentAllocation $allocation,
+        string $amount
+    ): void {
+        if ($allocation->allocatable_type === 'due') {
+            $due = ContributionDue::forTenant($tenantId)->find($allocation->allocatable_id);
+            if ($due) {
+                ContributionBalance::unwindPaid($due, $amount);
+                $due->status = ContributionBalance::statusFromPaid($due);
+                $due->updated_by = $userId;
+                $due->save();
+            }
+
+            return;
+        }
+
+        if ($allocation->allocatable_type === 'project_installment') {
+            $installment = ProjectInstallmentDue::forTenant($tenantId)->find($allocation->allocatable_id);
+            if ($installment) {
+                $this->projectInstallmentService->reversePayment($tenantId, $userId, $installment, $amount);
+            }
+
+            return;
+        }
+
+        if ($allocation->allocatable_type === 'project') {
+            $project = DonationProject::forTenant($tenantId)->find($allocation->allocatable_id);
+            if ($project) {
+                $familyId = $payment->family_id;
+                if ($familyId) {
+                    $this->projectService->reverseCollection($tenantId, $project, $familyId, $amount);
+                } else {
+                    $project->raised_amount = MoneyMath::floorAtZero(MoneyMath::subtract($project->raised_amount ?? 0, $amount));
+                    $project->save();
+                }
+            }
+
+            return;
+        }
+
+        if ($allocation->allocatable_type === 'donation') {
+            $donation = Donation::forTenant($tenantId)->find($allocation->allocatable_id);
+            if ($donation) {
+                $this->donationBalanceService->reversePayment($userId, $donation, $amount);
+            }
+        }
     }
 
     private function isValidAllocatable(int $tenantId, string $type, string $id): bool
@@ -319,5 +490,69 @@ class DonationLedgerService
             'fund' => Fund::forTenant($tenantId)->where('id', $id)->exists(),
             default => false,
         };
+    }
+
+    private function assertFamilyInTenant(int $tenantId, ?string $familyId): void
+    {
+        if (! $familyId) {
+            return;
+        }
+
+        $exists = Family::query()->where('id', $familyId)->where('tenant_id', $tenantId)->exists();
+        if ($exists) {
+            return;
+        }
+
+        $foreign = Family::query()->where('id', $familyId)->exists();
+        if ($foreign) {
+            $this->securityEvents->record('idor_denied', $tenantId, 'family', $familyId, 422);
+        }
+
+        throw new \RuntimeException('Family does not belong to the tenant.');
+    }
+
+    private function assertDonorInTenant(int $tenantId, ?string $donorId): void
+    {
+        if (! $donorId) {
+            return;
+        }
+
+        $exists = Donor::forTenant($tenantId)->where('id', $donorId)->exists();
+        if ($exists) {
+            return;
+        }
+
+        $foreign = Donor::query()->where('id', $donorId)->exists();
+        if ($foreign) {
+            $this->securityEvents->record('idor_denied', $tenantId, 'donor', $donorId, 422);
+        }
+
+        throw new \RuntimeException('Donor does not belong to the tenant.');
+    }
+
+    private function normalizeReference(mixed $reference): ?string
+    {
+        if ($reference === null) {
+            return null;
+        }
+
+        $value = trim((string) $reference);
+
+        return $value === '' ? null : $value;
+    }
+
+    private function assertUniqueReference(int $tenantId, ?string $reference): void
+    {
+        if ($reference === null) {
+            return;
+        }
+
+        $exists = DonationPayment::forTenant($tenantId)
+            ->where('gateway_reference', $reference)
+            ->exists();
+
+        if ($exists) {
+            throw new \RuntimeException('This payment reference is already recorded for this church.');
+        }
     }
 }

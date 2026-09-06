@@ -483,6 +483,19 @@ class BccDashboardService
             ->get(['family_id', 'joined_date', 'exit_date', 'is_current', 'status']);
 
         $useMemberships = $memberships->isNotEmpty();
+        $memberCountsByFamily = [];
+        if ($useMemberships) {
+            $familyIds = $memberships->pluck('family_id')->unique()->filter()->values();
+            if ($familyIds->isNotEmpty()) {
+                $memberCountsByFamily = FamilyMember::query()
+                    ->whereIn('family_id', $familyIds)
+                    ->whereNull('deleted_at')
+                    ->selectRaw('family_id, COUNT(*) as member_count')
+                    ->groupBy('family_id')
+                    ->pluck('member_count', 'family_id')
+                    ->all();
+            }
+        }
 
         $familiesSeries = [];
         $peopleSeries = [];
@@ -511,10 +524,7 @@ class BccDashboardService
                     ->unique()
                     ->values();
                 $familyCount = $familyIds->count();
-                $peopleCount = $familyCount === 0 ? 0 : FamilyMember::query()
-                    ->whereIn('family_id', $familyIds)
-                    ->whereNull('deleted_at')
-                    ->count();
+                $peopleCount = $familyIds->sum(fn ($familyId) => (int) ($memberCountsByFamily[$familyId] ?? 0));
             } else {
                 $familyCount = Family::query()
                     ->where('tenant_id', $tenantId)
@@ -607,10 +617,13 @@ class BccDashboardService
             ->withCount('families')
             ->get(['id', 'name', 'bcc_code', 'status']);
 
+        $asOf = $periodStart->copy()->subDay();
+        $familiesAsOfByBcc = $this->familiesAsOfByBcc($tenantId, $bccs->pluck('id'), $asOf);
+
         $deltas = [];
         foreach ($bccs as $bcc) {
             $to = (int) $bcc->families_count;
-            $from = $this->familiesAsOf($tenantId, $bcc->id, $periodStart->copy()->subDay());
+            $from = (int) ($familiesAsOfByBcc[$bcc->id] ?? 0);
             $delta = $to - $from;
             $deltaPct = $from > 0 ? round(($delta / $from) * 100, 1) : ($to > 0 && $from === 0 ? 100.0 : null);
             $deltas[$bcc->id] = [
@@ -644,33 +657,6 @@ class BccDashboardService
             'declining' => $declining,
             'deltas' => $deltas,
         ];
-    }
-
-    private function familiesAsOf(int $tenantId, string $bccId, Carbon $asOf): int
-    {
-        $count = BccFamilyMembership::query()
-            ->where('tenant_id', $tenantId)
-            ->where('bcc_id', $bccId)
-            ->whereNull('deleted_at')
-            ->where(function ($q) use ($asOf) {
-                $q->whereNotNull('joined_date')->where('joined_date', '<=', $asOf->toDateString());
-            })
-            ->where(function ($q) use ($asOf) {
-                $q->whereNull('exit_date')->orWhere('exit_date', '>', $asOf->toDateString());
-            })
-            ->distinct('family_id')
-            ->count('family_id');
-
-        if ($count > 0) {
-            return $count;
-        }
-
-        // Fallback when membership history is thin: treat current assignment as unchanged.
-        return Family::query()
-            ->where('tenant_id', $tenantId)
-            ->where('bcc_id', $bccId)
-            ->where('created_at', '<=', $asOf)
-            ->count();
     }
 
     /**
@@ -714,15 +700,32 @@ class BccDashboardService
             $query->whereDoesntHave('families');
         }
 
-        $all = $query->orderByDesc('families_count')->orderBy('name')->get();
-
         if ($trend === 'growing') {
             $growingIds = collect($communityChanges['growing'])->pluck('id')->all();
-            $all = $all->filter(fn (BCC $b) => in_array($b->id, $growingIds, true))->values();
+            if ($growingIds === []) {
+                return [
+                    'rows' => [],
+                    'limit' => $limit,
+                    'total_matching' => 0,
+                    'label' => 'Top '.$limit.' by families',
+                ];
+            }
+            $query->whereIn('id', $growingIds);
         } elseif ($trend === 'declining') {
             $decliningIds = collect($communityChanges['declining'])->pluck('id')->all();
-            $all = $all->filter(fn (BCC $b) => in_array($b->id, $decliningIds, true))->values();
+            if ($decliningIds === []) {
+                return [
+                    'rows' => [],
+                    'limit' => $limit,
+                    'total_matching' => 0,
+                    'label' => 'Top '.$limit.' by families',
+                ];
+            }
+            $query->whereIn('id', $decliningIds);
         }
+
+        $totalMatching = (clone $query)->count();
+        $all = $query->orderByDesc('families_count')->orderBy('name')->limit($limit)->get();
 
         $peopleByBcc = FamilyMember::query()
             ->join('families', 'families.id', '=', 'family_members.family_id')
@@ -734,7 +737,7 @@ class BccDashboardService
             ->groupBy('families.bcc_id')
             ->pluck('people_count', 'bcc_id');
 
-        $rows = $all->take($limit)->map(function (BCC $bcc) use ($communityChanges, $peopleByBcc) {
+        $rows = $all->map(function (BCC $bcc) use ($communityChanges, $peopleByBcc) {
             $delta = $communityChanges['deltas'][$bcc->id] ?? null;
             $flags = [];
             if ($bcc->status === 'active' && ! $bcc->primaryLeader) {
@@ -761,9 +764,54 @@ class BccDashboardService
         return [
             'rows' => $rows,
             'limit' => $limit,
-            'total_matching' => $all->count(),
+            'total_matching' => $totalMatching,
             'label' => 'Top '.$limit.' by families',
         ];
+    }
+
+    /**
+     * @param  Collection<int, string>  $bccIds
+     * @return array<string, int>
+     */
+    private function familiesAsOfByBcc(int $tenantId, Collection $bccIds, Carbon $asOf): array
+    {
+        $bccIdList = $bccIds->filter()->values()->all();
+        if ($bccIdList === []) {
+            return [];
+        }
+
+        $membershipCounts = BccFamilyMembership::query()
+            ->where('tenant_id', $tenantId)
+            ->whereIn('bcc_id', $bccIdList)
+            ->whereNull('deleted_at')
+            ->whereNotNull('joined_date')
+            ->where('joined_date', '<=', $asOf->toDateString())
+            ->where(function ($q) use ($asOf) {
+                $q->whereNull('exit_date')->orWhere('exit_date', '>', $asOf->toDateString());
+            })
+            ->selectRaw('bcc_id, COUNT(DISTINCT family_id) as family_count')
+            ->groupBy('bcc_id')
+            ->pluck('family_count', 'bcc_id')
+            ->all();
+
+        $fallbackCounts = Family::query()
+            ->where('tenant_id', $tenantId)
+            ->whereIn('bcc_id', $bccIdList)
+            ->where('created_at', '<=', $asOf)
+            ->selectRaw('bcc_id, COUNT(*) as family_count')
+            ->groupBy('bcc_id')
+            ->pluck('family_count', 'bcc_id')
+            ->all();
+
+        $result = [];
+        foreach ($bccIdList as $bccId) {
+            $fromMembership = (int) ($membershipCounts[$bccId] ?? 0);
+            $result[$bccId] = $fromMembership > 0
+                ? $fromMembership
+                : (int) ($fallbackCounts[$bccId] ?? 0);
+        }
+
+        return $result;
     }
 
     /**

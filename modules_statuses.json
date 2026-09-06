@@ -8,5 +8,6 @@
     "BCC": true,
     "Donations": true,
     "MinistriesAssociations": true,
-    "SupportAccess": true
+    "SupportAccess": true,
+    "PastoralCare": true
 }

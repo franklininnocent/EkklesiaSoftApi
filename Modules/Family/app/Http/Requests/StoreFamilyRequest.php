@@ -2,9 +2,9 @@
 
 namespace Modules\Family\app\Http\Requests;
 
+use App\Rules\PhoneNumberForTenant;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
-use App\Rules\PhoneNumberForTenant;
 use Modules\Tenants\Support\TenantContext;
 
 class StoreFamilyRequest extends FormRequest
@@ -33,15 +33,15 @@ class StoreFamilyRequest extends FormRequest
             ],
             'status' => ['nullable', 'in:active,inactive,migrated'],
             'notes' => ['nullable', 'string'],
+            'allow_duplicate' => ['nullable', 'boolean'],
 
             // members (optional)
             'members' => ['nullable', 'array'],
             'members.*.first_name' => ['required_with:members', 'string', 'max:120'],
             'members.*.last_name' => ['required_with:members', 'string', 'max:120'],
-            'members.*.phone' => ['nullable', new PhoneNumberForTenant()],
+            'members.*.date_of_birth' => ['required_with:members', 'date', 'before:today'],
+            'members.*.phone' => ['nullable', new PhoneNumberForTenant],
             'members.*.email' => ['nullable', 'email', 'max:255'],
         ];
     }
 }
-
-

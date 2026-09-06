@@ -6,14 +6,14 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Modules\Donations\Models\DonationProject;
 use Modules\Donations\Models\ProjectInstallmentDue;
+use Modules\Donations\Support\ContributionBalance;
 
 class ProjectInstallmentDueService
 {
     public function __construct(
         private readonly DonationAuditService $auditService,
         private readonly DonationProjectService $projectService
-    ) {
-    }
+    ) {}
 
     /**
      * @return array<int, ProjectInstallmentDue>
@@ -77,7 +77,7 @@ class ProjectInstallmentDueService
     {
         $oldStatus = $due->status;
         $due->status = 'waived';
-        $due->notes = trim(($due->notes ? $due->notes . ' ' : '') . ($reason ?? 'Waived'));
+        $due->notes = trim(($due->notes ? $due->notes.' ' : '').($reason ?? 'Waived'));
         $due->updated_by = $userId;
         $due->save();
 
@@ -97,7 +97,7 @@ class ProjectInstallmentDueService
     {
         $oldStatus = $due->status;
         $due->status = 'cancelled';
-        $due->notes = trim(($due->notes ? $due->notes . ' ' : '') . ($reason ?? 'Cancelled'));
+        $due->notes = trim(($due->notes ? $due->notes.' ' : '').($reason ?? 'Cancelled'));
         $due->updated_by = $userId;
         $due->save();
 
@@ -113,10 +113,10 @@ class ProjectInstallmentDueService
         return $due->fresh(['family', 'project']);
     }
 
-    public function applyPayment(int $tenantId, int $userId, ProjectInstallmentDue $due, float $amount): void
+    public function applyPayment(int $tenantId, int $userId, ProjectInstallmentDue $due, string|float|int $amount): void
     {
-        $due->amount_paid = round((float) $due->amount_paid + $amount, 2);
-        $due->status = (float) $due->amount_paid >= (float) $due->amount_due ? 'paid' : 'partially_paid';
+        ContributionBalance::applyPaid($due, $amount);
+        $due->status = ContributionBalance::statusFromPaid($due);
         $due->updated_by = $userId;
         $due->save();
 
@@ -126,10 +126,10 @@ class ProjectInstallmentDueService
         }
     }
 
-    public function reversePayment(int $tenantId, int $userId, ProjectInstallmentDue $due, float $amount): void
+    public function reversePayment(int $tenantId, int $userId, ProjectInstallmentDue $due, string|float|int $amount): void
     {
-        $due->amount_paid = max(0, round((float) $due->amount_paid - $amount, 2));
-        $due->status = (float) $due->amount_paid <= 0 ? 'pending' : 'partially_paid';
+        ContributionBalance::unwindPaid($due, $amount);
+        $due->status = ContributionBalance::statusFromPaid($due);
         $due->updated_by = $userId;
         $due->save();
 
@@ -188,7 +188,7 @@ class ProjectInstallmentDueService
     {
         $start = Carbon::parse($project->start_date ?? now());
 
-        if (!$project->installment_frequency || $installmentNumber <= 1) {
+        if (! $project->installment_frequency || $installmentNumber <= 1) {
             return $start->toDateString();
         }
 

@@ -31,17 +31,21 @@ class SacramentCertificate extends Model
         'issued_at',
         'issued_by',
         'storage_key',
+        'html_storage_key',
         'checksum',
         'mime_type',
         'size_bytes',
         'projection_json',
         'supersedes_certificate_id',
+        'verification_token',
+        'verification_revoked_at',
     ];
 
     protected $casts = [
         'version' => 'integer',
         'size_bytes' => 'integer',
         'issued_at' => 'datetime',
+        'verification_revoked_at' => 'datetime',
         'projection_json' => 'array',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',

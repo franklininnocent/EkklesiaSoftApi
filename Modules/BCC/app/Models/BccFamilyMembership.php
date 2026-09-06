@@ -33,6 +33,10 @@ class BccFamilyMembership extends Model
         'is_current',
         'created_by',
         'updated_by',
+        'historical_note',
+        'transferred_by_user_id',
+        'transition_id',
+        'transfer_reason',
     ];
 
     protected $casts = [

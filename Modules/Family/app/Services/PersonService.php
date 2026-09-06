@@ -2,6 +2,7 @@
 
 namespace Modules\Family\app\Services;
 
+use App\Support\CaseInsensitiveSearch;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Validation\ValidationException;
 use Modules\Family\Models\FamilyMember;
@@ -115,11 +116,11 @@ class PersonService
 
         $search = trim((string) ($filters['search'] ?? ''));
         if ($search !== '') {
-            $like = '%'.mb_strtolower($search).'%';
-            $query->where(function ($q) use ($like) {
-                $q->whereRaw('LOWER(first_name) LIKE ?', [$like])
-                    ->orWhereRaw('LOWER(last_name) LIKE ?', [$like])
-                    ->orWhereRaw('LOWER(CONCAT(first_name, \' \', COALESCE(middle_name, \'\'), \' \', last_name)) LIKE ?', [$like]);
+            $pattern = '%'.$search.'%';
+            $query->where(function ($q) use ($pattern) {
+                CaseInsensitiveSearch::applyColumnLike($q, 'first_name', $pattern);
+                CaseInsensitiveSearch::applyColumnLike($q, 'last_name', $pattern, 'or');
+                CaseInsensitiveSearch::applyMemberFullNameLike($q, $pattern, 'or');
             });
         }
 
@@ -130,11 +131,16 @@ class PersonService
         return $query->orderBy('last_name')->orderBy('first_name')->paginate($perPage);
     }
 
-    public function hasActiveFamilyMembership(string $personId): bool
+    public function hasActiveFamilyMembership(string $personId, ?string $excludeMemberId = null): bool
     {
-        return FamilyMember::query()
+        $query = FamilyMember::query()
             ->where('person_id', $personId)
-            ->whereNull('deleted_at')
-            ->exists();
+            ->whereNull('deleted_at');
+
+        if ($excludeMemberId) {
+            $query->where('id', '!=', $excludeMemberId);
+        }
+
+        return $query->exists();
     }
 }

@@ -2,62 +2,93 @@
 
 namespace Modules\Sacraments\Tests\Feature;
 
-use Tests\TestCase;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\WithFaker;
+use Laravel\Passport\Passport;
+use Modules\Authentication\Models\Role;
+use Modules\Authentication\Models\User;
+use Modules\BCC\Models\BCC;
+use Modules\Family\Models\Family;
+use Modules\Family\Models\FamilyMember;
+use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Sacraments\Models\Sacrament;
 use Modules\Sacraments\Models\SacramentType;
 use Modules\Tenants\Models\Tenant;
-use Modules\Authentication\Models\User;
-use Modules\Family\Models\Family;
-use Modules\BCC\Models\BCC;
-use Modules\Family\Models\FamilyMember;
-use Laravel\Passport\Passport;
-use Illuminate\Support\Facades\Log;
+use PHPUnit\Framework\Attributes\Test;
+use Tests\TestCase;
 
 class SacramentApiTest extends TestCase
 {
     use RefreshDatabase, WithFaker;
 
     protected User $user;
+
+    protected User $otherUser;
+
     protected Tenant $tenant;
+
+    protected Tenant $otherTenant;
+
     protected SacramentType $sacramentType;
+
     protected SacramentType $marriageType;
+
     protected Family $family;
+
     protected BCC $bcc;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        // Create tenant
         $this->tenant = Tenant::factory()->create();
-
-        // Create user with tenant
+        $role = Role::create([
+            'name' => Role::TENANT_ADMINISTRATOR,
+            'description' => 'Tenant Administrator',
+            'level' => 1,
+            'active' => 1,
+            'tenant_id' => $this->tenant->id,
+            'is_custom' => false,
+            'role_type' => Role::ROLE_TYPE_TENANT,
+        ]);
         $this->user = User::factory()->create([
             'tenant_id' => $this->tenant->id,
+            'role_id' => $role->id,
         ]);
+        $this->user->syncRoles([$role->id]);
+        $this->grantPermissions($role);
 
-        // Create another tenant and user for isolation tests
         $this->otherTenant = Tenant::factory()->create();
+        $otherRole = Role::create([
+            'name' => Role::TENANT_ADMINISTRATOR,
+            'description' => 'Tenant Administrator',
+            'level' => 1,
+            'active' => 1,
+            'tenant_id' => $this->otherTenant->id,
+            'is_custom' => false,
+            'role_type' => Role::ROLE_TYPE_TENANT,
+        ]);
         $this->otherUser = User::factory()->create([
             'tenant_id' => $this->otherTenant->id,
+            'role_id' => $otherRole->id,
         ]);
+        $this->otherUser->syncRoles([$otherRole->id]);
+        $this->grantPermissions($otherRole);
 
-        // Create sacrament types
         $this->sacramentType = SacramentType::factory()->create([
             'name' => 'Baptism',
             'code' => 'BAPTISM',
             'active' => true,
+            'requires_minister' => false,
         ]);
 
         $this->marriageType = SacramentType::factory()->create([
             'name' => 'Marriage',
             'code' => 'MARRIAGE',
             'active' => true,
+            'requires_minister' => false,
         ]);
 
-        // Create family and BCC
         $this->family = Family::factory()->create([
             'tenant_id' => $this->tenant->id,
         ]);
@@ -66,13 +97,53 @@ class SacramentApiTest extends TestCase
             'tenant_id' => $this->tenant->id,
         ]);
 
-        // Authenticate user for API requests
         Passport::actingAs($this->user);
+    }
+
+    private function grantPermissions(Role $role): void
+    {
+        $names = [
+            'sacraments.view', 'sacraments.create', 'sacraments.edit',
+            'sacraments.correct', 'sacraments.void', 'sacraments.delete', 'sacraments.restore',
+        ];
+        $ids = [];
+        foreach ($names as $name) {
+            $permission = Permission::updateOrCreate(
+                ['name' => $name],
+                [
+                    'display_name' => $name,
+                    'description' => 'Test',
+                    'module' => 'Sacraments',
+                    'scope' => Permission::SCOPE_TENANT,
+                    'category' => 'sacraments',
+                    'tenant_id' => null,
+                    'is_custom' => false,
+                    'active' => 1,
+                ]
+            );
+            $ids[] = $permission->id;
+        }
+        $role->permissions()->syncWithoutDetaching($ids);
+    }
+
+    /** @return array<string, mixed> */
+    private function baptismIdentity(array $overrides = []): array
+    {
+        return array_merge([
+            'place_administered' => 'St. Mary Church',
+            'recipient_birth_date' => '2015-04-10',
+            'recipient_birth_place' => 'Parish City',
+            'recipient_gender' => 'male',
+            'father_name' => 'Joseph Father',
+            'mother_name' => 'Mary Mother',
+            'minister_name' => 'Fr. Joseph',
+        ], $overrides);
     }
 
     // ============ INDEX (List) Tests ============
 
     /** @test */
+    #[Test]
     public function it_can_get_paginated_list_of_sacraments()
     {
         // Arrange: Create multiple sacraments
@@ -99,27 +170,28 @@ class SacramentApiTest extends TestCase
                             'status',
                             'created_at',
                             'updated_at',
-                        ]
+                        ],
                     ],
                     'current_page',
                     'total',
                     'per_page',
                     'last_page',
                 ],
-                'message'
+                'message',
             ])
             ->assertJson([
                 'success' => true,
                 'data' => [
                     'per_page' => 10,
                     'current_page' => 1,
-                ]
+                ],
             ]);
 
         $this->assertEquals(10, count($response->json('data.data')));
     }
 
     /** @test */
+    #[Test]
     public function it_enforces_tenant_isolation_in_list()
     {
         // Arrange: Create sacraments for different tenants
@@ -127,7 +199,7 @@ class SacramentApiTest extends TestCase
             'tenant_id' => $this->tenant->id,
             'sacrament_type_id' => $this->sacramentType->id,
         ]);
-        
+
         Sacrament::factory()->count(3)->create([
             'tenant_id' => $this->otherTenant->id,
             'sacrament_type_id' => $this->sacramentType->id,
@@ -144,16 +216,17 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_filter_sacraments_by_type()
     {
         // Arrange
         $confirmationType = SacramentType::factory()->create(['code' => 'CONFIRMATION']);
-        
+
         Sacrament::factory()->count(3)->create([
             'tenant_id' => $this->tenant->id,
             'sacrament_type_id' => $this->sacramentType->id,
         ]);
-        
+
         Sacrament::factory()->count(2)->create([
             'tenant_id' => $this->tenant->id,
             'sacrament_type_id' => $confirmationType->id,
@@ -168,6 +241,7 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_filter_sacraments_by_status()
     {
         // Arrange
@@ -175,7 +249,7 @@ class SacramentApiTest extends TestCase
             'tenant_id' => $this->tenant->id,
             'sacrament_type_id' => $this->sacramentType->id,
         ]);
-        
+
         Sacrament::factory()->count(2)->cancelled()->create([
             'tenant_id' => $this->tenant->id,
             'sacrament_type_id' => $this->sacramentType->id,
@@ -190,6 +264,7 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_search_sacraments_by_recipient_name()
     {
         // Arrange
@@ -198,7 +273,7 @@ class SacramentApiTest extends TestCase
             'sacrament_type_id' => $this->sacramentType->id,
             'recipient_name' => 'John Doe',
         ]);
-        
+
         Sacrament::factory()->create([
             'tenant_id' => $this->tenant->id,
             'sacrament_type_id' => $this->sacramentType->id,
@@ -215,6 +290,7 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_sort_sacraments_by_date_administered()
     {
         // Arrange
@@ -223,7 +299,7 @@ class SacramentApiTest extends TestCase
             'sacrament_type_id' => $this->sacramentType->id,
             'date_administered' => '2025-01-01',
         ]);
-        
+
         Sacrament::factory()->create([
             'tenant_id' => $this->tenant->id,
             'sacrament_type_id' => $this->sacramentType->id,
@@ -244,6 +320,7 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_filter_by_date_range()
     {
         // Arrange
@@ -252,7 +329,7 @@ class SacramentApiTest extends TestCase
             'sacrament_type_id' => $this->sacramentType->id,
             'date_administered' => '2025-06-15',
         ]);
-        
+
         Sacrament::factory()->create([
             'tenant_id' => $this->tenant->id,
             'sacrament_type_id' => $this->sacramentType->id,
@@ -270,6 +347,7 @@ class SacramentApiTest extends TestCase
     // ============ SHOW (Get Single) Tests ============
 
     /** @test */
+    #[Test]
     public function it_can_get_single_sacrament_by_id()
     {
         // Arrange
@@ -289,11 +367,12 @@ class SacramentApiTest extends TestCase
                 'data' => [
                     'id' => $sacrament->id,
                     'recipient_name' => 'Test Recipient',
-                ]
+                ],
             ]);
     }
 
     /** @test */
+    #[Test]
     public function it_returns_404_for_non_existent_sacrament()
     {
         // Act
@@ -303,11 +382,12 @@ class SacramentApiTest extends TestCase
         $response->assertStatus(404)
             ->assertJson([
                 'success' => false,
-                'message' => 'Sacrament not found'
+                'message' => 'Sacrament not found',
             ]);
     }
 
     /** @test */
+    #[Test]
     public function it_enforces_tenant_isolation_when_getting_sacrament()
     {
         // Arrange: Create sacrament for different tenant
@@ -319,21 +399,22 @@ class SacramentApiTest extends TestCase
         // Act
         $response = $this->getJson("/api/sacraments/{$otherSacrament->id}");
 
-        // Assert: Should be forbidden
-        $response->assertStatus(403)
+        // Assert: Cross-tenant sacrament is not found
+        $response->assertStatus(404)
             ->assertJson([
                 'success' => false,
-                'message' => 'Unauthorized. You can only access sacraments from your own tenant.',
+                'message' => 'Sacrament not found',
             ]);
     }
 
     // ============ STORE (Create) Tests ============
 
     /** @test */
+    #[Test]
     public function it_can_create_sacrament_with_valid_data()
     {
         // Arrange
-        $data = [
+        $data = array_merge($this->baptismIdentity(), [
             'sacrament_type_id' => $this->sacramentType->id,
             'recipient_name' => 'John Paul Smith',
             'date_administered' => '2025-01-15',
@@ -341,7 +422,7 @@ class SacramentApiTest extends TestCase
             'minister_name' => 'Fr. Joseph',
             'minister_title' => 'Fr.',
             'status' => 'active',
-        ];
+        ]);
 
         // Act
         $response = $this->postJson('/api/sacraments', $data);
@@ -354,7 +435,7 @@ class SacramentApiTest extends TestCase
                 'data' => [
                     'recipient_name' => 'John Paul Smith',
                     'place_administered' => 'St. Mary Church',
-                ]
+                ],
             ]);
 
         $this->assertDatabaseHas('sacraments', [
@@ -365,14 +446,15 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_auto_sets_tenant_id_from_authenticated_user()
     {
         // Arrange
-        $data = [
+        $data = array_merge($this->baptismIdentity(), [
             'sacrament_type_id' => $this->sacramentType->id,
             'recipient_name' => 'John Doe',
             'date_administered' => '2025-01-15',
-        ];
+        ]);
 
         // Act
         $response = $this->postJson('/api/sacraments', $data);
@@ -380,13 +462,14 @@ class SacramentApiTest extends TestCase
         // Assert
         $response->assertStatus(201)
             ->assertJson(['success' => true]);
-        
+
         $sacrament = Sacrament::where('recipient_name', 'John Doe')->first();
         $this->assertEquals($this->tenant->id, $sacrament->tenant_id);
         $this->assertEquals($this->user->id, $sacrament->created_by);
     }
 
     /** @test */
+    #[Test]
     public function it_validates_required_fields_when_creating_sacrament()
     {
         // Arrange: Missing required fields
@@ -403,6 +486,7 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_validates_sacrament_type_exists_when_creating()
     {
         // Arrange
@@ -421,6 +505,7 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_validates_certificate_number_is_unique()
     {
         // Arrange: Create existing sacrament with certificate number
@@ -430,12 +515,12 @@ class SacramentApiTest extends TestCase
             'certificate_number' => 'CERT-1234',
         ]);
 
-        $data = [
+        $data = array_merge($this->baptismIdentity(), [
             'sacrament_type_id' => $this->sacramentType->id,
             'recipient_name' => 'John Doe',
             'date_administered' => '2025-01-15',
             'certificate_number' => 'CERT-1234', // Duplicate
-        ];
+        ]);
 
         // Act
         $response = $this->postJson('/api/sacraments', $data);
@@ -446,6 +531,7 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_validates_family_id_belongs_to_tenant()
     {
         // Arrange: Create family for different tenant
@@ -453,12 +539,12 @@ class SacramentApiTest extends TestCase
             'tenant_id' => $this->otherTenant->id,
         ]);
 
-        $data = [
+        $data = array_merge($this->baptismIdentity(), [
             'sacrament_type_id' => $this->sacramentType->id,
             'recipient_name' => 'John Doe',
             'date_administered' => '2025-01-15',
             'family_id' => $otherFamily->id,
-        ];
+        ]);
 
         // Act
         $response = $this->postJson('/api/sacraments', $data);
@@ -469,6 +555,7 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_validates_bcc_id_belongs_to_tenant()
     {
         // Arrange: Create BCC for different tenant
@@ -476,12 +563,12 @@ class SacramentApiTest extends TestCase
             'tenant_id' => $this->otherTenant->id,
         ]);
 
-        $data = [
+        $data = array_merge($this->baptismIdentity(), [
             'sacrament_type_id' => $this->sacramentType->id,
             'recipient_name' => 'John Doe',
             'date_administered' => '2025-01-15',
             'bcc_id' => $otherBcc->id,
-        ];
+        ]);
 
         // Act
         $response = $this->postJson('/api/sacraments', $data);
@@ -492,16 +579,17 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_create_sacrament_with_family_and_bcc()
     {
         // Arrange
-        $data = [
+        $data = array_merge($this->baptismIdentity(), [
             'sacrament_type_id' => $this->sacramentType->id,
             'recipient_name' => 'John Doe',
             'date_administered' => '2025-01-15',
             'family_id' => $this->family->id,
             'bcc_id' => $this->bcc->id,
-        ];
+        ]);
 
         // Act
         $response = $this->postJson('/api/sacraments', $data);
@@ -517,6 +605,7 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_create_marriage_sacrament_with_all_fields()
     {
         // Arrange
@@ -562,24 +651,25 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_converts_empty_strings_to_null_for_nullable_fields()
     {
         // Arrange
-        $data = [
+        $data = array_merge($this->baptismIdentity(), [
             'sacrament_type_id' => $this->sacramentType->id,
             'recipient_name' => 'John Doe',
             'date_administered' => '2025-01-15',
             'place_administered' => '',
             'minister_name' => '',
             'notes' => '',
-        ];
+        ]);
 
         // Act
         $response = $this->postJson('/api/sacraments', $data);
 
         // Assert
         $response->assertStatus(201);
-        
+
         $sacrament = Sacrament::where('recipient_name', 'John Doe')->first();
         $this->assertNull($sacrament->place_administered);
         $this->assertNull($sacrament->minister_name);
@@ -587,6 +677,7 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_validates_marriage_church_type_enum()
     {
         // Arrange
@@ -606,15 +697,16 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_validates_recipient_gender_enum()
     {
         // Arrange
-        $data = [
+        $data = array_merge($this->baptismIdentity(), [
             'sacrament_type_id' => $this->sacramentType->id,
             'recipient_name' => 'John Doe',
             'date_administered' => '2025-01-15',
             'recipient_gender' => 'invalid_gender',
-        ];
+        ]);
 
         // Act
         $response = $this->postJson('/api/sacraments', $data);
@@ -625,15 +717,16 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_validates_status_enum()
     {
         // Arrange
-        $data = [
+        $data = array_merge($this->baptismIdentity(), [
             'sacrament_type_id' => $this->sacramentType->id,
             'recipient_name' => 'John Doe',
             'date_administered' => '2025-01-15',
             'status' => 'invalid_status',
-        ];
+        ]);
 
         // Act
         $response = $this->postJson('/api/sacraments', $data);
@@ -644,15 +737,19 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
-    public function it_syncs_baptism_to_family_member()
+    #[Test]
+    public function it_does_not_silently_sync_baptism_to_family_member()
     {
-        // Arrange
+        // ADR-13: sacrament create must not mutate FamilyMember profile fields.
         $data = [
-            'sacrament_type_id' => $this->sacramentType->id, // Baptism
+            'sacrament_type_id' => $this->sacramentType->id,
             'recipient_name' => 'John Paul Smith',
             'date_administered' => '2025-01-15',
             'recipient_birth_date' => '2024-01-15',
+            'recipient_birth_place' => 'Parish City',
             'recipient_gender' => 'male',
+            'father_name' => 'Joseph Smith',
+            'mother_name' => 'Mary Smith',
             'family_id' => $this->family->id,
             'place_administered' => 'St. Mary Church',
             'godparent1_name' => 'Godparent One',
@@ -660,27 +757,28 @@ class SacramentApiTest extends TestCase
             'minister_name' => 'Fr. Joseph',
         ];
 
-        // Act
+        $beforeCount = FamilyMember::where('family_id', $this->family->id)->count();
+
         $response = $this->postJson('/api/sacraments', $data);
 
-        // Assert
         $response->assertStatus(201);
-        
-        // Check if family member was created
-        $member = FamilyMember::where('family_id', $this->family->id)
-            ->where('first_name', 'John')
-            ->where('last_name', 'Smith')
-            ->first();
-        
-        $this->assertNotNull($member);
-        $this->assertEquals('Paul', $member->middle_name);
-        $this->assertEquals('2025-01-15', $member->baptism_date->format('Y-m-d'));
-        $this->assertEquals('St. Mary Church', $member->baptism_place);
+
+        $this->assertSame(
+            $beforeCount,
+            FamilyMember::where('family_id', $this->family->id)->count()
+        );
+        $this->assertNull(
+            FamilyMember::where('family_id', $this->family->id)
+                ->where('first_name', 'John')
+                ->where('last_name', 'Smith')
+                ->first()
+        );
     }
 
     // ============ UPDATE Tests ============
 
     /** @test */
+    #[Test]
     public function it_can_update_sacrament_with_valid_data()
     {
         // Arrange
@@ -708,7 +806,7 @@ class SacramentApiTest extends TestCase
                 'data' => [
                     'recipient_name' => 'Updated Name',
                     'place_administered' => 'Updated Place',
-                ]
+                ],
             ]);
 
         $this->assertDatabaseHas('sacraments', [
@@ -719,6 +817,7 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_returns_404_when_updating_non_existent_sacrament()
     {
         // Act
@@ -730,11 +829,12 @@ class SacramentApiTest extends TestCase
         $response->assertStatus(404)
             ->assertJson([
                 'success' => false,
-                'message' => 'Sacrament not found'
+                'message' => 'Sacrament not found',
             ]);
     }
 
     /** @test */
+    #[Test]
     public function it_enforces_tenant_isolation_when_updating()
     {
         // Arrange: Create sacrament for different tenant
@@ -749,14 +849,15 @@ class SacramentApiTest extends TestCase
         ]);
 
         // Assert
-        $response->assertStatus(403)
+        $response->assertStatus(404)
             ->assertJson([
                 'success' => false,
-                'message' => 'Unauthorized. You can only update sacraments from your own tenant.',
+                'message' => 'Sacrament not found',
             ]);
     }
 
     /** @test */
+    #[Test]
     public function it_validates_certificate_number_is_unique_on_update()
     {
         // Arrange
@@ -783,6 +884,7 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_allows_same_certificate_number_for_same_sacrament_on_update()
     {
         // Arrange
@@ -803,6 +905,7 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_update_marriage_fields()
     {
         // Arrange
@@ -823,7 +926,7 @@ class SacramentApiTest extends TestCase
 
         // Assert
         $response->assertStatus(200);
-        
+
         $sacrament->refresh();
         $this->assertEquals('New Groom', $sacrament->marriage_groom_full_name);
         $this->assertEquals('Groom Father', $sacrament->marriage_groom_father_name);
@@ -834,6 +937,7 @@ class SacramentApiTest extends TestCase
     // ============ DESTROY (Delete) Tests ============
 
     /** @test */
+    #[Test]
     public function it_can_delete_sacrament()
     {
         // Arrange
@@ -849,7 +953,7 @@ class SacramentApiTest extends TestCase
         $response->assertStatus(200)
             ->assertJson([
                 'success' => true,
-                'message' => 'Sacrament deleted successfully'
+                'message' => 'Sacrament deleted successfully',
             ]);
 
         $this->assertSoftDeleted('sacraments', [
@@ -858,6 +962,7 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_returns_404_when_deleting_non_existent_sacrament()
     {
         // Act
@@ -867,11 +972,12 @@ class SacramentApiTest extends TestCase
         $response->assertStatus(404)
             ->assertJson([
                 'success' => false,
-                'message' => 'Sacrament not found'
+                'message' => 'Sacrament not found',
             ]);
     }
 
     /** @test */
+    #[Test]
     public function it_enforces_tenant_isolation_when_deleting()
     {
         // Arrange: Create sacrament for different tenant
@@ -884,16 +990,17 @@ class SacramentApiTest extends TestCase
         $response = $this->deleteJson("/api/sacraments/{$otherSacrament->id}");
 
         // Assert
-        $response->assertStatus(403)
+        $response->assertStatus(404)
             ->assertJson([
                 'success' => false,
-                'message' => 'Unauthorized. You can only delete sacraments from your own tenant.',
+                'message' => 'Sacrament not found',
             ]);
     }
 
     // ============ GET SACRAMENT TYPES Tests ============
 
     /** @test */
+    #[Test]
     public function it_can_get_sacrament_types()
     {
         // Arrange: Create multiple types
@@ -907,7 +1014,7 @@ class SacramentApiTest extends TestCase
         $response->assertStatus(200)
             ->assertJson([
                 'success' => true,
-                'message' => 'Sacrament types retrieved successfully'
+                'message' => 'Sacrament types retrieved successfully',
             ])
             ->assertJsonStructure([
                 'success',
@@ -918,8 +1025,8 @@ class SacramentApiTest extends TestCase
                         'code',
                         'category',
                         'active',
-                    ]
-                ]
+                    ],
+                ],
             ]);
 
         // Should return only active types, ordered
@@ -927,6 +1034,7 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_returns_only_active_sacrament_types()
     {
         // Arrange
@@ -946,6 +1054,7 @@ class SacramentApiTest extends TestCase
     // ============ AUTHORIZATION Tests ============
 
     /** @test */
+    #[Test]
     public function it_blocks_users_without_tenant_id()
     {
         // Arrange: Create user without tenant_id
@@ -967,11 +1076,12 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_blocks_ekklesia_users()
     {
         // Note: This test assumes hasEkklesiaRole() method exists on User model
         // If the method doesn't exist or works differently, adjust accordingly
-        
+
         // Arrange: Create user with Ekklesia role (if applicable)
         // This is a placeholder - adjust based on actual role implementation
         $ekklesiaUser = User::factory()->create([
@@ -981,7 +1091,7 @@ class SacramentApiTest extends TestCase
 
         // Mock or set Ekklesia role if possible
         // For now, we'll test that tenant users work and note Ekklesia blocking
-        
+
         Passport::actingAs($ekklesiaUser);
 
         // Act
@@ -994,16 +1104,17 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_requires_authentication_for_all_endpoints()
     {
         // Verify that authenticated requests work, confirming auth middleware is active
         // The routes are protected by 'auth:api' middleware as defined in routes/api.php
         // When authenticated, requests succeed; when not authenticated, they would return 401
-        
+
         // Test authenticated access works (proves middleware is in place)
         $this->getJson('/api/sacraments')->assertStatus(200);
         $this->getJson('/api/sacraments/types')->assertStatus(200);
-        
+
         // Note: To fully test unauthenticated access, we would need to:
         // 1. Create a separate test class without setUp() authentication, OR
         // 2. Use a fresh application instance without Passport::actingAs()
@@ -1014,6 +1125,7 @@ class SacramentApiTest extends TestCase
     // ============ EDGE CASES Tests ============
 
     /** @test */
+    #[Test]
     public function it_handles_large_pagination_correctly()
     {
         // Arrange: Create many sacraments
@@ -1032,6 +1144,7 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_handles_empty_results_gracefully()
     {
         // Act: Query with no matching results
@@ -1043,12 +1156,13 @@ class SacramentApiTest extends TestCase
                 'success' => true,
                 'data' => [
                     'total' => 0,
-                    'data' => []
-                ]
+                    'data' => [],
+                ],
             ]);
     }
 
     /** @test */
+    #[Test]
     public function it_handles_special_characters_in_search()
     {
         // Arrange
@@ -1067,25 +1181,104 @@ class SacramentApiTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_handles_nullable_fields_correctly()
     {
         // Arrange: Create sacrament with minimal required fields
-        $data = [
+        $data = array_merge($this->baptismIdentity(), [
             'sacrament_type_id' => $this->sacramentType->id,
             'recipient_name' => 'Minimal Sacrament',
             'date_administered' => '2025-01-15',
-        ];
+        ]);
 
         // Act
         $response = $this->postJson('/api/sacraments', $data);
 
         // Assert
         $response->assertStatus(201);
-        
+
         $sacrament = Sacrament::where('recipient_name', 'Minimal Sacrament')->first();
         $this->assertNull($sacrament->place_administered);
         $this->assertNull($sacrament->minister_name);
         $this->assertNull($sacrament->family_id);
         $this->assertNull($sacrament->bcc_id);
+    }
+
+    /** @test */
+    #[Test]
+    public function it_filters_sacraments_by_family_member_id(): void
+    {
+        $member = FamilyMember::factory()->create([
+            'family_id' => $this->family->id,
+            'first_name' => 'John',
+            'last_name' => 'Xavier',
+        ]);
+
+        $otherMember = FamilyMember::factory()->create([
+            'family_id' => $this->family->id,
+        ]);
+
+        $eucharistType = SacramentType::factory()->create([
+            'name' => 'Eucharist',
+            'code' => 'EUCHARIST',
+            'active' => true,
+            'requires_minister' => true,
+        ]);
+
+        Sacrament::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'sacrament_type_id' => $eucharistType->id,
+            'family_id' => $this->family->id,
+            'recipient_name' => 'John Xavier',
+            'date_administered' => '2026-09-03',
+            'certificate_number' => 'EU501',
+            'book_number' => '12',
+            'page_number' => '153',
+            'minister_name' => 'Rev. Fr. Anto',
+            'minister_title' => 'Parish Priest',
+            'status' => 'registered',
+        ])->participants()->create([
+            'tenant_id' => $this->tenant->id,
+            'role' => 'recipient',
+            'source' => 'member',
+            'family_member_id' => $member->id,
+        ]);
+
+        Sacrament::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'sacrament_type_id' => $this->sacramentType->id,
+            'recipient_name' => 'Other Person',
+            'date_administered' => '2025-01-15',
+        ])->participants()->create([
+            'tenant_id' => $this->tenant->id,
+            'role' => 'recipient',
+            'source' => 'member',
+            'family_member_id' => $otherMember->id,
+        ]);
+
+        $response = $this->getJson('/api/sacraments?family_member_id='.$member->id);
+
+        $response->assertOk()
+            ->assertJsonPath('success', true);
+
+        $ids = collect($response->json('data.data'))->pluck('id')->all();
+        $this->assertCount(1, $ids);
+        $this->assertSame('EU501', $response->json('data.data.0.certificate_number'));
+    }
+
+    /** @test */
+    #[Test]
+    public function it_rejects_family_member_id_from_other_tenant(): void
+    {
+        $otherFamily = Family::factory()->create([
+            'tenant_id' => $this->otherTenant->id,
+        ]);
+        $otherMember = FamilyMember::factory()->create([
+            'family_id' => $otherFamily->id,
+        ]);
+
+        $this->getJson('/api/sacraments?family_member_id='.$otherMember->id)
+            ->assertNotFound()
+            ->assertJsonPath('success', false);
     }
 }

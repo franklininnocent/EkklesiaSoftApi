@@ -8,6 +8,7 @@ use Modules\Tenants\Models\ChurchLeadership;
 use Modules\Tenants\Models\ChurchProfile;
 use Modules\Tenants\Models\ChurchSocialMedia;
 use Modules\Tenants\Models\ChurchStatistic;
+use Modules\Tenants\Models\LeadershipAssignment;
 
 class ChurchProfileDataExportContributor implements TenantDataExportContributor
 {
@@ -32,6 +33,7 @@ class ChurchProfileDataExportContributor implements TenantDataExportContributor
     {
         return ChurchProfile::query()->where('tenant_id', $tenantId)->count()
             + ChurchLeadership::query()->where('tenant_id', $tenantId)->count()
+            + LeadershipAssignment::query()->where('tenant_id', $tenantId)->count()
             + ChurchSocialMedia::query()->where('tenant_id', $tenantId)->count()
             + ChurchStatistic::query()->where('tenant_id', $tenantId)->count();
     }
@@ -93,6 +95,34 @@ class ChurchProfileDataExportContributor implements TenantDataExportContributor
                         $row->id, $row->full_name, $row->role, $row->title, $row->email, $row->phone,
                         $row->appointed_date, $row->relieved_date, $this->boolLabel($row->is_primary),
                         $this->activeLabel($row->active), $row->display_order, $row->created_at,
+                    ]
+                ),
+                'data/leadership_assignments.csv' => $this->writeChunkedQuery(
+                    $writers,
+                    'data/leadership_assignments.csv',
+                    [
+                        'assignment_id', 'person_id', 'role_id', 'role_title', 'start_date', 'end_date',
+                        'status', 'appointment_date', 'appointment_letter_ref', 'exit_reason_code',
+                        'legacy_church_leadership_id', 'created_at',
+                    ],
+                    LeadershipAssignment::query()
+                        ->where('tenant_id', $tenantId)
+                        ->with(['role:id,title', 'person:id,first_name,last_name']),
+                    $chunkSize,
+                    $onProgress,
+                    fn ($row) => [
+                        $row->id,
+                        $row->person_id,
+                        $row->role_id,
+                        $row->role?->title,
+                        $row->start_date,
+                        $row->end_date,
+                        $row->status,
+                        $row->appointment_date,
+                        $row->appointment_letter_ref,
+                        $row->exit_reason_code,
+                        $row->legacy_church_leadership_id,
+                        $row->created_at,
                     ]
                 ),
                 'data/church_social_media.csv' => $this->writeChunkedQuery(

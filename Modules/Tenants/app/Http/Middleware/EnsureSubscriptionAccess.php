@@ -4,7 +4,9 @@ namespace Modules\Tenants\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Services\SubscriptionService;
+use Modules\Tenants\Support\TenantContext;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -21,7 +23,9 @@ class EnsureSubscriptionAccess
     public function handle(Request $request, Closure $next, string $moduleKey): Response
     {
         $user = $request->user();
-        if (! $user || ! $user->tenant) {
+        $effectiveTenantId = app(TenantContext::class)->effectiveTenantId();
+
+        if (! $user || ! $effectiveTenantId) {
             return response()->json([
                 'success' => false,
                 'message' => 'Tenant context is required.',
@@ -31,14 +35,21 @@ class EnsureSubscriptionAccess
 
         // Platform admins operating without a parish context skip soft-gate
         if (method_exists($user, 'isSuperAdmin') && ($user->isSuperAdmin() || $user->isEkklesiaAdmin())) {
-            // If they have tenant_id and are acting as tenant user, still enforce;
-            // SuperAdmin users typically have null tenant_id.
-            if (! $user->tenant_id) {
+            if ($user->tenant_id === null) {
                 return $next($request);
             }
         }
 
-        $result = $this->subscriptionService->evaluateModuleAccess($user->tenant, $moduleKey);
+        $tenant = Tenant::query()->find($effectiveTenantId);
+        if (! $tenant) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tenant context is required.',
+                'reason' => 'account_inactive',
+            ], 403);
+        }
+
+        $result = $this->subscriptionService->evaluateModuleAccess($tenant, $moduleKey);
 
         if (! $result['allowed']) {
             $message = match ($result['reason']) {

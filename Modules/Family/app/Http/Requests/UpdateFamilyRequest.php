@@ -2,9 +2,9 @@
 
 namespace Modules\Family\app\Http\Requests;
 
+use App\Rules\PhoneNumberForTenant;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
-use App\Rules\PhoneNumberForTenant;
 use Modules\Tenants\Support\TenantContext;
 
 class UpdateFamilyRequest extends FormRequest
@@ -33,15 +33,16 @@ class UpdateFamilyRequest extends FormRequest
             ],
             'status' => ['nullable', 'in:active,inactive,migrated'],
             'notes' => ['nullable', 'string'],
+            'sync_person_addresses' => ['nullable', 'boolean'],
 
             // members (optional)
             'members' => ['nullable', 'array'],
+            'members.*.id' => ['nullable', 'uuid'],
+            'members.*.person_id' => ['nullable', 'uuid'],
             'members.*.first_name' => ['required_with:members', 'string', 'max:120'],
             'members.*.last_name' => ['required_with:members', 'string', 'max:120'],
-            'members.*.phone' => ['nullable', new PhoneNumberForTenant()],
+            'members.*.phone' => ['nullable', new PhoneNumberForTenant],
             'members.*.email' => ['nullable', 'email', 'max:255'],
         ];
     }
 }
-
-

@@ -2,24 +2,28 @@
 
 namespace Modules\Donations\Jobs;
 
-use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Foundation\Bus\Dispatchable;
-use Illuminate\Queue\InteractsWithQueue;
-use Illuminate\Queue\SerializesModels;
 use Modules\Donations\Models\DonationReportExport;
 use Modules\Donations\Services\DonationReportService;
+use Modules\Tenants\Jobs\TenantAwareJob;
 
-class ProcessDonationExportJob implements ShouldQueue
+class ProcessDonationExportJob extends TenantAwareJob
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
-
-    public function __construct(private readonly string $exportId)
-    {
+    public function __construct(
+        int $tenantId,
+        ?int $actorUserId,
+        private readonly string $exportId,
+    ) {
+        parent::__construct($tenantId, $actorUserId);
+        $this->onQueue((string) config('tenants.export.queue', 'tenant-exports'));
     }
 
-    public function handle(DonationReportService $reportService): void
+    protected function handleWithTenantContext(): void
     {
-        $reportService->processExport($this->exportId);
+        $export = DonationReportExport::query()->find($this->exportId);
+        if (! $export) {
+            return;
+        }
+
+        app(DonationReportService::class)->processExport($this->exportId);
     }
 }

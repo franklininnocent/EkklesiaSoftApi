@@ -80,6 +80,11 @@ class Person extends Model
         return $this->belongsTo(User::class, 'updated_by');
     }
 
+    public function linkedUser(): HasOne
+    {
+        return $this->hasOne(User::class, 'person_id');
+    }
+
     public function scopeForTenant(Builder $query, int|string $tenantId): Builder
     {
         return $query->where('tenant_id', $tenantId);

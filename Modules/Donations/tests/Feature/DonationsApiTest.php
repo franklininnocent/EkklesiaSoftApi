@@ -27,14 +27,19 @@ class DonationsApiTest extends TestCase
     use RefreshDatabase;
 
     protected Tenant $tenant;
+
     protected User $tenantAdminUser;
+
     protected Role $tenantAdminRole;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->tenant = Tenant::factory()->create();
+        $this->tenant = Tenant::factory()->active()->create([
+            'subscription_ends_at' => now()->addYear(),
+            'trial_ends_at' => now()->addYear(),
+        ]);
 
         $this->tenantAdminRole = Role::create([
             'name' => Role::TENANT_ADMINISTRATOR,
@@ -972,6 +977,7 @@ class DonationsApiTest extends TestCase
             'donor_name' => 'Builder Bob',
             'amount' => 5000,
             'method' => 'bank_transfer',
+            'gateway_reference' => 'NEFT-5000',
             'payment_date' => now()->toDateString(),
         ])->assertCreated();
 
@@ -1095,7 +1101,7 @@ class DonationsApiTest extends TestCase
 
         $family = Family::factory()->create(['tenant_id' => $this->tenant->id, 'status' => 'active']);
 
-        $response = $this->getJson('/api/tenant/donations/upi/intent?amount=500&family_id=' . $family->id);
+        $response = $this->getJson('/api/tenant/donations/upi/intent?amount=500&family_id='.$family->id);
         $response->assertOk()
             ->assertJsonPath('data.available', true)
             ->assertJsonPath('data.vpa', 'church@upi')
@@ -1756,7 +1762,7 @@ class DonationsApiTest extends TestCase
             'method' => 'cash',
         ])->assertCreated()->json('data');
 
-        $response = $this->get('/api/tenant/donations/payments/' . $payment['id'] . '/receipt/print');
+        $response = $this->get('/api/tenant/donations/payments/'.$payment['id'].'/receipt/print');
         $response->assertOk();
         $this->assertStringContainsString('Official Contribution Receipt', $response->getContent());
     }
@@ -1839,13 +1845,13 @@ class DonationsApiTest extends TestCase
             'method' => 'cash',
         ])->assertCreated()->json('data');
 
-        $familyTimeline = $this->getJson('/api/tenant/donations/activity/timeline?subject_type=family&subject_id=' . $family->id);
+        $familyTimeline = $this->getJson('/api/tenant/donations/activity/timeline?subject_type=family&subject_id='.$family->id);
         $familyTimeline->assertOk()
             ->assertJsonPath('data.subject_type', 'family')
             ->assertJsonPath('data.subject_id', (string) $family->id)
             ->assertJsonStructure(['data' => ['count', 'events']]);
 
-        $paymentTimeline = $this->getJson('/api/tenant/donations/activity/timeline?subject_type=payment&subject_id=' . $payment['id']);
+        $paymentTimeline = $this->getJson('/api/tenant/donations/activity/timeline?subject_type=payment&subject_id='.$payment['id']);
         $paymentTimeline->assertOk()
             ->assertJsonPath('data.subject_type', 'payment')
             ->assertJsonPath('data.subject_id', (string) $payment['id'])

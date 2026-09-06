@@ -183,7 +183,7 @@ class SacramentPhase10ApiTest extends TestCase
         $byCode = collect($response->json('data'))->keyBy('code');
         $this->assertSame('sensitive', $byCode['ANOINTING']['privacy_class']);
         $this->assertSame('restricted', $byCode['RECONCILIATION']['privacy_class']);
-        $this->assertFalse($byCode['RECONCILIATION']['certificate_supported']);
+        $this->assertTrue($byCode['RECONCILIATION']['certificate_supported']);
         $this->assertTrue($byCode['CONFIRMATION']['batch_supported']);
         $this->assertContains('FIRST_COMMUNION', $byCode['EUCHARIST']['event_subtypes']);
         $this->assertContains('DIACONATE', $byCode['HOLY_ORDERS']['ordination_types']);

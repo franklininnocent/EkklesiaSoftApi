@@ -9,6 +9,7 @@ use Modules\Tenants\Export\TenantExportStorage;
 use Modules\Tenants\Http\Requests\StoreTenantDataExportRequest;
 use Modules\Tenants\Models\TenantDataExport;
 use Modules\Tenants\Services\TenantDataExportService;
+use Modules\Tenants\Support\ApiPagination;
 use Modules\Tenants\Support\TenantContext;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -52,7 +53,7 @@ class TenantDataExportController extends Controller
     public function index(Request $request): JsonResponse
     {
         $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
-        $perPage = min(100, max(1, (int) $request->integer('per_page', 20)));
+        $perPage = ApiPagination::clamp($request->integer('per_page', 20), 20);
         $paginator = $this->exportService->listExports($tenantId, $perPage);
 
         $paginator->setCollection(

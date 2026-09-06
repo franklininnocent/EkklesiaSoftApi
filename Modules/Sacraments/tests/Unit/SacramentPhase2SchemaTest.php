@@ -41,10 +41,10 @@ class SacramentPhase2SchemaTest extends TestCase
     }
 
     #[Test]
-    public function participants_v1_feature_flag_is_off_by_default(): void
+    public function participants_v1_feature_flag_defaults_on(): void
     {
-        $this->assertFalse(config('sacraments.participants_v1'));
-        $this->assertFalse(SacramentFeatureFlags::participantsV1Enabled());
+        $this->assertTrue(config('sacraments.participants_v1'));
+        $this->assertTrue(SacramentFeatureFlags::participantsV1Enabled());
     }
 
     #[Test]

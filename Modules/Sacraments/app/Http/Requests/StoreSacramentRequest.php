@@ -8,6 +8,11 @@ use Illuminate\Validation\Validator;
 use Modules\Family\Models\FamilyMember;
 use Modules\Sacraments\Models\SacramentType;
 use Modules\Sacraments\Services\TenantSacramentSettingsService;
+use Modules\Sacraments\Support\BaptismalStatus;
+use Modules\Sacraments\Support\CanonicalDelegationStatus;
+use Modules\Sacraments\Support\EcclesialAffiliation;
+use Modules\Sacraments\Support\MarriageCanonicalClassification;
+use Modules\Sacraments\Support\SacramentDispensationType;
 use Modules\Sacraments\Support\SacramentParticipantRole;
 use Modules\Sacraments\Support\SacramentParticipantSource;
 use Modules\Sacraments\Support\SacramentPlaceClassification;
@@ -67,7 +72,15 @@ class StoreSacramentRequest extends FormRequest
             'family_member_id' => [
                 'nullable',
                 'uuid',
-                Rule::exists('family_members', 'id'),
+                Rule::exists('family_members', 'id')->where(function ($query) use ($tenantId) {
+                    $query->whereNull('deleted_at')
+                        ->whereIn('family_id', function ($sub) use ($tenantId) {
+                            $sub->select('id')
+                                ->from('families')
+                                ->where('tenant_id', $tenantId)
+                                ->whereNull('deleted_at');
+                        });
+                }),
             ],
             'family_association' => 'nullable|in:none,existing,new',
             'acknowledge_person_match' => 'nullable|boolean',
@@ -168,6 +181,7 @@ class StoreSacramentRequest extends FormRequest
             'participants.*.family_member_id' => 'nullable|uuid',
             'participants.*.person_id' => 'nullable|uuid',
             'participants.*.church_leadership_id' => 'nullable|integer',
+            'participants.*.leadership_assignment_id' => 'nullable|uuid',
             'participants.*.affiliation_type' => 'nullable|in:home_parish,other',
             'participants.*.affiliation_parish_name' => 'nullable|string|max:255',
             'participants.*.affiliation_parish_address' => 'nullable|string',
@@ -181,6 +195,18 @@ class StoreSacramentRequest extends FormRequest
             'participants.*.external_contact_number' => 'nullable|string|max:20',
             'participants.*.external_title' => 'nullable|string|max:50',
             'participants.*.external_minister_role' => 'nullable|string|max:80',
+            'participants.*.baptismal_status' => ['nullable', BaptismalStatus::rule()],
+            'participants.*.ecclesial_affiliation_code' => ['nullable', EcclesialAffiliation::rule()],
+            'participants.*.ecclesial_affiliation_label' => 'nullable|string|max:255',
+            'participants.*.canonical_delegation_status' => ['nullable', CanonicalDelegationStatus::rule()],
+            'participants.*.father_name' => 'nullable|string|max:255',
+            'participants.*.mother_name' => 'nullable|string|max:255',
+            'marriage_canonical_classification' => ['nullable', MarriageCanonicalClassification::rule()],
+            'dispensations' => 'nullable|array',
+            'dispensations.*.dispensation_type' => ['required_with:dispensations', SacramentDispensationType::rule()],
+            'dispensations.*.granting_authority' => 'nullable|string|max:255',
+            'dispensations.*.protocol_number' => 'nullable|string|max:80',
+            'dispensations.*.date_granted' => 'nullable|date',
             // Clients must not supply authoritative snapshots (ADR-02).
             'participants.*.snapshot_json' => 'prohibited',
             // Medical / confession content must never be accepted (ADR-19 / ADR-20).
@@ -269,7 +295,9 @@ class StoreSacramentRequest extends FormRequest
             $validator->errors()->add('place_administered', "Place administered is required for {$label}.");
         }
 
-        if (empty($this->input('recipient_birth_date')) && empty($this->input('person.date_of_birth'))) {
+        if (empty($this->input('recipient_birth_date'))
+            && empty($this->input('person.date_of_birth'))
+            && $this->resolveLinkedRecipientBirthDate() === '') {
             $validator->errors()->add('recipient_birth_date', "Date of birth is required for {$label}.");
         }
 
@@ -341,17 +369,54 @@ class StoreSacramentRequest extends FormRequest
             : trim((string) ($row['external_date_of_birth'] ?? ''));
 
         if ($value === '' && ! empty($row['family_member_id'])) {
-            $member = FamilyMember::query()->find($row['family_member_id']);
-            if ($member) {
-                $value = $field === 'gender'
-                    ? trim((string) ($member->gender ?? ''))
-                    : trim((string) optional($member->date_of_birth)?->format('Y-m-d'));
-            }
+            $value = $this->resolveFamilyMemberIdentityValue(
+                (string) $row['family_member_id'],
+                $field === 'gender' ? 'gender' : 'dob'
+            );
         }
 
         if ($value === '') {
-            $validator->errors()->add($errorKey, "{$message} is required for Marriage.");
+            $validator->errors()->add(
+                $errorKey,
+                $field === 'dob'
+                    ? 'Date of birth is required for this participant.'
+                    : "{$message} is required for Marriage."
+            );
         }
+    }
+
+    private function resolveLinkedRecipientBirthDate(): string
+    {
+        $memberId = $this->input('family_member_id');
+        if (filled($memberId)) {
+            $value = $this->resolveFamilyMemberIdentityValue((string) $memberId, 'dob');
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        $recipient = $this->participantRow('recipient');
+        if (! empty($recipient['family_member_id'])) {
+            return $this->resolveFamilyMemberIdentityValue((string) $recipient['family_member_id'], 'dob');
+        }
+
+        return '';
+    }
+
+    private function resolveFamilyMemberIdentityValue(string $memberId, string $field): string
+    {
+        $member = FamilyMember::query()->with('person')->find($memberId);
+        if (! $member) {
+            return '';
+        }
+
+        if ($field === 'gender') {
+            return trim((string) ($member->gender ?? $member->person?->gender ?? ''));
+        }
+
+        $birthDate = $member->date_of_birth ?? $member->person?->date_of_birth;
+
+        return $birthDate ? $birthDate->format('Y-m-d') : '';
     }
 
     /** @return array<string, mixed> */

@@ -152,7 +152,7 @@ class FileUploadService
         try {
             // Generate signed URL using Laravel's URL signing
             $signedUrl = \URL::temporarySignedRoute(
-                'tenants.files.serve',
+                'api.tenants.files.serve',
                 now()->addMinutes($expirationMinutes),
                 ['path' => $path]
             );

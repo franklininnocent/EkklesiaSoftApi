@@ -1,0 +1,70 @@
+<?php
+
+namespace Modules\Donations\Http\Controllers\Concerns;
+
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Modules\Donations\Services\DonationIdempotencyService;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
+
+trait HandlesDonationIdempotency
+{
+    /**
+     * @param  callable(): array{status: int, message: string, data: mixed}  $callback
+     */
+    protected function withIdempotency(
+        DonationIdempotencyService $idempotency,
+        int $tenantId,
+        string $operation,
+        Request $request,
+        callable $callback
+    ): JsonResponse {
+        try {
+            return DB::transaction(function () use ($idempotency, $tenantId, $operation, $request, $callback): JsonResponse {
+                $gate = $idempotency->begin($tenantId, $operation, $request);
+                if ($gate && $gate['replay'] && is_array($gate['record']->response_body)) {
+                    $body = $gate['record']->response_body;
+                    $status = (int) ($gate['record']->http_status ?: 200);
+
+                    return response()->json($body, $status);
+                }
+
+                $result = $callback();
+                $payload = [
+                    'success' => true,
+                    'message' => $result['message'],
+                    'data' => $result['data'],
+                ];
+
+                if ($gate) {
+                    $resourceId = is_object($result['data']) && isset($result['data']->id)
+                        ? (string) $result['data']->id
+                        : (string) ($result['resource_id'] ?? '');
+                    $idempotency->complete(
+                        $gate['record'],
+                        $result['resource_type'] ?? $operation,
+                        $resourceId,
+                        (int) $result['status'],
+                        $payload
+                    );
+                }
+
+                return response()->json($payload, (int) $result['status']);
+            });
+        } catch (ModelNotFoundException $exception) {
+            throw $exception;
+        } catch (ConflictHttpException $exception) {
+            return response()->json([
+                'success' => false,
+                'message' => $exception->getMessage(),
+            ], 409);
+        } catch (\RuntimeException $exception) {
+            return response()->json([
+                'success' => false,
+                'message' => $exception->getMessage(),
+            ], 422);
+        }
+    }
+}

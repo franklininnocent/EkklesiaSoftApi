@@ -2,6 +2,8 @@
 
 namespace Modules\Donations\Services;
 
+use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 use Modules\Donations\Models\ContributionDue;
 use Modules\Donations\Models\Donation;
 use Modules\Donations\Models\DonationPayment;
@@ -10,6 +12,7 @@ use Modules\Donations\Models\DonationRefund;
 use Modules\Donations\Models\DonationSetting;
 use Modules\Donations\Models\RecurringDonationSchedule;
 use Modules\Donations\Support\ContributionBalance;
+use Modules\Donations\Support\MoneyMath;
 use Modules\Family\Models\Family;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Services\TenantHierarchyService;
@@ -20,8 +23,7 @@ class DonationDashboardService
         private readonly FinancialHealthService $healthService,
         private readonly TenantHierarchyService $hierarchyService,
         private readonly DashboardInsightsService $insightsService
-    ) {
-    }
+    ) {}
 
     public function getSummary(int $tenantId): array
     {
@@ -166,7 +168,7 @@ class DonationDashboardService
     }
 
     /**
-     * @param array<int, array<string, mixed>> $trend
+     * @param  array<int, array<string, mixed>>  $trend
      * @return array<string, mixed>
      */
     private function buildCollectionPerformanceChart(int $tenantId, array $trend): array
@@ -175,15 +177,13 @@ class DonationDashboardService
         $outstandingPoints = [];
         $targetPoints = [];
 
+        $periodKeys = array_map(static fn (array $row): string => (string) $row['period'], $trend);
+        $monthlyTargets = $this->buildMonthlyDueTargets($tenantId, $periodKeys);
+
         foreach ($trend as $row) {
             $period = (string) $row['period'];
             $collected = (float) $row['collected'];
-            $monthStart = \Carbon\Carbon::createFromFormat('Y-m', $period)->startOfMonth()->toDateString();
-            $monthEnd = \Carbon\Carbon::createFromFormat('Y-m', $period)->endOfMonth()->toDateString();
-
-            $target = (float) ContributionDue::forTenant($tenantId)
-                ->whereBetween('due_date', [$monthStart, $monthEnd])
-                ->sum('amount_due');
+            $target = (float) ($monthlyTargets[$period] ?? 0);
 
             if ($target <= 0) {
                 $target = max($collected, (float) ($row['collected'] ?? 0));
@@ -206,12 +206,42 @@ class DonationDashboardService
     }
 
     /**
+     * @param  list<string>  $periodKeys  YYYY-MM values
+     * @return array<string, float>
+     */
+    private function buildMonthlyDueTargets(int $tenantId, array $periodKeys): array
+    {
+        if ($periodKeys === []) {
+            return [];
+        }
+
+        $monthExpr = $this->sqlYearMonthExpression('due_date');
+        $start = Carbon::createFromFormat('Y-m', min($periodKeys))->startOfMonth()->toDateString();
+        $end = Carbon::createFromFormat('Y-m', max($periodKeys))->endOfMonth()->toDateString();
+
+        return ContributionDue::forTenant($tenantId)
+            ->whereBetween('due_date', [$start, $end])
+            ->selectRaw("{$monthExpr} as period, COALESCE(SUM(amount_due), 0) as target")
+            ->groupBy('period')
+            ->pluck('target', 'period')
+            ->map(fn ($value) => (float) $value)
+            ->all();
+    }
+
+    private function sqlYearMonthExpression(string $column): string
+    {
+        return DB::connection()->getDriverName() === 'pgsql'
+            ? "TO_CHAR({$column}, 'YYYY-MM')"
+            : "strftime('%Y-%m', {$column})";
+    }
+
+    /**
      * @return array<string, mixed>|null
      */
     private function buildTenantContext(int $tenantId): ?array
     {
         $tenant = Tenant::query()->find($tenantId);
-        if (!$tenant) {
+        if (! $tenant) {
             return null;
         }
 
@@ -253,13 +283,13 @@ class DonationDashboardService
      */
     private function buildBaseTotals(int $tenantId): array
     {
-        $totalCollected = (float) DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->sum('amount');
+        $totalCollected = MoneyMath::normalize(
+            DonationPayment::forTenant($tenantId)->where('status', 'succeeded')->sum('amount')
+        );
 
-        $totalRefunded = (float) DonationRefund::forTenant($tenantId)
-            ->where('status', 'completed')
-            ->sum('amount');
+        $totalRefunded = MoneyMath::normalize(
+            DonationRefund::forTenant($tenantId)->where('status', 'completed')->sum('amount')
+        );
 
         $pendingDues = ContributionBalance::sumOutstanding(
             ContributionDue::forTenant($tenantId)
@@ -269,51 +299,55 @@ class DonationDashboardService
             ->where('status', 'active')
             ->count();
 
-        $voluntaryCollected = (float) DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->whereIn('source_type', ['voluntary', 'recurring_schedule'])
-            ->sum('amount');
+        $voluntaryCollected = MoneyMath::normalize(
+            DonationPayment::forTenant($tenantId)
+                ->where('status', 'succeeded')
+                ->whereIn('source_type', ['voluntary', 'recurring_schedule'])
+                ->sum('amount')
+        );
 
         $voluntaryEntries = Donation::forTenant($tenantId)->count();
         $anonymousDonations = Donation::forTenant($tenantId)->where('is_anonymous', true)->count();
         $activeRecurring = RecurringDonationSchedule::forTenant($tenantId)->where('status', 'active')->count();
-        $pledgedOutstanding = Donation::forTenant($tenantId)
-            ->whereIn('status', ['pledged', 'partially_paid'])
-            ->get()
-            ->sum(fn (Donation $donation) => max((float) $donation->pledged_amount - (float) $donation->collected_amount, 0));
+        $pledgedOutstanding = MoneyMath::normalize(
+            Donation::forTenant($tenantId)
+                ->whereIn('status', ['pledged', 'partially_paid'])
+                ->selectRaw('COALESCE(SUM(CASE WHEN pledged_amount > collected_amount THEN pledged_amount - collected_amount ELSE 0 END), 0) as outstanding')
+                ->value('outstanding')
+        );
 
         $collectionsByMethod = DonationPayment::forTenant($tenantId)
             ->where('status', 'succeeded')
-            ->get()
+            ->selectRaw('method, COALESCE(SUM(amount), 0) as total')
             ->groupBy('method')
-            ->map(fn ($payments) => round((float) $payments->sum('amount'), 2));
+            ->pluck('total', 'method')
+            ->map(fn ($sum) => MoneyMath::toApiNumber($sum));
 
-        $voluntaryByCategory = Donation::forTenant($tenantId)
-            ->with('category:id,name')
-            ->where('collected_amount', '>', 0)
+        $voluntaryByCategory = Donation::query()
+            ->from('donations')
+            ->leftJoin('donation_categories', 'donation_categories.id', '=', 'donations.donation_category_id')
+            ->where('donations.tenant_id', $tenantId)
+            ->where('donations.collected_amount', '>', 0)
+            ->selectRaw('donations.donation_category_id as category_id, COALESCE(donation_categories.name, ?) as category_name, COALESCE(SUM(donations.collected_amount), 0) as collected', ['Uncategorized'])
+            ->groupBy('donations.donation_category_id', 'donation_categories.name')
             ->get()
-            ->groupBy(fn (Donation $donation) => $donation->donation_category_id ?? 'uncategorized')
-            ->map(function ($group, $categoryId) {
-                $first = $group->first();
-
-                return [
-                    'category_id' => $categoryId === 'uncategorized' ? null : $categoryId,
-                    'category_name' => $first->category?->name ?? 'Uncategorized',
-                    'collected' => round((float) $group->sum('collected_amount'), 2),
-                ];
-            })
+            ->map(fn ($row) => [
+                'category_id' => $row->category_id,
+                'category_name' => (string) $row->category_name,
+                'collected' => MoneyMath::toApiNumber($row->collected),
+            ])
             ->values()
             ->all();
 
         return [
             'totals' => [
-                'collected' => round($totalCollected, 2),
-                'refunded' => round($totalRefunded, 2),
-                'net' => round($totalCollected - $totalRefunded, 2),
-                'pending_dues' => round($pendingDues, 2),
+                'collected' => MoneyMath::toApiNumber($totalCollected),
+                'refunded' => MoneyMath::toApiNumber($totalRefunded),
+                'net' => MoneyMath::toApiNumber(MoneyMath::subtract($totalCollected, $totalRefunded)),
+                'pending_dues' => MoneyMath::toApiNumber($pendingDues),
                 'active_projects' => $activeProjects,
-                'voluntary_collected' => round($voluntaryCollected, 2),
-                'voluntary_pledged_outstanding' => round((float) $pledgedOutstanding, 2),
+                'voluntary_collected' => MoneyMath::toApiNumber($voluntaryCollected),
+                'voluntary_pledged_outstanding' => MoneyMath::toApiNumber($pledgedOutstanding),
                 'voluntary_entries' => $voluntaryEntries,
                 'anonymous_donations' => $anonymousDonations,
                 'active_recurring_schedules' => $activeRecurring,
@@ -373,26 +407,32 @@ class DonationDashboardService
         $previousMonthStart = now()->copy()->subMonth()->startOfMonth();
         $previousMonthEnd = now()->copy()->subMonth()->endOfMonth();
 
-        $currentMonthCollected = (float) DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->whereDate('payment_date', '>=', $currentMonthStart->toDateString())
-            ->sum('amount');
+        $currentMonthCollected = MoneyMath::normalize(
+            DonationPayment::forTenant($tenantId)
+                ->where('status', 'succeeded')
+                ->whereDate('payment_date', '>=', $currentMonthStart->toDateString())
+                ->sum('amount')
+        );
 
-        $previousMonthCollected = (float) DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->whereBetween('payment_date', [$previousMonthStart->toDateString(), $previousMonthEnd->toDateString()])
-            ->sum('amount');
+        $previousMonthCollected = MoneyMath::normalize(
+            DonationPayment::forTenant($tenantId)
+                ->where('status', 'succeeded')
+                ->whereBetween('payment_date', [$previousMonthStart->toDateString(), $previousMonthEnd->toDateString()])
+                ->sum('amount')
+        );
 
-        $annualCollected = (float) DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->whereDate('payment_date', '>=', $fyStart->toDateString())
-            ->sum('amount');
+        $annualCollected = MoneyMath::normalize(
+            DonationPayment::forTenant($tenantId)
+                ->where('status', 'succeeded')
+                ->whereDate('payment_date', '>=', $fyStart->toDateString())
+                ->sum('amount')
+        );
 
         return [
             'financial_year' => sprintf('%s-%s', $fyStart->format('Y'), $fyStart->copy()->addYear()->subDay()->format('Y')),
-            'current_month_collected' => round($currentMonthCollected, 2),
-            'previous_month_collected' => round($previousMonthCollected, 2),
-            'annual_collected' => round($annualCollected, 2),
+            'current_month_collected' => MoneyMath::toApiNumber($currentMonthCollected),
+            'previous_month_collected' => MoneyMath::toApiNumber($previousMonthCollected),
+            'annual_collected' => MoneyMath::toApiNumber($annualCollected),
         ];
     }
 
@@ -402,34 +442,27 @@ class DonationDashboardService
     private function buildCollectionTrend(int $tenantId): array
     {
         $start = now()->subMonths(11)->startOfMonth();
-        $payments = DonationPayment::forTenant($tenantId)
+        $monthExpr = $this->sqlYearMonthExpression('payment_date');
+
+        $collectedByMonth = DonationPayment::forTenant($tenantId)
             ->where('status', 'succeeded')
             ->whereDate('payment_date', '>=', $start->toDateString())
-            ->get();
+            ->selectRaw("{$monthExpr} as period, COALESCE(SUM(amount), 0) as collected")
+            ->groupBy('period')
+            ->pluck('collected', 'period');
 
         $buckets = [];
         for ($i = 0; $i < 12; $i++) {
             $month = $start->copy()->addMonths($i);
             $key = $month->format('Y-m');
-            $buckets[$key] = [
+            $buckets[] = [
                 'period' => $key,
                 'label' => $month->format('M Y'),
-                'collected' => 0.0,
+                'collected' => round((float) ($collectedByMonth[$key] ?? 0), 2),
             ];
         }
 
-        foreach ($payments as $payment) {
-            $key = $payment->payment_date?->format('Y-m');
-            if ($key && isset($buckets[$key])) {
-                $buckets[$key]['collected'] += (float) $payment->amount;
-            }
-        }
-
-        return array_values(array_map(function (array $row): array {
-            $row['collected'] = round($row['collected'], 2);
-
-            return $row;
-        }, $buckets));
+        return $buckets;
     }
 
     /**
@@ -438,36 +471,56 @@ class DonationDashboardService
     private function buildAttentionList(int $tenantId): array
     {
         $today = now()->toDateString();
-        $dues = ContributionDue::forTenant($tenantId)
+
+        $familyAggregates = ContributionDue::forTenant($tenantId)
             ->whereIn('status', ['pending', 'partially_paid'])
             ->whereDate('due_date', '<', $today)
-            ->with(['family:id,family_name,family_code', 'plan:id,name'])
+            ->selectRaw('family_id, COALESCE(SUM(amount_due - amount_paid), 0) as overdue_amount, COUNT(*) as overdue_count, MIN(due_date) as oldest_due_date')
+            ->groupBy('family_id')
+            ->orderByDesc('overdue_amount')
             ->get();
 
-        $grouped = $dues->groupBy('family_id')->map(function ($familyDues, $familyId) {
-            $firstDue = $familyDues->sortBy('due_date')->first();
-            $overdueAmount = round((float) $familyDues->sum(fn (ContributionDue $due) => ContributionBalance::outstandingForDue($due)), 2);
-            $daysOverdue = $firstDue?->due_date
-                ? (int) $firstDue->due_date->diffInDays(now()->startOfDay())
+        $topAggregates = $familyAggregates->take(10);
+        $topFamilyIds = $topAggregates->pluck('family_id')->filter()->values()->all();
+
+        $oldestDueByFamily = [];
+        if ($topFamilyIds !== []) {
+            ContributionDue::forTenant($tenantId)
+                ->whereIn('family_id', $topFamilyIds)
+                ->whereIn('status', ['pending', 'partially_paid'])
+                ->whereDate('due_date', '<', $today)
+                ->with(['family:id,family_name,family_code', 'plan:id,name'])
+                ->orderBy('due_date')
+                ->get()
+                ->groupBy('family_id')
+                ->each(function ($dues, $familyId) use (&$oldestDueByFamily): void {
+                    $oldestDueByFamily[$familyId] = $dues->first();
+                });
+        }
+
+        $families = $topAggregates->map(function ($aggregate) use ($oldestDueByFamily) {
+            $familyId = $aggregate->family_id;
+            $firstDue = $oldestDueByFamily[$familyId] ?? null;
+            $oldestDueDate = $aggregate->oldest_due_date;
+            $daysOverdue = $oldestDueDate
+                ? (int) Carbon::parse($oldestDueDate)->diffInDays(now()->startOfDay())
                 : 0;
 
             return [
                 'family_id' => $familyId,
                 'family_name' => $firstDue?->family?->family_name,
                 'family_code' => $firstDue?->family?->family_code,
-                'overdue_amount' => $overdueAmount,
-                'overdue_count' => $familyDues->count(),
+                'overdue_amount' => round((float) $aggregate->overdue_amount, 2),
+                'overdue_count' => (int) $aggregate->overdue_count,
                 'days_overdue' => $daysOverdue,
                 'oldest_due_label' => $firstDue?->plan?->name ?? $firstDue?->period_label,
             ];
-        })->sortByDesc('overdue_amount')->values();
-
-        $top = $grouped->take(10)->values()->all();
+        })->values()->all();
 
         return [
-            'families' => $top,
-            'count' => $grouped->count(),
-            'total_overdue_amount' => round((float) $grouped->sum('overdue_amount'), 2),
+            'families' => $families,
+            'count' => $familyAggregates->count(),
+            'total_overdue_amount' => round((float) $familyAggregates->sum('overdue_amount'), 2),
         ];
     }
 
@@ -566,7 +619,7 @@ class DonationDashboardService
         ];
     }
 
-    private function resolveFinancialYearStart(int $tenantId): \Carbon\Carbon
+    private function resolveFinancialYearStart(int $tenantId): Carbon
     {
         $settings = DonationSetting::forTenant($tenantId)->first();
         $month = (int) ($settings?->financial_year_start_month ?? 1);

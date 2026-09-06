@@ -3,13 +3,14 @@
 namespace Modules\RolesAndPermissions\Database\Seeders;
 
 use Illuminate\Database\Seeder;
+use Modules\BCC\Database\Seeders\BccPermissionSeeder;
+use Modules\MinistriesAssociations\Database\Seeders\MinistriesAssociationsPermissionSeeder;
+use Modules\PastoralCare\Database\Seeders\PastoralCarePermissionSeeder;
 
 class RolesAndPermissionsDatabaseSeeder extends Seeder
 {
     /**
      * Run the RolesAndPermissions module database seeds.
-     *
-     * @return void
      */
     public function run(): void
     {
@@ -24,16 +25,19 @@ class RolesAndPermissionsDatabaseSeeder extends Seeder
             SupportAccessRoleSeeder::class,
         ]);
 
-        if (class_exists(\Modules\MinistriesAssociations\Database\Seeders\MinistriesAssociationsPermissionSeeder::class)) {
-            $this->call(\Modules\MinistriesAssociations\Database\Seeders\MinistriesAssociationsPermissionSeeder::class);
+        if (class_exists(MinistriesAssociationsPermissionSeeder::class)) {
+            $this->call(MinistriesAssociationsPermissionSeeder::class);
         }
 
-        if (class_exists(\Modules\BCC\Database\Seeders\BccPermissionSeeder::class)) {
-            $this->call(\Modules\BCC\Database\Seeders\BccPermissionSeeder::class);
+        if (class_exists(BccPermissionSeeder::class)) {
+            $this->call(BccPermissionSeeder::class);
+        }
+
+        if (class_exists(PastoralCarePermissionSeeder::class)) {
+            $this->call(PastoralCarePermissionSeeder::class);
         }
 
         $this->command->line('');
         $this->command->info('✅ RolesAndPermissions Module seeded successfully!');
     }
 }
-

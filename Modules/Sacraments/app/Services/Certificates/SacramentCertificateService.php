@@ -3,9 +3,12 @@
 namespace Modules\Sacraments\Services\Certificates;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Modules\Sacraments\Certificates\CertificateTemplateRegistry;
+use Modules\Sacraments\Certificates\CertificateViewAssembler;
 use Modules\Sacraments\Exceptions\SacramentBusinessRuleException;
 use Modules\Sacraments\Models\Sacrament;
+use Modules\Sacraments\Models\SacramentAuditLog;
 use Modules\Sacraments\Models\SacramentCertificate;
 use Modules\Sacraments\Services\SacramentAuditService;
 use Modules\Sacraments\Support\SacramentCertificateStatus;
@@ -22,7 +25,11 @@ class SacramentCertificateService
         protected CertificateProjectionBuilder $projections,
         protected CertificateTemplateRegistry $templates,
         protected CertificatePdfRenderer $pdf,
+        protected CertificateRenderer $renderer,
+        protected CertificateHtmlRenderer $html,
         protected CertificateStorage $storage,
+        protected CertificateQrEncoder $qr,
+        protected CertificateViewAssembler $views,
         protected SacramentAuditService $audit
     ) {}
 
@@ -42,17 +49,70 @@ class SacramentCertificateService
     }
 
     /**
-     * Non-issued projection only (no PDF storage).
-     *
-     * @param  array{language?:string, locale?:string}  $options
+     * @return array{latest_certificate: ?SacramentCertificate, live_projection: ?array<string, mixed>, download_history: list<SacramentAuditLog>}
+     */
+    public function getCertificateViewDetails(int $sacramentId, int $tenantId): array
+    {
+        $sacrament = $this->findSacrament($sacramentId, $tenantId);
+        $latest = $this->findLatestIssued($sacramentId, $tenantId);
+        $liveProjection = null;
+
+        if (! $latest) {
+            try {
+                $liveProjection = $this->projections->build($sacrament);
+            } catch (SacramentBusinessRuleException) {
+                $liveProjection = null;
+            }
+        }
+
+        return [
+            'latest_certificate' => $latest,
+            'live_projection' => $liveProjection,
+            'download_history' => $this->listDownloadHistory($sacramentId, $tenantId),
+        ];
+    }
+
+    public function findLatestIssued(int $sacramentId, int $tenantId): ?SacramentCertificate
+    {
+        $this->findSacrament($sacramentId, $tenantId);
+
+        return SacramentCertificate::query()
+            ->where('tenant_id', $tenantId)
+            ->where('sacrament_id', $sacramentId)
+            ->where('status', SacramentCertificateStatus::ISSUED)
+            ->orderByDesc('version')
+            ->first();
+    }
+
+    /**
+     * @return list<SacramentAuditLog>
+     */
+    public function listDownloadHistory(int $sacramentId, int $tenantId): array
+    {
+        $this->findSacrament($sacramentId, $tenantId);
+
+        return SacramentAuditLog::query()
+            ->where('tenant_id', $tenantId)
+            ->where('event', 'certificate_download')
+            ->where('target_type', 'sacrament_certificate')
+            ->where('metadata->sacrament_id', $sacramentId)
+            ->with(['actor.role'])
+            ->orderByDesc('created_at')
+            ->get()
+            ->all();
+    }
+
+    /**
+     * @param  array{language?:string, locale?:string, paper?:string}  $options
      */
     public function preview(int $sacramentId, int $tenantId, ?int $actorId = null, array $options = []): SacramentCertificate
     {
         $sacrament = $this->assertIssuable($sacramentId, $tenantId);
         $language = $options['language'] ?? 'en';
         $locale = $options['locale'] ?? 'en_US';
-        $projection = $this->projections->build($sacrament, $language, $locale);
+        $projection = $this->projections->build($sacrament, $language, $locale, $options);
         $template = $this->templates->forTypeCode((string) $sacrament->sacramentType->code);
+        $projection = $this->stampTemplate($projection, $template);
 
         $cert = SacramentCertificate::create([
             'tenant_id' => $tenantId,
@@ -83,18 +143,20 @@ class SacramentCertificateService
     }
 
     /**
-     * First (or next) issued certificate. Sacrament must already be committed.
-     *
-     * @param  array{language?:string, locale?:string}  $options
+     * @param  array{language?:string, locale?:string, paper?:string}  $options
      */
     public function generate(int $sacramentId, int $tenantId, ?int $actorId = null, array $options = []): SacramentCertificate
     {
         $sacrament = $this->assertIssuable($sacramentId, $tenantId);
         $language = $options['language'] ?? 'en';
         $locale = $options['locale'] ?? 'en_US';
-        $projection = $this->projections->build($sacrament, $language, $locale);
+        $projection = $this->projections->build($sacrament, $language, $locale, $options);
         $template = $this->templates->forTypeCode((string) $sacrament->sacramentType->code);
+        $projection = $this->stampTemplate($projection, $template);
         $version = $this->nextVersion($sacrament->id, $tenantId);
+        $token = $this->qr->mintToken();
+        $projection['issued_at'] = now()->toIso8601String();
+        $projection = $this->attachVerification($projection, $token);
 
         $previousIssued = SacramentCertificate::query()
             ->where('tenant_id', $tenantId)
@@ -104,10 +166,13 @@ class SacramentCertificateService
             ->first();
 
         $cert = DB::transaction(function () use (
-            $tenantId, $sacrament, $template, $version, $language, $locale, $projection, $actorId, $previousIssued
+            $tenantId, $sacrament, $template, $version, $language, $locale, $projection, $actorId, $previousIssued, $token
         ) {
             if ($previousIssued) {
-                $previousIssued->update(['status' => SacramentCertificateStatus::SUPERSEDED]);
+                $previousIssued->update([
+                    'status' => SacramentCertificateStatus::SUPERSEDED,
+                    'verification_revoked_at' => now(),
+                ]);
             }
 
             return SacramentCertificate::create([
@@ -125,14 +190,19 @@ class SacramentCertificateService
                 'issued_at' => now(),
                 'issued_by' => $actorId,
                 'supersedes_certificate_id' => $previousIssued?->id,
+                'verification_token' => $token,
             ]);
         });
 
-        // PDF after commit — failure must not roll back sacrament or issued row metadata.
         try {
-            $pdfBytes = $this->pdf->render($projection);
-            $stored = $this->storage->store($tenantId, $sacrament->id, $version, $pdfBytes);
-            $cert->update($stored);
+            $artifacts = $this->renderer->renderIssueArtifacts($projection);
+            $stored = $this->storage->store($tenantId, $sacrament->id, $version, (string) $artifacts['pdf']);
+            $htmlKey = $this->storage->storeHtml($tenantId, $sacrament->id, $version, $artifacts['html']);
+            $projection['render']['pdf_engine'] = $artifacts['pdf_engine'];
+            $cert->update(array_merge($stored, [
+                'html_storage_key' => $htmlKey,
+                'projection_json' => $projection,
+            ]));
         } catch (Throwable $e) {
             $this->audit->log(
                 $tenantId,
@@ -160,9 +230,7 @@ class SacramentCertificateService
     }
 
     /**
-     * Reissue: new version from current sacrament snapshots; prior issued → superseded.
-     *
-     * @param  array{language?:string, locale?:string}  $options
+     * @param  array{language?:string, locale?:string, paper?:string}  $options
      */
     public function reissue(int $certificateId, int $tenantId, ?int $actorId = null, array $options = []): SacramentCertificate
     {
@@ -177,11 +245,125 @@ class SacramentCertificateService
         return $this->generate((int) $existing->sacrament_id, $tenantId, $actorId, $options);
     }
 
+    public function void(int $certificateId, int $tenantId, ?int $actorId = null): SacramentCertificate
+    {
+        $cert = $this->findCertificate($certificateId, $tenantId);
+        if ($cert->status === SacramentCertificateStatus::VOIDED) {
+            return $cert;
+        }
+
+        $before = $this->certSnapshot($cert);
+        $cert->update([
+            'status' => SacramentCertificateStatus::VOIDED,
+            'verification_revoked_at' => now(),
+        ]);
+        $this->audit->log(
+            $tenantId,
+            'certificate_void',
+            (string) $cert->id,
+            $before,
+            $this->certSnapshot($cert->fresh()),
+            ['actor_id' => $actorId],
+            'sacrament_certificate'
+        );
+
+        return $cert->fresh();
+    }
+
+    /**
+     * Frozen HTML for print. Issued rows never re-read Tenant/FamilyMember.
+     */
+    public function printHtml(int $certificateId, int $tenantId): string
+    {
+        $cert = $this->findCertificate($certificateId, $tenantId);
+        if (is_string($cert->html_storage_key) && $cert->html_storage_key !== '') {
+            try {
+                return $this->storage->get($cert->html_storage_key);
+            } catch (Throwable) {
+                // Rebuild from frozen projection below.
+            }
+        }
+
+        $projection = is_array($cert->projection_json) ? $cert->projection_json : [];
+        if ($projection === []) {
+            throw new SacramentBusinessRuleException(
+                'certificate_file_missing',
+                'Certificate file is not available.',
+                [],
+                404
+            );
+        }
+
+        $this->audit->log(
+            $tenantId,
+            'certificate_print',
+            (string) $cert->id,
+            null,
+            null,
+            ['sacrament_id' => $cert->sacrament_id],
+            'sacrament_certificate'
+        );
+
+        return $this->html->render($projection);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function publicVerify(string $token): array
+    {
+        $cert = SacramentCertificate::query()
+            ->where('verification_token', $token)
+            ->first();
+
+        if (! $cert) {
+            throw new SacramentBusinessRuleException(
+                'certificate_not_found',
+                'This certificate could not be verified.',
+                [],
+                404
+            );
+        }
+
+        $projection = is_array($cert->projection_json) ? $cert->projection_json : [];
+        $view = is_array($projection['certificate_view'] ?? null) ? $projection['certificate_view'] : [];
+        $church = is_array($view['church'] ?? null) ? $view['church'] : [];
+        $voided = $cert->status === SacramentCertificateStatus::VOIDED
+            || $cert->verification_revoked_at !== null
+            || $cert->status === SacramentCertificateStatus::SUPERSEDED;
+
+        $this->audit->log(
+            (int) $cert->tenant_id,
+            'certificate_verify',
+            (string) $cert->id,
+            null,
+            null,
+            ['voided' => $voided],
+            'sacrament_certificate'
+        );
+
+        $recipient = $view['recipientName']
+            ?? ((string) ($view['groomName'] ?? '').' & '.(string) ($view['brideName'] ?? ''));
+
+        return [
+            'sacrament_title' => $view['certificateTitle'] ?? null,
+            'recipient_name' => is_string($recipient) ? trim($recipient, ' &') : null,
+            'date_of_event' => $view['dateOfEvent'] ?? ($projection['sacrament']['date_administered'] ?? null),
+            'parish_name' => $church['name'] ?? ($projection['church']['name'] ?? null),
+            'certificate_number' => $view['registry']['certificateNumber'] ?? $cert->certificate_number,
+            'status' => $voided ? 'voided' : 'issued',
+        ];
+    }
+
     /**
      * @return array{certificate:SacramentCertificate, bytes:string, filename:string}
      */
-    public function download(int $certificateId, int $tenantId): array
-    {
+    public function download(
+        int $certificateId,
+        int $tenantId,
+        ?string $ipAddress = null,
+        ?string $userAgent = null
+    ): array {
         $cert = $this->findCertificate($certificateId, $tenantId);
 
         if ($cert->status === SacramentCertificateStatus::DRAFT_PREVIEW) {
@@ -192,7 +374,6 @@ class SacramentCertificateService
         }
 
         if (! $cert->storage_key) {
-            // Best-effort: rebuild PDF from frozen projection (still no live member reads).
             if (! is_array($cert->projection_json)) {
                 throw new SacramentBusinessRuleException(
                     'certificate_file_missing',
@@ -223,7 +404,10 @@ class SacramentCertificateService
             [
                 'sacrament_id' => $cert->sacrament_id,
                 'version' => $cert->version,
+                'template_version' => $cert->template_version,
                 'checksum' => $cert->checksum,
+                'ip_address' => $ipAddress,
+                'device_snapshot' => $userAgent !== null ? Str::limit($userAgent, 120) : null,
             ],
             'sacrament_certificate'
         );
@@ -241,10 +425,6 @@ class SacramentCertificateService
         ];
     }
 
-    /**
-     * After sacrament Correct: mark issued certificates superseded (ADR-10).
-     * Does not auto-generate a new PDF — staff must Generate / Reissue explicitly.
-     */
     public function supersedeIssuedForSacrament(int $sacramentId, int $tenantId, ?string $reason = null): int
     {
         $issued = SacramentCertificate::query()
@@ -255,7 +435,10 @@ class SacramentCertificateService
 
         foreach ($issued as $cert) {
             $before = $this->certSnapshot($cert);
-            $cert->update(['status' => SacramentCertificateStatus::SUPERSEDED]);
+            $cert->update([
+                'status' => SacramentCertificateStatus::SUPERSEDED,
+                'verification_revoked_at' => now(),
+            ]);
             $this->audit->log(
                 $tenantId,
                 'certificate_superseded',
@@ -328,13 +511,46 @@ class SacramentCertificateService
     }
 
     /**
+     * @param  array<string, mixed>  $projection
+     * @param  array{template_code:string, template_version:string, title:string}  $template
+     * @return array<string, mixed>
+     */
+    private function stampTemplate(array $projection, array $template): array
+    {
+        $render = is_array($projection['render'] ?? null) ? $projection['render'] : [];
+        $render['template_code'] = $template['template_code'];
+        $render['template_version'] = $template['template_version'];
+        $projection['render'] = $render;
+        $projection['certificate_view'] = $this->views->assemble($projection);
+
+        return $projection;
+    }
+
+    /**
+     * @param  array<string, mixed>  $projection
+     * @return array<string, mixed>
+     */
+    private function attachVerification(array $projection, string $token): array
+    {
+        $url = $this->qr->verifyUrl($token);
+        $projection['verification'] = [
+            'url' => $url,
+            'qr_data_uri' => $this->qr->dataUri($url),
+        ];
+        $projection['certificate_view'] = $this->views->assemble($projection);
+
+        return $projection;
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function certSnapshot(SacramentCertificate $cert): array
     {
         return $cert->only([
             'id', 'sacrament_id', 'status', 'version', 'template_code', 'template_version',
-            'language', 'locale', 'checksum', 'storage_key', 'issued_at', 'supersedes_certificate_id',
+            'language', 'locale', 'checksum', 'storage_key', 'html_storage_key', 'issued_at',
+            'supersedes_certificate_id',
         ]);
     }
 }

@@ -5,6 +5,7 @@ namespace Modules\Family\app\Http\Controllers;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Modules\Family\app\Services\PersonIdentityReconciliationService;
 use Modules\Family\app\Services\PersonMatchService;
 use Modules\Family\app\Services\PersonService;
 use Modules\Tenants\Support\TenantContext;
@@ -13,7 +14,8 @@ class PersonController extends Controller
 {
     public function __construct(
         protected PersonService $personService,
-        protected PersonMatchService $matchService
+        protected PersonMatchService $matchService,
+        protected PersonIdentityReconciliationService $reconciliationService,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -40,11 +42,43 @@ class PersonController extends Controller
     {
         $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
         $person = $this->personService->resolve($id, $tenantId);
+        $this->authorize('view', $person);
         $person->load(['activeFamilyMember.family']);
 
         return response()->json([
             'success' => true,
             'data' => $person,
+        ]);
+    }
+
+    public function reconcileIdentity(Request $request, string $id): JsonResponse
+    {
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+        $person = $this->personService->resolve($id, $tenantId);
+        $this->authorize('reconcile', $person);
+
+        $validated = $request->validate([
+            'field' => 'required|string|max:64',
+            'new_value' => 'nullable|string|max:500',
+            'source_selected' => 'nullable|string|max:64',
+            'reason' => 'required|string|max:1000',
+            'name_parts' => 'nullable|array',
+            'name_parts.first_name' => 'nullable|string|max:100',
+            'name_parts.middle_name' => 'nullable|string|max:100',
+            'name_parts.last_name' => 'nullable|string|max:100',
+        ]);
+
+        $updated = $this->reconciliationService->reconcile(
+            $person,
+            $tenantId,
+            $validated,
+            $request->user()?->id
+        );
+
+        return response()->json([
+            'success' => true,
+            'data' => $updated,
+            'message' => 'Canonical member information updated.',
         ]);
     }
 

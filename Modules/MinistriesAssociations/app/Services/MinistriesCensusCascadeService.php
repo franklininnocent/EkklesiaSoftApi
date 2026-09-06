@@ -18,9 +18,7 @@ class MinistriesCensusCascadeService
         'deleted',
     ];
 
-    public function __construct(private readonly MinistriesAuditService $auditService)
-    {
-    }
+    public function __construct(private readonly MinistriesAuditService $auditService) {}
 
     public function shouldProcess(string $previousStatus, string $newStatus): bool
     {
@@ -70,7 +68,6 @@ class MinistriesCensusCascadeService
                 ->where('family_member_id', $familyMemberId)
                 ->where('member_source', OrganizationMembership::SOURCE_PARISH)
                 ->where('is_current', true)
-                ->where('status', OrganizationMembership::STATUS_ACTIVE)
                 ->lockForUpdate()
                 ->get();
 

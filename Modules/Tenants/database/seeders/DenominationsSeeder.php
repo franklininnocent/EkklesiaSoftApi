@@ -2,13 +2,13 @@
 
 namespace Modules\Tenants\Database\Seeders;
 
+use Carbon\Carbon;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
-use Carbon\Carbon;
 
 /**
  * Denominations Seeder
- * 
+ *
  * Seeds the denominations table with major Christian denominations.
  * This provides a standardized lookup table for church classification.
  */
@@ -42,7 +42,7 @@ class DenominationsSeeder extends Seeder
                 'active' => 1,
                 'display_order' => 3,
             ],
-            
+
             // Eastern Catholic Churches (Indian Rites)
             [
                 'name' => 'Syro-Malabar Catholic',
@@ -65,7 +65,14 @@ class DenominationsSeeder extends Seeder
                 'active' => 1,
                 'display_order' => 33,
             ],
-            
+            [
+                'name' => 'Church of South India',
+                'code' => 'CSI',
+                'description' => 'Church of South India, a united Protestant church in India',
+                'active' => 1,
+                'display_order' => 34,
+            ],
+
             // Protestant - Major Denominations
             [
                 'name' => 'Anglican/Episcopal',
@@ -102,7 +109,7 @@ class DenominationsSeeder extends Seeder
                 'active' => 1,
                 'display_order' => 8,
             ],
-            
+
             // Pentecostal & Charismatic
             [
                 'name' => 'Pentecostal',
@@ -125,7 +132,7 @@ class DenominationsSeeder extends Seeder
                 'active' => 1,
                 'display_order' => 11,
             ],
-            
+
             // Other Protestant
             [
                 'name' => 'Evangelical',
@@ -155,7 +162,7 @@ class DenominationsSeeder extends Seeder
                 'active' => 1,
                 'display_order' => 15,
             ],
-            
+
             // Historical Churches
             [
                 'name' => 'Coptic',
@@ -171,7 +178,7 @@ class DenominationsSeeder extends Seeder
                 'active' => 1,
                 'display_order' => 17,
             ],
-            
+
             // Other
             [
                 'name' => 'Interdenominational',

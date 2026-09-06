@@ -11,6 +11,7 @@ use Modules\Tenants\Export\TenantExportStorage;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Models\TenantDataExport;
 use Modules\Tenants\Support\TenantContext;
+use Modules\Tenants\Support\TenantContextBinder;
 use RuntimeException;
 use Throwable;
 use ZipArchive;
@@ -210,24 +211,22 @@ class TenantDataExportOrchestrator
     {
         $actorId = $export->requested_by ? (int) $export->requested_by : null;
         $homeTenantId = null;
+
         if ($actorId) {
             $user = User::query()->find($actorId);
             if ($user) {
-                Auth::setUser($user);
                 if ($user->tenant_id) {
                     $homeTenantId = (int) $user->tenant_id;
                 }
+
+                TenantContextBinder::bind((int) $export->tenant_id, $actorId, $homeTenantId);
+                Auth::setUser($user);
+
+                return;
             }
         }
 
-        $context = new TenantContext(
-            $actorId,
-            $homeTenantId,
-            (int) $export->tenant_id,
-            null,
-            null
-        );
-        app()->instance(TenantContext::class, $context);
+        TenantContextBinder::bind((int) $export->tenant_id, $actorId, $homeTenantId);
     }
 
     private function updateModuleProgress(

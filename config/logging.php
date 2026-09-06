@@ -139,6 +139,22 @@ return [
             'replace_placeholders' => true,
         ],
 
+        'platform' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/platform.log'),
+            'level' => env('LOG_LEVEL', 'info'),
+            'days' => env('PLATFORM_LOG_DAYS', 30),
+            'replace_placeholders' => true,
+        ],
+
+        'security' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/security.log'),
+            'level' => 'warning',
+            'days' => env('SECURITY_LOG_DAYS', 90),
+            'replace_placeholders' => true,
+        ],
+
     ],
 
 ];

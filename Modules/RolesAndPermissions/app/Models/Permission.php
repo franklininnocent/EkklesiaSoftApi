@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Authentication\Models\Role;
 use Modules\Authentication\Models\User;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Support\TenantCacheVersion;
 
 class Permission extends Model
 {
@@ -243,6 +244,9 @@ class Permission extends Model
             $this->users()->attach($user->id);
             // Clear user's permission cache
             $user->clearPermissionsCache();
+            if ($user->tenant_id) {
+                TenantCacheVersion::bump((int) $user->tenant_id);
+            }
         }
     }
 
@@ -256,6 +260,9 @@ class Permission extends Model
         $this->users()->detach($user->id);
         // Clear user's permission cache
         $user->clearPermissionsCache();
+        if ($user->tenant_id) {
+            TenantCacheVersion::bump((int) $user->tenant_id);
+        }
     }
 }
 
