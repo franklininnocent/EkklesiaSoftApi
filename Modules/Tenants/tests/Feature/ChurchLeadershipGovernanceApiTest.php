@@ -544,4 +544,38 @@ class ChurchLeadershipGovernanceApiTest extends TestCase
             'target_id' => $assignmentId,
         ]);
     }
+
+    #[Test]
+    public function handover_updates_current_parish_priest_for_leadership_api(): void
+    {
+        $this->authenticateAdmin();
+
+        $pastorA = $this->makePerson('Pastor', 'Alpha');
+        $pastorB = $this->makePerson('Pastor', 'Beta');
+
+        $assignResponse = $this->postJson('/api/church-profile/leadership/assign', [
+            'person_id' => $pastorA->id,
+            'role_id' => $this->pastorRole->id,
+            'start_date' => '2024-01-01',
+        ])->assertCreated();
+
+        $outgoingId = $assignResponse->json('data.id');
+
+        $this->postJson('/api/church-profile/leadership/handover', [
+            'outgoing_assignment_id' => $outgoingId,
+            'outgoing_end_date' => '2025-12-31',
+            'outgoing_exit_reason_code' => 'transfer',
+            'person_id' => $pastorB->id,
+            'role_id' => $this->pastorRole->id,
+            'start_date' => '2026-01-01',
+        ])->assertOk();
+
+        $current = $this->getJson('/api/church-profile/leadership/current')->assertOk();
+        $assignments = collect($current->json('data.assignments'));
+        $activePastor = $assignments->first(fn (array $row) => ($row['role']['title'] ?? null) === 'Pastor'
+            && ($row['status'] ?? null) === LeadershipAssignmentStatus::ACTIVE);
+
+        $this->assertNotNull($activePastor);
+        $this->assertSame($pastorB->id, $activePastor['person']['id']);
+    }
 }

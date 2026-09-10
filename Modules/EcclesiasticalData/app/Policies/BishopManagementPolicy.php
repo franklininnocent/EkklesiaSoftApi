@@ -4,55 +4,49 @@ namespace Modules\EcclesiasticalData\Policies;
 
 use Modules\Authentication\Models\User;
 use Modules\EcclesiasticalData\Models\BishopManagement;
+use Modules\EcclesiasticalData\Policies\Concerns\AuthorizesEcclesiasticalPermission;
 
 class BishopManagementPolicy
 {
-    /**
-     * Determine if user can view any bishops
-     */
+    use AuthorizesEcclesiasticalPermission;
+
     public function viewAny(User $user): bool
     {
-        return $user->is_primary_admin || 
-               $user->role?->name === 'SuperAdmin' ||
-               $user->permissions->contains('name', 'view_bishops');
+        return $this->allowsPlatform($user, 'bishops.view');
     }
 
-    /**
-     * Determine if user can view the bishop
-     */
     public function view(User $user, BishopManagement $bishop): bool
     {
         return $this->viewAny($user);
     }
 
-    /**
-     * Determine if user can create bishops
-     */
     public function create(User $user): bool
     {
-        return $user->is_primary_admin || 
-               $user->role?->name === 'SuperAdmin' ||
-               $user->permissions->contains('name', 'create_bishops');
+        return $this->allowsPlatform($user, 'bishops.create');
     }
 
-    /**
-     * Determine if user can update the bishop
-     */
     public function update(User $user, BishopManagement $bishop): bool
     {
-        return $user->is_primary_admin || 
-               $user->role?->name === 'SuperAdmin' ||
-               $user->permissions->contains('name', 'edit_bishops');
+        return $this->allowsPlatform($user, 'bishops.update');
     }
 
-    /**
-     * Determine if user can delete the bishop
-     */
     public function delete(User $user, BishopManagement $bishop): bool
     {
-        return $user->is_primary_admin || 
-               $user->role?->name === 'SuperAdmin' ||
-               $user->permissions->contains('name', 'delete_bishops');
+        return $this->allowsPlatform($user, 'bishops.archive');
+    }
+
+    public function manageAppointments(User $user, BishopManagement $bishop): bool
+    {
+        return $this->allowsPlatform($user, 'bishops.manage_appointments');
+    }
+
+    public function manageImages(User $user, BishopManagement $bishop): bool
+    {
+        return $this->allowsPlatform($user, 'bishops.manage_images');
+    }
+
+    public function viewAudit(User $user, BishopManagement $bishop): bool
+    {
+        return $this->allowsPlatform($user, 'bishops.view_audit');
     }
 }
-

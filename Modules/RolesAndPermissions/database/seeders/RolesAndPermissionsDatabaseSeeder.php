@@ -37,6 +37,13 @@ class RolesAndPermissionsDatabaseSeeder extends Seeder
             $this->call(PastoralCarePermissionSeeder::class);
         }
 
+        if (class_exists(\Modules\EcclesiasticalData\Database\Seeders\EcclesiasticalPermissionSeeder::class)) {
+            $this->call([
+                \Modules\EcclesiasticalData\Database\Seeders\EcclesiasticalPermissionSeeder::class,
+                \Modules\EcclesiasticalData\Database\Seeders\EcclesiasticalRoleSeeder::class,
+            ]);
+        }
+
         $this->command->line('');
         $this->command->info('✅ RolesAndPermissions Module seeded successfully!');
     }

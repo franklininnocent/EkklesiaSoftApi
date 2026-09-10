@@ -11,6 +11,7 @@ use Modules\Sacraments\Support\SacramentParticipantRole;
 use Modules\Sacraments\Support\SacramentParticipantSource;
 use Modules\Sacraments\Support\SacramentTypeCode;
 use Modules\Tenants\Models\ChurchLeadership;
+use Modules\Tenants\Models\LeadershipAssignment;
 
 /**
  * Validates participant payloads against SacramentDefinition + source/affiliation invariants.
@@ -254,11 +255,35 @@ class SacramentParticipantValidator
         }
 
         if ($source === SacramentParticipantSource::INTERNAL_LEADERSHIP) {
+            $assignmentId = $raw['leadership_assignment_id'] ?? null;
             $leadershipId = $raw['church_leadership_id'] ?? null;
+
+            if ($assignmentId) {
+                $assignment = LeadershipAssignment::query()
+                    ->forTenant($tenantId)
+                    ->whereKey($assignmentId)
+                    ->with(['person', 'role'])
+                    ->first();
+
+                if (! $assignment) {
+                    throw new SacramentBusinessRuleException(
+                        'cross_tenant_member',
+                        'Leadership assignment not found in this parish.',
+                        ['index' => $index, 'leadership_assignment_id' => $assignmentId]
+                    );
+                }
+
+                $row['leadership_assignment_id'] = $assignment->id;
+                $row['church_leadership_id'] = null;
+                $row['_resolved_leadership_assignment'] = $assignment;
+
+                return $row;
+            }
+
             if (! $leadershipId) {
                 throw new SacramentBusinessRuleException(
                     'invalid_participant_source',
-                    'church_leadership_id is required when source is internal_leadership.',
+                    'leadership_assignment_id or church_leadership_id is required when source is internal_leadership.',
                     ['index' => $index, 'role' => $role]
                 );
             }

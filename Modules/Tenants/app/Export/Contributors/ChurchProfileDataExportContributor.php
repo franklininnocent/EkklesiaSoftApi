@@ -57,7 +57,7 @@ class ChurchProfileDataExportContributor implements TenantDataExportContributor
                     ],
                     ChurchProfile::query()
                         ->where('tenant_id', $tenantId)
-                        ->with(['denomination:id,name', 'archdiocese:id,name', 'bishop:id,full_name']),
+                        ->with(['denomination:id,name', 'archdiocese:id,name']),
                     $chunkSize,
                     $onProgress,
                     fn ($row) => [
@@ -66,8 +66,8 @@ class ChurchProfileDataExportContributor implements TenantDataExportContributor
                         $row->denomination?->name,
                         $row->archdiocese_id,
                         $row->archdiocese?->name,
-                        $row->bishop_id,
-                        $row->bishop?->full_name,
+                        ($bishop = $row->resolvePresidingBishop())?->id,
+                        $bishop?->full_name,
                         $row->founded_year,
                         $row->country,
                         $row->phone,

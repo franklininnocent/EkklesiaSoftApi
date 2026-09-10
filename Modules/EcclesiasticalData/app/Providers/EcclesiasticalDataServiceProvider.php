@@ -43,7 +43,9 @@ class EcclesiasticalDataServiceProvider extends ServiceProvider
      */
     protected function registerCommands(): void
     {
-        // $this->commands([]);
+        $this->commands([
+            \Modules\EcclesiasticalData\Console\Commands\RepairDiocesanOrdinariesCommand::class,
+        ]);
     }
 
     /**

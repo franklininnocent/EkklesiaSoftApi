@@ -69,7 +69,7 @@ class CertificateProjectionBuilder
             ->all();
 
         $code = SacramentTypeCode::normalize((string) $type->code) ?? strtoupper((string) $type->code);
-        $church = $this->freezeChurch((int) $sacrament->tenant_id);
+        $church = $this->resolveChurchContext($sacrament);
         $denominationType = (string) $church['denomination_type'];
         $engineType = DenominationMapper::engineSacramentType($code, $denominationType);
         $themeId = $options['theme_id'] ?? DenominationMapper::themeId($denominationType);
@@ -122,6 +122,9 @@ class CertificateProjectionBuilder
             ],
             'participants' => $participants,
             'church' => $church,
+            'leadership_context' => is_array($sacrament->leadership_context_json)
+                ? $sacrament->leadership_context_json
+                : null,
             'render' => [
                 'template_code' => null,
                 'template_version' => null,
@@ -136,6 +139,19 @@ class CertificateProjectionBuilder
         $projection['certificate_view'] = $this->views->assemble($projection);
 
         return $projection;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function resolveChurchContext(Sacrament $sacrament): array
+    {
+        $context = $sacrament->leadership_context_json;
+        if (is_array($context) && is_array($context['church'] ?? null)) {
+            return $context['church'];
+        }
+
+        return $this->freezeChurch((int) $sacrament->tenant_id);
     }
 
     /**

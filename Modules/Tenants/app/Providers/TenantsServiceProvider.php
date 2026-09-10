@@ -78,6 +78,10 @@ class TenantsServiceProvider extends ServiceProvider
         $this->app->singleton(\Modules\Tenants\Services\TenantAuthorizationService::class);
         $this->app->singleton(\Modules\Tenants\Services\PlatformAuditLogger::class);
         $this->app->singleton(\Modules\Tenants\Support\AuditPiiRedactor::class);
+        $this->app->singleton(
+            \Modules\Tenants\Support\SubscriptionRouteAllowlist::class,
+            static fn () => \Modules\Tenants\Support\SubscriptionRouteAllowlist::fromConfig()
+        );
 
         $this->app->singleton(TenantDataExportContributorRegistry::class, static function () {
             $registry = new TenantDataExportContributorRegistry;
@@ -115,6 +119,7 @@ class TenantsServiceProvider extends ServiceProvider
             \Modules\Tenants\Console\Commands\CleanupLoadTestData::class,
             \Modules\Tenants\Console\Commands\ExportCrossTenantPenetrationManifest::class,
             \Modules\Tenants\Console\Commands\PlatformProductionCheck::class,
+            \Modules\Tenants\Console\Commands\ProcessSubscriptionLifecycle::class,
         ]);
     }
 
@@ -139,6 +144,12 @@ class TenantsServiceProvider extends ServiceProvider
                         $this->weeklyDayNumber((string) config('tenants.platform.scheduler.audit_cleanup_day', 'sunday')),
                         (string) config('tenants.platform.scheduler.audit_cleanup_time', '03:00'),
                     )
+                    ->withoutOverlapping();
+            }
+
+            if (config('tenants.subscription.lifecycle.scheduler_enabled', true)) {
+                $schedule->command('tenants:subscription-lifecycle')
+                    ->hourlyAt((int) substr((string) config('tenants.subscription.lifecycle.scheduler_time', '01:15'), 3, 2))
                     ->withoutOverlapping();
             }
         });

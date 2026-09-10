@@ -19,28 +19,46 @@ use Modules\Tenants\Http\Requests\StoreTenantRequest;
 use Modules\Tenants\Http\Requests\UpdateTenantRequest;
 use Modules\Tenants\Models\SubscriptionDurationOption;
 use Modules\Tenants\Models\SubscriptionPlan;
+use Modules\Tenants\Models\SubscriptionSettings;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Models\TenantStatusAudit;
+use Modules\Tenants\Http\Resources\TenantDetailsResource;
 use Modules\Tenants\Services\AddressService;
 use Modules\Tenants\Services\FileUploadService;
 use Modules\Tenants\Services\SubscriptionService;
+use Modules\Tenants\Services\TenantDetailsService;
 
 class TenantsController extends Controller
 {
+    private const TENANT_LIST_SORT_COLUMNS = [
+        'name',
+        'slug',
+        'plan',
+        'active',
+        'created_at',
+        'tenant_tier',
+        'users_count',
+        'active_users_count',
+    ];
+
     protected $fileUploadService;
 
     protected $addressService;
 
     protected SubscriptionService $subscriptionService;
 
+    protected TenantDetailsService $tenantDetailsService;
+
     public function __construct(
         FileUploadService $fileUploadService,
         AddressService $addressService,
-        SubscriptionService $subscriptionService
+        SubscriptionService $subscriptionService,
+        TenantDetailsService $tenantDetailsService
     ) {
         $this->fileUploadService = $fileUploadService;
         $this->addressService = $addressService;
         $this->subscriptionService = $subscriptionService;
+        $this->tenantDetailsService = $tenantDetailsService;
     }
 
     /**
@@ -61,34 +79,15 @@ class TenantsController extends Controller
 
             $query = Tenant::query();
 
-            // Apply filters
-            if ($request->has('active')) {
-                $query->where('active', $request->active);
-            }
+            $this->applyTenantListFilters($query, $request);
+            $this->applyTenantListSorting($query, $request);
 
-            if ($request->has('plan')) {
-                $query->where('plan', $request->plan);
-            }
-
-            if ($request->has('search')) {
-                $search = $request->search;
-                $query->where(function ($q) use ($search) {
-                    $q->where('name', 'like', "%{$search}%")
-                        ->orWhere('slug', 'like', "%{$search}%")
-                        ->orWhereHas('primaryContact', function ($q) use ($search) {
-                            $q->where('name', 'like', "%{$search}%")
-                                ->orWhere('email', 'like', "%{$search}%");
-                        });
-                });
-            }
-
-            // Sorting
-            $sortBy = $request->get('sort_by', 'created_at');
-            $sortOrder = $request->get('sort_order', 'desc');
-            $query->orderBy($sortBy, $sortOrder);
-
-            // Eager load relationships
-            $query->with(['creator', 'updater', 'addresses', 'primaryContact.addresses', 'secondaryContact.addresses']);
+            // Eager load relationships and user counts for list density columns
+            $query->with(['creator', 'updater', 'addresses', 'primaryContact.addresses', 'secondaryContact.addresses'])
+                ->withCount([
+                    'users as users_count',
+                    'users as active_users_count' => fn ($q) => $q->where('active', 1),
+                ]);
 
             // Pagination
             $perPage = $request->get('per_page', 15);
@@ -96,12 +95,8 @@ class TenantsController extends Controller
             if ($perPage === 'all') {
                 $tenants = $query->get();
 
-                // Generate full logo URLs for all tenants
-                $tenants->each(function ($tenant) {
-                    if ($tenant->logo_url) {
-                        $tenant->logo_full_url = $this->fileUploadService->getTenantLogoUrl($tenant->logo_url);
-                    }
-                });
+                // Generate full logo URLs and subscription snapshot for all tenants
+                $tenants->each(fn ($tenant) => $this->decorateTenantForListResponse($tenant));
 
                 $result = [
                     'success' => true,
@@ -111,14 +106,10 @@ class TenantsController extends Controller
             } else {
                 $tenants = $query->paginate($perPage);
 
-                // Generate full logo URLs for all tenants
-                $tenants->getCollection()->transform(function ($tenant) {
-                    if ($tenant->logo_url) {
-                        $tenant->logo_full_url = $this->fileUploadService->getTenantLogoUrl($tenant->logo_url);
-                    }
-
-                    return $tenant;
-                });
+                // Generate full logo URLs and subscription snapshot for all tenants
+                $tenants->getCollection()->transform(
+                    fn ($tenant) => $this->decorateTenantForListResponse($tenant)
+                );
 
                 $result = [
                     'success' => true,
@@ -204,6 +195,46 @@ class TenantsController extends Controller
                 'message' => 'Tenant not found',
                 'error' => config('app.debug') ? $e->getMessage() : 'Tenant not found',
             ], 404);
+        }
+    }
+
+    /**
+     * Platform-admin 360° tenant snapshot for the explicitly requested tenant.
+     *
+     * @route GET /api/tenant/{id}/details
+     */
+    public function details(int $id): JsonResponse
+    {
+        try {
+            if (! $this->canManageTenants()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized',
+                ], 403);
+            }
+
+            $snapshot = $this->tenantDetailsService->build($id);
+
+            return response()->json([
+                'success' => true,
+                'data' => new TenantDetailsResource($snapshot),
+            ]);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tenant not found',
+            ], 404);
+        } catch (\Exception $e) {
+            Log::error('Error fetching tenant details snapshot: '.$e->getMessage(), [
+                'tenant_id' => $id,
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error fetching tenant details',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
         }
     }
 
@@ -2206,6 +2237,119 @@ class TenantsController extends Controller
                 'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
             ], 500);
         }
+    }
+
+    /**
+     * Attach list-only presentation fields (logo URL, resolved subscription state).
+     */
+    private function decorateTenantForListResponse(Tenant $tenant): Tenant
+    {
+        if ($tenant->logo_url) {
+            $tenant->logo_full_url = $this->fileUploadService->getTenantLogoUrl($tenant->logo_url);
+        }
+
+        $tenant->subscription_status = $this->subscriptionService->resolveStatus($tenant);
+        $tenant->access_mode = $this->subscriptionService->accessMode($tenant);
+
+        return $tenant;
+    }
+
+    /**
+     * Apply list filters for tenant index queries.
+     */
+    private function applyTenantListFilters($query, Request $request): void
+    {
+        if ($request->filled('active')) {
+            $query->where('active', (int) $request->active);
+        }
+
+        if ($request->filled('plan')) {
+            $query->where('plan', $request->plan);
+        }
+
+        if ($request->filled('tenant_tier')) {
+            $query->where('tenant_tier', $request->tenant_tier);
+        }
+
+        if ($request->filled('archdiocese_id')) {
+            $archdioceseId = (int) $request->archdiocese_id;
+            $query->whereHas('churchProfile', function ($q) use ($archdioceseId) {
+                $q->where('archdiocese_id', $archdioceseId);
+            });
+        }
+
+        if ($request->filled('subscription_status')) {
+            $status = $request->subscription_status;
+            $graceDays = max(0, (int) SubscriptionSettings::current()->grace_period_days);
+
+            if ($status === 'trial') {
+                $query->inTrial();
+            } elseif ($status === 'subscribed') {
+                $query->whereNull('subscription_suspended_at')
+                    ->where(function ($q) use ($graceDays) {
+                        $q->whereNull('subscription_ends_at')
+                            ->orWhere('subscription_ends_at', '>', now())
+                            ->orWhereRaw(
+                                'subscription_ends_at + (? * interval \'1 day\') >= ?',
+                                [$graceDays, now()]
+                            );
+                    });
+            } elseif ($status === 'grace') {
+                $query->whereNull('subscription_suspended_at')
+                    ->whereNotNull('subscription_ends_at')
+                    ->where('subscription_ends_at', '<=', now())
+                    ->whereRaw(
+                        'subscription_ends_at + (? * interval \'1 day\') >= ?',
+                        [$graceDays, now()]
+                    );
+            } elseif ($status === 'suspended') {
+                $query->whereNotNull('subscription_suspended_at');
+            } elseif ($status === 'expired') {
+                $query->whereNull('subscription_suspended_at')
+                    ->whereNotNull('subscription_ends_at')
+                    ->whereRaw(
+                        'subscription_ends_at + (? * interval \'1 day\') < ?',
+                        [$graceDays, now()]
+                    )
+                    ->where(function ($q) {
+                        $q->whereNull('trial_ends_at')
+                            ->orWhere('trial_ends_at', '<=', now());
+                    });
+            }
+        }
+
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('slug', 'like', "%{$search}%")
+                    ->orWhere('domain', 'like', "%{$search}%")
+                    ->orWhereHas('primaryContact', function ($q) use ($search) {
+                        $q->where('name', 'like', "%{$search}%")
+                            ->orWhere('email', 'like', "%{$search}%")
+                            ->orWhere('contact_number', 'like', "%{$search}%");
+                    })
+                    ->orWhereHas('secondaryContact', function ($q) use ($search) {
+                        $q->where('name', 'like', "%{$search}%")
+                            ->orWhere('email', 'like', "%{$search}%")
+                            ->orWhere('contact_number', 'like', "%{$search}%");
+                    });
+            });
+        }
+    }
+
+    /**
+     * Apply safe sorting for tenant index queries.
+     */
+    private function applyTenantListSorting($query, Request $request): void
+    {
+        $sortBy = $request->get('sort_by', 'created_at');
+        if (! in_array($sortBy, self::TENANT_LIST_SORT_COLUMNS, true)) {
+            $sortBy = 'created_at';
+        }
+
+        $sortOrder = strtolower((string) $request->get('sort_order', 'desc')) === 'asc' ? 'asc' : 'desc';
+        $query->orderBy($sortBy, $sortOrder);
     }
 
     /**

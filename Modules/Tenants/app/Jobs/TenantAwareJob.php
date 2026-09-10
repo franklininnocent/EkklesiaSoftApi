@@ -7,6 +7,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Modules\Tenants\Support\SubscriptionJobWriteGuard;
 use Modules\Tenants\Support\TenantContextBinder;
 
 /**
@@ -28,6 +29,10 @@ abstract class TenantAwareJob implements ShouldQueue
             return;
         }
 
+        if (! $this->allowsTenantMutations()) {
+            return;
+        }
+
         TenantContextBinder::bind($this->tenantId, $this->actorUserId);
 
         try {
@@ -38,4 +43,9 @@ abstract class TenantAwareJob implements ShouldQueue
     }
 
     abstract protected function handleWithTenantContext(): void;
+
+    protected function allowsTenantMutations(): bool
+    {
+        return app(SubscriptionJobWriteGuard::class)->allowsMutationsForTenantId($this->tenantId);
+    }
 }

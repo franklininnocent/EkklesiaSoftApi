@@ -4,11 +4,19 @@ namespace Modules\EcclesiasticalData\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 
+use Modules\EcclesiasticalData\Models\BishopManagement;
+
 class UpdateBishopRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return $this->user()->can('update', $this->route('bishop'));
+        $bishop = BishopManagement::query()->find($this->route('id'));
+
+        if (! $bishop) {
+            return true;
+        }
+
+        return $this->user()?->can('update', $bishop) ?? false;
     }
 
     public function rules(): array
@@ -29,7 +37,6 @@ class UpdateBishopRequest extends FormRequest
             'photo_url' => ['nullable', 'url'],
             'education' => ['nullable', 'string'],
             'status' => ['sometimes', 'in:active,retired,deceased,inactive'],
-            'is_current' => ['sometimes', 'boolean'],
         ];
     }
 }

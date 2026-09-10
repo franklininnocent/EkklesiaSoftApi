@@ -4,6 +4,7 @@ namespace Modules\Tenants\Tests\Unit;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Modules\Tenants\Jobs\TenantAwareJob;
+use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Support\TenantContext;
 use Modules\Tenants\Support\TenantContextBinder;
 use Tests\TestCase;
@@ -14,7 +15,11 @@ class TenantAwareJobTest extends TestCase
 
     public function test_it_binds_and_clears_tenant_context(): void
     {
-        $job = new class(55, 99) extends TenantAwareJob
+        $tenant = Tenant::factory()->active()->create([
+            'subscription_ends_at' => now()->addYear(),
+        ]);
+
+        $job = new class($tenant->id, 99) extends TenantAwareJob
         {
             public bool $ran = false;
 
@@ -34,7 +39,7 @@ class TenantAwareJobTest extends TestCase
         $job->handle();
 
         $this->assertTrue($job->ran);
-        $this->assertSame(55, $job->capturedTenantId);
+        $this->assertSame($tenant->id, $job->capturedTenantId);
         $this->assertSame(99, $job->capturedActorId);
         $this->assertNull(app(TenantContext::class)->effectiveTenantId());
     }

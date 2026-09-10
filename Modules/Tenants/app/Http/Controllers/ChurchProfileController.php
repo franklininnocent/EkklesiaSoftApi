@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\UploadedFile;
 use Modules\Authentication\Models\User;
+use Modules\EcclesiasticalData\Models\BishopManagement;
+use Modules\EcclesiasticalData\Services\BishopFileUploadService;
 use Modules\Tenants\Models\ChurchProfile;
 
 /**
@@ -51,14 +53,7 @@ class ChurchProfileController extends Controller
             );
 
             // Generate full URL for patron image if exists
-            $patronImageUrl = null;
-            if ($churchProfile->patron_image_path) {
-                $patronImageUrl = Storage::disk('public')->url($churchProfile->patron_image_path);
-            }
-
-            // Add patron_image_url to response
-            $churchProfileData = $churchProfile->toArray();
-            $churchProfileData['patron_image_url'] = $patronImageUrl;
+            $churchProfileData = $this->formatProfileData($churchProfile);
 
             return response()->json([
                 'success' => true,
@@ -138,15 +133,8 @@ class ChurchProfileController extends Controller
                     'bishop.archdiocese'
                 ]);
 
-                // Generate full URL for patron image if exists
-                $patronImageUrl = null;
-                if ($churchProfile->patron_image_path) {
-                    $patronImageUrl = Storage::disk('public')->url($churchProfile->patron_image_path);
-                }
-
                 // Add patron_image_url to response
-                $churchProfileData = $churchProfile->toArray();
-                $churchProfileData['patron_image_url'] = $patronImageUrl;
+                $churchProfileData = $this->formatProfileData($churchProfile);
 
                 Log::info('Church profile updated', [
                     'tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
@@ -525,6 +513,44 @@ class ChurchProfileController extends Controller
         } catch (\Exception $e) {
             Log::error('Error deleting patron image: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatProfileData(ChurchProfile $churchProfile): array
+    {
+        $churchProfile->loadMissing([
+            'denomination',
+            'archdiocese.denomination',
+            'bishop.archdiocese',
+        ]);
+
+        $data = $churchProfile->toArray();
+        $data['patron_image_url'] = $churchProfile->patron_image_path
+            ? Storage::disk('public')->url($churchProfile->patron_image_path)
+            : null;
+
+        $bishop = $churchProfile->resolvePresidingBishop();
+        $data['bishop'] = $bishop ? $this->formatBishopForResponse($bishop) : null;
+
+        return $data;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatBishopForResponse(BishopManagement $bishop): array
+    {
+        $title = $bishop->ecclesiasticalTitle?->title ?? '';
+        $uploadService = app(BishopFileUploadService::class);
+
+        return array_merge($bishop->toArray(), [
+            'title' => $title,
+            'full_title' => trim($title.' '.$bishop->full_name),
+            'photo_public_url' => $uploadService->resolvePhotoUrl($bishop->photo_path, $bishop->photo_url),
+            'has_photo' => $uploadService->hasPhoto($bishop->photo_path, $bishop->photo_url),
+        ]);
     }
 
     private function canManageChurchSettings(User $user, string $action): bool

@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Modules\Tenants\Models\PopeDetails;
+use Modules\Tenants\Services\PopeLeadershipService;
 use Illuminate\Http\UploadedFile;
 
 /**
@@ -115,19 +116,13 @@ class PopeDetailsController extends Controller
 
             DB::beginTransaction();
             try {
-                // Get or create the global pope details record
-                $popeDetails = PopeDetails::getCurrent();
-                
-                if (!$popeDetails) {
-                    $popeDetails = new PopeDetails();
-                    $popeDetails->created_by = $user->id;
-                }
+                app(PopeLeadershipService::class)->succeed([
+                    'pope_name' => $validated['pope_name'],
+                    'pope_title' => $validated['pope_title'] ?? null,
+                    'pope_effective_from' => $validated['pope_effective_from'] ?? null,
+                ], (int) $user->id);
 
-                $popeDetails->pope_name = $validated['pope_name'];
-                $popeDetails->pope_title = $validated['pope_title'] ?? null;
-                $popeDetails->pope_effective_from = $validated['pope_effective_from'] ?? null;
-                $popeDetails->updated_by = $user->id;
-                $popeDetails->save();
+                $popeDetails = PopeDetails::getCurrent();
 
                 DB::commit();
 

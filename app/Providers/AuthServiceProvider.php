@@ -6,6 +6,12 @@ use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvid
 use Illuminate\Support\Facades\Gate;
 use Modules\Authentication\Models\Role;
 use Laravel\Passport\Passport;
+use Modules\EcclesiasticalData\Models\BishopManagement;
+use Modules\EcclesiasticalData\Models\BishopUpdateRequest;
+use Modules\EcclesiasticalData\Models\DioceseManagement;
+use Modules\EcclesiasticalData\Policies\BishopManagementPolicy;
+use Modules\EcclesiasticalData\Policies\BishopUpdateRequestPolicy;
+use Modules\EcclesiasticalData\Policies\DioceseManagementPolicy;
 use Modules\RolesAndPermissions\Models\Permission;
 use Modules\RolesAndPermissions\Policies\PermissionPolicy;
 use Modules\RolesAndPermissions\Policies\RolePolicy;
@@ -21,6 +27,9 @@ class AuthServiceProvider extends ServiceProvider
     protected $policies = [
         Role::class => RolePolicy::class,
         Permission::class => PermissionPolicy::class,
+        BishopManagement::class => BishopManagementPolicy::class,
+        DioceseManagement::class => DioceseManagementPolicy::class,
+        BishopUpdateRequest::class => BishopUpdateRequestPolicy::class,
     ];
 
     /**

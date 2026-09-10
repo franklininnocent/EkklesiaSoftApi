@@ -5,6 +5,8 @@ namespace Modules\Tenants\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Modules\EcclesiasticalData\Models\BishopManagement;
+use Modules\EcclesiasticalData\Services\DioceseLeadershipQueryService;
 
 /**
  * ChurchProfile Model
@@ -74,5 +76,28 @@ class ChurchProfile extends Model
     public function bishop(): BelongsTo
     {
         return $this->belongsTo(Bishop::class);
+    }
+
+    /**
+     * Resolve the current diocesan ordinary from canonical appointment history.
+     */
+    public function resolvePresidingBishop(): ?BishopManagement
+    {
+        if (! $this->archdiocese_id) {
+            return null;
+        }
+
+        $leadership = app(DioceseLeadershipQueryService::class)
+            ->getCurrentLeadership((int) $this->archdiocese_id);
+
+        $bishopId = $leadership['ordinary']['bishop_id'] ?? null;
+
+        if (! $bishopId) {
+            return null;
+        }
+
+        return BishopManagement::query()
+            ->with('ecclesiasticalTitle')
+            ->find($bishopId);
     }
 }

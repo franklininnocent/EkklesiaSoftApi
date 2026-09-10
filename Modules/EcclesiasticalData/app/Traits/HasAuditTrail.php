@@ -42,8 +42,8 @@ trait HasAuditTrail
             'entity_type' => $this->getTable(),
             'entity_id' => $this->id ?? Str::uuid(),
             'action' => $action,
-            'old_values' => $oldValues ? json_encode($oldValues) : null,
-            'new_values' => $newValues ? json_encode($newValues) : null,
+            'old_values' => $oldValues,
+            'new_values' => $newValues,
             'changes' => $this->calculateChanges($oldValues, $newValues),
             'user_id' => $user?->id,
             'user_name' => $user?->name,
@@ -57,7 +57,7 @@ trait HasAuditTrail
     /**
      * Calculate specific changes between old and new values
      */
-    protected function calculateChanges(?array $oldValues, ?array $newValues): ?string
+    protected function calculateChanges(?array $oldValues, ?array $newValues): ?array
     {
         if (!$oldValues || !$newValues) {
             return null;
@@ -74,7 +74,7 @@ trait HasAuditTrail
             }
         }
 
-        return !empty($changes) ? json_encode($changes) : null;
+        return !empty($changes) ? $changes : null;
     }
 
     /**

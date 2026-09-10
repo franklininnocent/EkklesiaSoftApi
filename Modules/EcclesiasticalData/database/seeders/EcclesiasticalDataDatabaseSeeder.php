@@ -13,6 +13,7 @@ class EcclesiasticalDataDatabaseSeeder extends Seeder
     {
         $this->call([
             IndianBishopsSeeder::class,
+            EcclesiasticalOfficesSeeder::class,
         ]);
     }
 }

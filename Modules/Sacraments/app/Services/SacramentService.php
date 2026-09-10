@@ -95,7 +95,8 @@ class SacramentService
         protected SacramentTypedAttributesValidator $typedAttributesValidator,
         protected SacramentPrivacyAccess $privacyAccess,
         protected SacramentRecipientResolver $recipientResolver,
-        protected MarriageCanonicalClassifier $canonicalClassifier
+        protected MarriageCanonicalClassifier $canonicalClassifier,
+        protected SacramentLeadershipContextBuilder $leadershipContextBuilder,
     ) {}
 
     public function getAll(array $params = []): LengthAwarePaginator
@@ -301,6 +302,11 @@ class SacramentService
                 'lock_version' => 0,
                 'created_by' => $data['created_by'] ?? auth()->id(),
             ]);
+            $eventDate = $attrs['date_administered'] ?? null;
+            if ($eventDate instanceof \DateTimeInterface) {
+                $eventDate = $eventDate->format('Y-m-d');
+            }
+            $attrs['leadership_context_json'] = $this->leadershipContextBuilder->build($tenantId, $eventDate);
             $attrs = $this->stripNonColumnAttrs($attrs);
 
             /** @var Sacrament $sacrament */
@@ -481,6 +487,13 @@ class SacramentService
 
             $patch['updated_by'] = $userId;
             $patch['lock_version'] = ((int) $sacrament->lock_version) + 1;
+            $eventDate = $patch['date_administered'] ?? $sacrament->date_administered;
+            if ($eventDate instanceof \DateTimeInterface) {
+                $eventDate = $eventDate->format('Y-m-d');
+            } elseif ($eventDate !== null) {
+                $eventDate = (string) $eventDate;
+            }
+            $patch['leadership_context_json'] = $this->leadershipContextBuilder->build($tenantId, $eventDate);
             $sacrament->fill($patch);
             $sacrament->save();
 

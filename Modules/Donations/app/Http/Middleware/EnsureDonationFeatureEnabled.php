@@ -4,7 +4,9 @@ namespace Modules\Donations\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Services\SubscriptionService;
+use Modules\Tenants\Support\TenantContext;
 use Symfony\Component\HttpFoundation\Response;
 
 class EnsureDonationFeatureEnabled
@@ -17,14 +19,24 @@ class EnsureDonationFeatureEnabled
     public function handle(Request $request, Closure $next): Response
     {
         $user = $request->user();
-        if (! $user || ! $user->tenant) {
+        $effectiveTenantId = app(TenantContext::class)->effectiveTenantId();
+
+        if (! $user || ! $effectiveTenantId) {
             return response()->json([
                 'success' => false,
                 'message' => 'Tenant context is required.',
             ], 403);
         }
 
-        $result = $this->subscriptionService->evaluateModuleAccess($user->tenant, 'donations');
+        $tenant = Tenant::query()->find($effectiveTenantId);
+        if (! $tenant) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tenant context is required.',
+            ], 403);
+        }
+
+        $result = $this->subscriptionService->evaluateModuleAccess($tenant, 'donations');
         if (! $result['allowed']) {
             $message = match ($result['reason']) {
                 'subscription_blocked' => 'Your subscription has ended or is suspended. Contact EkklesiaSoft or your administrator to restore access.',

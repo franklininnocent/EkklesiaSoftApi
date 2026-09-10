@@ -12,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Modules\Donations\Http\Middleware\EnsureDonationFeatureEnabled;
 use Modules\Donations\Http\Middleware\LogDonationSecurityResponse;
+use Modules\EcclesiasticalData\Http\Middleware\EnsureEcclesiasticalPermission;
 use Modules\MinistriesAssociations\Http\Middleware\EnsureAdminMinistriesPermission;
 use Modules\MinistriesAssociations\Http\Middleware\EnsureMinistriesFeatureEnabled;
 use Modules\RolesAndPermissions\Http\Middleware\EnsureTenantPermission;
@@ -20,6 +21,7 @@ use Modules\SupportAccess\Http\Middleware\EnsureSupportPermission;
 use Modules\Tenants\Http\Middleware\ApplyTenantRlsTransaction;
 use Modules\Tenants\Http\Middleware\EnforceApiPaginationLimits;
 use Modules\Tenants\Http\Middleware\EnsureSubscriptionAccess;
+use Modules\Tenants\Http\Middleware\EnsureSubscriptionAccessMode;
 use Modules\Tenants\Http\Middleware\LogPlatformSecurityEvents;
 use Modules\Tenants\Http\Middleware\ResolveTenantContext;
 use Modules\Tenants\Http\Middleware\ThrottleTenantApiRequests;
@@ -49,6 +51,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'support.permission' => EnsureSupportPermission::class,
             'support.mode' => EnforceSupportSessionMode::class,
             'ministries.platform.permission' => EnsureAdminMinistriesPermission::class,
+            'ecclesiastical.permission' => EnsureEcclesiasticalPermission::class,
             'api.throttle' => ThrottleTenantApiRequests::class,
         ]);
 
@@ -62,6 +65,7 @@ return Application::configure(basePath: dirname(__DIR__))
             ThrottleTenantApiRequests::class,
             ApplyTenantRlsTransaction::class,
             EnforceSupportSessionMode::class,
+            EnsureSubscriptionAccessMode::class,
         ]);
 
         // Add security headers to all responses

@@ -8,6 +8,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Modules\Donations\Services\RecurringDonationScheduleService;
+use Modules\Tenants\Support\SubscriptionJobWriteGuard;
 
 class RunRecurringDonationSchedulesJob implements ShouldQueue
 {
@@ -17,8 +18,14 @@ class RunRecurringDonationSchedulesJob implements ShouldQueue
     {
     }
 
-    public function handle(RecurringDonationScheduleService $recurringService): void
-    {
+    public function handle(
+        RecurringDonationScheduleService $recurringService,
+        SubscriptionJobWriteGuard $writeGuard,
+    ): void {
+        if ($this->tenantId !== null && ! $writeGuard->allowsMutationsForTenantId($this->tenantId)) {
+            return;
+        }
+
         $recurringService->runDueSchedules($this->tenantId);
     }
 }

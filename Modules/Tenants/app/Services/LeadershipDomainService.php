@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Modules\EcclesiasticalData\Services\Leadership\EcclesiasticalLeadershipService;
 use Modules\Family\app\Services\PersonService;
 use Modules\Family\Models\Person;
 use Modules\Tenants\Exceptions\ChurchLeadershipDomainException;
@@ -25,6 +26,7 @@ class LeadershipDomainService
     public function __construct(
         private readonly ChurchAuditService $auditService,
         private readonly PersonService $personService,
+        private readonly EcclesiasticalLeadershipService $leadershipService,
     ) {}
 
     /**
@@ -185,6 +187,8 @@ class LeadershipDomainService
                 $profile->id,
             );
 
+            $this->leadershipService->invalidateParish((int) $profile->id, $tenantId);
+
             return $assignment;
         });
     }
@@ -338,6 +342,8 @@ class LeadershipDomainService
             $profile->id,
             ['exit_reason_code' => $exitReason],
         );
+
+        $this->leadershipService->invalidateParish((int) $profile->id, $tenantId);
 
         return $assignment;
     }

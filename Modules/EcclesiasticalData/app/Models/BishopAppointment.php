@@ -6,7 +6,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
-use Modules\Tenants\Models\EcclesiasticalTitle;
+use Modules\EcclesiasticalData\Support\AppointmentEndReason;
+use Modules\EcclesiasticalData\Support\AppointmentStatus;
+use Modules\EcclesiasticalData\Support\CanonicalRole;
+use Modules\EcclesiasticalData\Models\EcclesiasticalTitle;
 
 class BishopAppointment extends Model
 {
@@ -23,23 +26,41 @@ class BishopAppointment extends Model
         'bishop_id',
         'diocese_id',
         'ecclesiastical_title_id',
+        'canonical_role',
         'appointed_date',
+        'announced_date',
+        'effective_date',
         'ordained_date',
         'installed_date',
         'ended_date',
         'end_reason',
         'is_current',
+        'appointment_status',
         'appointment_details',
         'metadata',
+        'version',
+        'source_type',
+        'source_reference',
+        'verified_by',
+        'verified_at',
+        'created_by',
+        'updated_by',
     ];
 
     protected $casts = [
         'appointed_date' => 'date',
+        'announced_date' => 'date',
+        'effective_date' => 'date',
         'ordained_date' => 'date',
         'installed_date' => 'date',
         'ended_date' => 'date',
         'is_current' => 'boolean',
         'metadata' => 'array',
+        'canonical_role' => CanonicalRole::class,
+        'appointment_status' => AppointmentStatus::class,
+        'end_reason' => AppointmentEndReason::class,
+        'verified_at' => 'datetime',
+        'version' => 'integer',
     ];
 
     protected static function boot()
@@ -91,6 +112,21 @@ class BishopAppointment extends Model
     public function scopeActive($query)
     {
         return $query->whereNull('ended_date');
+    }
+
+    /**
+     * Scope for ordinary (diocesan) leadership roles.
+     */
+    public function scopeOrdinary($query)
+    {
+        return $query->whereIn('canonical_role', CanonicalRole::ordinaryRoles());
+    }
+
+    public function isOrdinaryRole(): bool
+    {
+        return $this->canonical_role instanceof CanonicalRole
+            ? $this->canonical_role->isOrdinary()
+            : in_array($this->canonical_role, CanonicalRole::ordinaryRoles(), true);
     }
 }
 

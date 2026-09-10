@@ -110,6 +110,11 @@ return [
     'subscription' => [
         'grace_period_days' => 7,
         'expiring_warning_days' => 14,
+        /*
+        | legacy — Donations/Ministries blocked when expired; other modules writable.
+        | read_only_when_expired — after grace, all parish mutations blocked; views allowed.
+        */
+        'write_policy' => env('TENANT_SUBSCRIPTION_WRITE_POLICY', 'read_only_when_expired'),
         'gated_modules' => [
             'donations',
             'ministries_associations',
@@ -122,6 +127,26 @@ return [
             'settings',
             'my_subscription',
             'church_profile',
+        ],
+        'read_only_write_allowlist' => [
+            'api/auth/refresh',
+            'api/auth/logout',
+            'api/tenant/subscription-access',
+            'api/tenant/my-subscription',
+            'api/tenant/export/bulk',
+            'api/tenant/export/bulk/*/download',
+            'api/donations/webhooks/*',
+            'api/persons/matches',
+            'api/tenant/donations/reports/export',
+            'api/sacraments/*/certificates/preview',
+            'api/sacraments/*/certificates/latest/download',
+            'api/sacraments/certificates/*/download',
+            'api/sacraments/certificates/*/print',
+        ],
+        'lifecycle' => [
+            'scheduler_enabled' => env('TENANT_SUBSCRIPTION_LIFECYCLE_ENABLED', true),
+            'scheduler_time' => env('TENANT_SUBSCRIPTION_LIFECYCLE_TIME', '01:15'),
+            'mail_enabled' => env('TENANT_SUBSCRIPTION_LIFECYCLE_MAIL', true),
         ],
     ],
 

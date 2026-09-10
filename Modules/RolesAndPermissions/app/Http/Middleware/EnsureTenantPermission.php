@@ -37,6 +37,15 @@ class EnsureTenantPermission
             return $next($request);
         }
 
+        // Mirror AuthorizesTenantPermission::allows() — tenant admins manage their parish.
+        if (method_exists($user, 'isTenantAdmin') && $user->isTenantAdmin()) {
+            return $next($request);
+        }
+
+        if ($user->is_primary_admin ?? false) {
+            return $next($request);
+        }
+
         $missing = [];
         foreach ($permissions as $permission) {
             if (!$user->hasPermission($permission)) {

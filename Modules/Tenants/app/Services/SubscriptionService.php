@@ -9,6 +9,7 @@ use Modules\Tenants\Models\SubscriptionPlan;
 use Modules\Tenants\Models\SubscriptionSettings;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Models\TenantSubscriptionAudit;
+use Modules\Tenants\Support\TenantCacheVersion;
 use RuntimeException;
 
 /**
@@ -23,6 +24,16 @@ class SubscriptionService
     public const STATUS_GRACE_PERIOD = 'GRACE_PERIOD';
     public const STATUS_EXPIRED = 'EXPIRED';
     public const STATUS_SUSPENDED = 'SUSPENDED';
+
+    public const ACCESS_MODE_FULL = 'full';
+
+    public const ACCESS_MODE_READ_ONLY = 'read_only';
+
+    public const CODE_SUBSCRIPTION_READ_ONLY = 'SUBSCRIPTION_READ_ONLY';
+
+    public const WRITE_POLICY_LEGACY = 'legacy';
+
+    public const WRITE_POLICY_READ_ONLY_WHEN_EXPIRED = 'read_only_when_expired';
 
     /**
      * Modules soft-gated when subscription is EXPIRED or SUSPENDED.
@@ -67,6 +78,36 @@ class SubscriptionService
         ]);
 
         return $settings->fresh();
+    }
+
+    public function usesReadOnlyWhenExpiredPolicy(): bool
+    {
+        return config('tenants.subscription.write_policy', self::WRITE_POLICY_LEGACY)
+            === self::WRITE_POLICY_READ_ONLY_WHEN_EXPIRED;
+    }
+
+    public function accessMode(Tenant $tenant): string
+    {
+        if ((int) $tenant->active !== 1) {
+            return self::ACCESS_MODE_READ_ONLY;
+        }
+
+        $status = $this->resolveStatus($tenant);
+
+        if (in_array($status, [self::STATUS_EXPIRED, self::STATUS_SUSPENDED], true)) {
+            return self::ACCESS_MODE_READ_ONLY;
+        }
+
+        return self::ACCESS_MODE_FULL;
+    }
+
+    public function isWriteAllowed(Tenant $tenant): bool
+    {
+        if (! $this->usesReadOnlyWhenExpiredPolicy()) {
+            return true;
+        }
+
+        return $this->accessMode($tenant) === self::ACCESS_MODE_FULL;
     }
 
     public function resolveStatus(Tenant $tenant): string
@@ -114,6 +155,10 @@ class SubscriptionService
             return false;
         }
 
+        if ($this->usesReadOnlyWhenExpiredPolicy()) {
+            return true;
+        }
+
         $status = $this->resolveStatus($tenant);
 
         return ! in_array($status, [self::STATUS_EXPIRED, self::STATUS_SUSPENDED], true);
@@ -132,7 +177,10 @@ class SubscriptionService
             return ['allowed' => false, 'reason' => 'account_inactive', 'status' => $status];
         }
 
-        if (in_array($status, [self::STATUS_EXPIRED, self::STATUS_SUSPENDED], true)) {
+        if (
+            ! $this->usesReadOnlyWhenExpiredPolicy()
+            && in_array($status, [self::STATUS_EXPIRED, self::STATUS_SUSPENDED], true)
+        ) {
             return ['allowed' => false, 'reason' => 'subscription_blocked', 'status' => $status];
         }
 
@@ -214,6 +262,8 @@ class SubscriptionService
             $tenant->update($update);
             $tenant->refresh();
             $this->audit($tenant, 'plan_changed', $before, $this->snapshot($tenant), $actorId, $actorRole, $source, $reason);
+            TenantCacheVersion::bump($tenant->id);
+            $this->notifyLifecycle($tenant, 'plan_changed');
 
             return $tenant;
         });
@@ -246,6 +296,8 @@ class SubscriptionService
             ]);
             $tenant->refresh();
             $this->audit($tenant, 'subscription_extended', $before, $this->snapshot($tenant), $actorId, $actorRole, $source, $reason);
+            TenantCacheVersion::bump($tenant->id);
+            $this->notifyLifecycle($tenant, 'subscription_extended');
 
             return $tenant;
         });
@@ -262,6 +314,7 @@ class SubscriptionService
             ]);
             $tenant->refresh();
             $this->audit($tenant, 'subscription_suspended', $before, $this->snapshot($tenant), $actorId, $actorRole, $source, $reason);
+            TenantCacheVersion::bump($tenant->id);
 
             return $tenant;
         });
@@ -278,6 +331,8 @@ class SubscriptionService
             ]);
             $tenant->refresh();
             $this->audit($tenant, 'subscription_reactivated', $before, $this->snapshot($tenant), $actorId, $actorRole, $source, $reason);
+            TenantCacheVersion::bump($tenant->id);
+            $this->notifyLifecycle($tenant, 'subscription_reactivated');
 
             return $tenant;
         });
@@ -303,8 +358,12 @@ class SubscriptionService
             $daysUntilEnd = (int) floor(($end - $start) / 86400);
         }
 
+        $accessMode = $this->accessMode($tenant);
+
         return [
             'status' => $status,
+            'access_mode' => $accessMode,
+            'is_read_only' => $accessMode === self::ACCESS_MODE_READ_ONLY,
             'allows_gated_access' => $this->allowsGatedAccess($tenant),
             'gated_modules' => $this->gatedModules(),
             'subscription_ends_at' => $endsAt?->toIso8601String(),
@@ -312,6 +371,7 @@ class SubscriptionService
             'days_until_end' => $daysUntilEnd,
             'grace_period_days' => $graceDays,
             'expiring_warning_days' => (int) $settings->expiring_warning_days,
+            'write_policy' => config('tenants.subscription.write_policy', self::WRITE_POLICY_LEGACY),
         ];
     }
 
@@ -409,7 +469,34 @@ class SubscriptionService
             'subscription_extended' => 'Subscription extended',
             'subscription_suspended' => 'Access suspended',
             'subscription_reactivated' => 'Access reactivated',
+            'entered_expiring' => 'Entered expiring window',
+            'entered_grace' => 'Entered grace period',
+            'entered_expired' => 'Entered read-only (expired)',
         ];
+    }
+
+    /**
+     * Record a scheduler-driven lifecycle transition (idempotent side effect).
+     */
+    public function recordLifecycleTransition(Tenant $tenant, string $operation): void
+    {
+        $after = $this->snapshot($tenant);
+        $before = ['status' => $after['status']];
+
+        $this->audit($tenant, $operation, $before, $after, null, 'system', 'scheduler', null);
+    }
+
+    private function notifyLifecycle(Tenant $tenant, string $operation): void
+    {
+        try {
+            app(SubscriptionLifecycleNotificationPublisher::class)->notifyTransition($tenant->fresh(), $operation);
+        } catch (\Throwable $e) {
+            Log::warning('Subscription lifecycle notification failed', [
+                'tenant_id' => $tenant->id,
+                'operation' => $operation,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**

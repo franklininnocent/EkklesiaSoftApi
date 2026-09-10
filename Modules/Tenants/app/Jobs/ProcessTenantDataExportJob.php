@@ -24,6 +24,11 @@ class ProcessTenantDataExportJob extends TenantAwareJob
         $this->onQueue((string) config('tenants.export.queue', 'tenant-exports'));
     }
 
+    protected function allowsTenantMutations(): bool
+    {
+        return true;
+    }
+
     protected function handleWithTenantContext(): void
     {
         $export = TenantDataExport::find($this->exportId);

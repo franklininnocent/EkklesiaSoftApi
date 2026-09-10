@@ -87,6 +87,33 @@ class EnsureTenantPermissionMiddlewareTest extends TestCase
     }
 
     #[Test]
+    public function it_allows_tenant_administrator_without_explicit_permission(): void
+    {
+        $tenant = Tenant::factory()->create();
+        $role = Role::create([
+            'name' => 'Administrator',
+            'description' => 'Tenant administrator',
+            'level' => 1,
+            'active' => 1,
+            'tenant_id' => $tenant->id,
+            'is_custom' => false,
+            'role_type' => Role::ROLE_TYPE_TENANT,
+        ]);
+
+        $user = User::factory()->create(['tenant_id' => $tenant->id, 'role_id' => $role->id]);
+        $user->syncRoles([$role->id]);
+        app()->instance(TenantContext::class, TenantContext::fromUserAndSession($user, null));
+
+        $request = Request::create('/api/tenant/bishop-updates/leadership', 'GET');
+        $request->setUserResolver(fn () => $user);
+
+        $middleware = new EnsureTenantPermission();
+        $response = $middleware->handle($request, fn () => new Response('ok', 200), 'bishops.view');
+
+        $this->assertSame(200, $response->getStatusCode());
+    }
+
+    #[Test]
     public function it_blocks_when_tenant_context_is_missing(): void
     {
         $user = User::factory()->create(['tenant_id' => null]);

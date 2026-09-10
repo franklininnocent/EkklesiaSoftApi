@@ -57,7 +57,81 @@ class SubscriptionServiceTest extends TestCase
         ]);
 
         $this->assertSame(SubscriptionService::STATUS_SUSPENDED, $this->service->resolveStatus($tenant));
-        $this->assertFalse($this->service->allowsGatedAccess($tenant));
+        $this->assertSame(SubscriptionService::ACCESS_MODE_READ_ONLY, $this->service->accessMode($tenant));
+        $this->assertFalse($this->service->isWriteAllowed($tenant));
+        if ($this->service->usesReadOnlyWhenExpiredPolicy()) {
+            $this->assertTrue($this->service->allowsGatedAccess($tenant));
+        } else {
+            $this->assertFalse($this->service->allowsGatedAccess($tenant));
+        }
+    }
+
+    public function test_grace_period_allows_writes_under_read_only_policy(): void
+    {
+        if (! \Illuminate\Support\Facades\Schema::hasTable('subscription_settings')) {
+            $this->markTestSkipped('subscription_settings table not migrated');
+        }
+
+        config(['tenants.subscription.write_policy' => SubscriptionService::WRITE_POLICY_READ_ONLY_WHEN_EXPIRED]);
+
+        SubscriptionSettings::current()->update(['grace_period_days' => 7]);
+
+        $tenant = new Tenant([
+            'plan' => 'basic',
+            'active' => 1,
+            'trial_ends_at' => null,
+            'subscription_ends_at' => Carbon::now()->subDays(2),
+            'subscription_suspended_at' => null,
+            'features' => ['donations'],
+        ]);
+
+        $this->assertSame(SubscriptionService::STATUS_GRACE_PERIOD, $this->service->resolveStatus($tenant));
+        $this->assertTrue($this->service->isWriteAllowed($tenant));
+        $this->assertSame(SubscriptionService::ACCESS_MODE_FULL, $this->service->accessMode($tenant));
+    }
+
+    public function test_expired_is_read_only_and_blocks_writes(): void
+    {
+        if (! \Illuminate\Support\Facades\Schema::hasTable('subscription_settings')) {
+            $this->markTestSkipped('subscription_settings table not migrated');
+        }
+
+        config(['tenants.subscription.write_policy' => SubscriptionService::WRITE_POLICY_READ_ONLY_WHEN_EXPIRED]);
+
+        SubscriptionSettings::current()->update(['grace_period_days' => 7]);
+
+        $tenant = new Tenant([
+            'plan' => 'basic',
+            'active' => 1,
+            'trial_ends_at' => null,
+            'subscription_ends_at' => Carbon::now()->subDays(10),
+            'subscription_suspended_at' => null,
+            'features' => ['donations'],
+        ]);
+
+        $this->assertSame(SubscriptionService::STATUS_EXPIRED, $this->service->resolveStatus($tenant));
+        $this->assertFalse($this->service->isWriteAllowed($tenant));
+        $this->assertTrue($this->service->allowsGatedAccess($tenant));
+        $this->assertSame(SubscriptionService::ACCESS_MODE_READ_ONLY, $this->service->accessMode($tenant));
+    }
+
+    public function test_build_access_snapshot_includes_access_mode(): void
+    {
+        config(['tenants.subscription.write_policy' => SubscriptionService::WRITE_POLICY_READ_ONLY_WHEN_EXPIRED]);
+
+        $tenant = new Tenant([
+            'plan' => 'basic',
+            'active' => 1,
+            'trial_ends_at' => null,
+            'subscription_ends_at' => Carbon::now()->subDays(10),
+            'subscription_suspended_at' => null,
+            'features' => ['donations'],
+        ]);
+
+        $snapshot = $this->service->buildAccessSnapshot($tenant);
+
+        $this->assertSame(SubscriptionService::ACCESS_MODE_READ_ONLY, $snapshot['access_mode']);
+        $this->assertTrue($snapshot['is_read_only']);
     }
 
     public function test_expiring_status_within_warning_window(): void

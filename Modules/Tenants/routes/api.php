@@ -8,6 +8,8 @@ use Modules\Tenants\Http\Controllers\DenominationsController;
 use Modules\Tenants\Http\Controllers\ArchdiocesesController;
 use Modules\Tenants\Http\Controllers\ChurchProfileController;
 use Modules\Tenants\Http\Controllers\ChurchLeadershipController;
+use Modules\Tenants\Http\Controllers\ChurchLeadershipGovernanceController;
+use Modules\Tenants\Http\Controllers\ChurchDiocesanLeadershipController;
 use Modules\Tenants\Http\Controllers\ChurchStatisticsController;
 use Modules\Tenants\Http\Controllers\ChurchSocialMediaController;
 use Modules\Tenants\Http\Controllers\PopeDetailsController;
@@ -58,6 +60,10 @@ Route::middleware('auth:api')->group(function () {
     
     // Get a specific tenant
     Route::get('/tenant/{id}', [TenantsController::class, 'show'])
+        ->where('id', '[0-9]+');
+
+    // Platform-admin 360° tenant snapshot
+    Route::get('/tenant/{id}/details', [TenantsController::class, 'details'])
         ->where('id', '[0-9]+');
     
     // Update a tenant
@@ -148,6 +154,22 @@ Route::middleware('auth:api')->group(function () {
             Route::put('/', [PopeDetailsController::class, 'update']);
             Route::post('/upload-image', [PopeDetailsController::class, 'uploadImage']);
             Route::delete('/image', [PopeDetailsController::class, 'deleteImage']);
+        });
+
+        // Leadership governance (assignments, handover, history)
+        Route::prefix('leadership')->group(function () {
+            Route::get('/diocesan', [ChurchDiocesanLeadershipController::class, 'show']);
+            Route::get('/current', [ChurchLeadershipGovernanceController::class, 'current']);
+            Route::get('/history', [ChurchLeadershipGovernanceController::class, 'history']);
+            Route::get('/roles', [ChurchLeadershipGovernanceController::class, 'roles']);
+            Route::post('/assign', [ChurchLeadershipGovernanceController::class, 'assign']);
+            Route::post('/handover', [ChurchLeadershipGovernanceController::class, 'handover']);
+            Route::put('/assignments/{id}', [ChurchLeadershipGovernanceController::class, 'update'])
+                ->whereUuid('id');
+            Route::put('/assignments/{id}/terminate', [ChurchLeadershipGovernanceController::class, 'terminate'])
+                ->whereUuid('id');
+            Route::post('/assignments/{id}/photo', [ChurchLeadershipGovernanceController::class, 'uploadPhoto'])
+                ->whereUuid('id');
         });
     });
     

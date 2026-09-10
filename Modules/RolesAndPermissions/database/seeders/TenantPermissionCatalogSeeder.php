@@ -96,6 +96,11 @@ class TenantPermissionCatalogSeeder extends Seeder
             // Support Access (parish self-serve windows)
             ['name' => 'support.grants.parish.view', 'display_name' => 'View Support Access Windows', 'description' => 'View customer-granted support access windows for this parish', 'module' => 'SupportAccess', 'category' => 'support'],
             ['name' => 'support.grants.parish.manage', 'display_name' => 'Manage Support Access Windows', 'description' => 'Create and revoke support access windows for this parish', 'module' => 'SupportAccess', 'category' => 'support'],
+
+            // Episcopal leadership (read + church-submitted corrections)
+            ['name' => 'bishops.view', 'display_name' => 'View Diocesan Bishop', 'description' => 'View diocesan bishop information for this church', 'module' => 'EcclesiasticalData', 'category' => 'bishops'],
+            ['name' => 'bishops.submit_update_request', 'display_name' => 'Submit Bishop Update Request', 'description' => 'Submit bishop correction requests to Ekklesia administrators', 'module' => 'EcclesiasticalData', 'category' => 'bishops'],
+            ['name' => 'bishops.view_own_requests', 'display_name' => 'View Own Bishop Update Requests', 'description' => 'View bishop update requests submitted by this church', 'module' => 'EcclesiasticalData', 'category' => 'bishops'],
         ];
 
         foreach ($permissions as $permission) {
