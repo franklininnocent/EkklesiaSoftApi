@@ -49,7 +49,16 @@ class ThrottleTenantApiRequests
         $response = $next($request);
         $remaining = max(0, $maxAttempts - RateLimiter::attempts($key));
 
-        return $response->withHeaders($this->rateLimitHeaders($maxAttempts, $remaining));
+        return $this->attachRateLimitHeaders($response, $this->rateLimitHeaders($maxAttempts, $remaining));
+    }
+
+    private function attachRateLimitHeaders(Response $response, array $headers): Response
+    {
+        foreach ($headers as $name => $value) {
+            $response->headers->set($name, (string) $value);
+        }
+
+        return $response;
     }
 
     private function shouldSkipDefaultThrottle(Request $request): bool

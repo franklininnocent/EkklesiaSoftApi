@@ -25,6 +25,7 @@ use Modules\Sacraments\Support\SacramentFeatureFlags;
 use Modules\Sacraments\Support\SacramentPrivacyAccess;
 use Modules\Sacraments\Support\SacramentStatus;
 use Modules\Sacraments\Support\SacramentTypeCode;
+use Modules\Tenants\Http\Concerns\VerifiesParishProductAccess;
 use Modules\Tenants\Support\TenantContext;
 
 /**
@@ -35,6 +36,8 @@ use Modules\Tenants\Support\TenantContext;
  */
 class SacramentController extends Controller
 {
+    use VerifiesParishProductAccess;
+
     public function __construct(
         protected SacramentService $service,
         protected SacramentPrivacyAccess $privacyAccess
@@ -42,23 +45,11 @@ class SacramentController extends Controller
 
     private function verifyTenantUser(Request $request): ?JsonResponse
     {
-        $user = $request->user();
-
-        if (app(TenantContext::class)->effectiveTenantId() === null) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthorized. Only tenant users can manage sacrament records.',
-            ], 403);
-        }
-
-        if ($user->hasEkklesiaRole()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ekklesia users cannot access tenant sacrament records. Please use a tenant account.',
-            ], 403);
-        }
-
-        return null;
+        return $this->verifyParishProductUser(
+            $request->user(),
+            'Unauthorized. Only tenant users can manage sacrament records.',
+            'Ekklesia users cannot access tenant sacrament records without an active Support Center session.',
+        );
     }
 
     public function index(Request $request): JsonResponse

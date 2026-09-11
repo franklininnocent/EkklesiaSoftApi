@@ -3,6 +3,7 @@
 namespace Modules\Family\app\Repositories;
 
 use App\Support\CaseInsensitiveSearch;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Modules\Family\Models\Family;
@@ -439,14 +440,13 @@ class FamilyRepository
             }
         }
 
-        // Sorting
-        $sortBy = $filters['sort_by'] ?? 'last_name';
-        $sortOrder = $filters['sort_order'] ?? 'asc';
+        // Sorting — default to full name (last_name, then first_name) ascending
+        $sortBy = ! empty($filters['sort_by']) ? $filters['sort_by'] : 'name';
+        $sortOrder = ! empty($filters['sort_order']) ? $filters['sort_order'] : 'asc';
 
         // Handle special sorting cases
-        if ($sortBy === 'name') {
-            $query->orderBy('last_name', $sortOrder)
-                ->orderBy('first_name', $sortOrder);
+        if ($sortBy === 'name' || $sortBy === 'first_name') {
+            $this->applyMemberNameOrder($query, $sortOrder);
         } elseif ($sortBy === 'address') {
             // Sort by family address (address_line_1)
             $query->join('families', 'family_members.family_id', '=', 'families.id')
@@ -472,5 +472,20 @@ class FamilyRepository
 
         // Use paginate with explicit page number
         return $query->paginate($perPage, ['*'], 'page', $page);
+    }
+
+    /**
+     * Sort members by displayed full name: first, middle, then last (case-insensitive).
+     *
+     * @param  Builder<FamilyMember>  $query
+     */
+    private function applyMemberNameOrder(Builder $query, string $sortOrder): void
+    {
+        $direction = strtolower($sortOrder) === 'desc' ? 'desc' : 'asc';
+        $table = $query->getModel()->getTable();
+
+        $query->orderByRaw("LOWER(COALESCE({$table}.first_name, '')) {$direction}")
+            ->orderByRaw("LOWER(COALESCE({$table}.middle_name, '')) {$direction}")
+            ->orderByRaw("LOWER(COALESCE({$table}.last_name, '')) {$direction}");
     }
 }

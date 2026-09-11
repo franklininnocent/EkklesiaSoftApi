@@ -36,6 +36,14 @@ class ChurchLeadership extends Model
         'active',
     ];
 
+    protected $hidden = [
+        'photo_url',
+    ];
+
+    protected $appends = [
+        'photo_full_url',
+    ];
+
     protected $casts = [
         'appointed_date' => 'date',
         'relieved_date' => 'date',
@@ -100,6 +108,16 @@ class ChurchLeadership extends Model
      */
     public function getFullTitleAttribute(): string
     {
-        return trim(($this->title ?? '') . ' ' . $this->full_name);
+        return trim(($this->title ?? '').' '.$this->full_name);
+    }
+
+    public function getPhotoFullUrlAttribute(): ?string
+    {
+        if (! $this->photo_url || ! $this->tenant_id) {
+            return null;
+        }
+
+        return app(\Modules\Tenants\Services\ChurchMediaImageService::class)
+            ->leadershipPhotoUrl($this->photo_url, (int) $this->tenant_id);
     }
 }

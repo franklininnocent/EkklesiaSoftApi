@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use Modules\Tenants\Http\Controllers\TenantsController;
 use Modules\Tenants\Http\Controllers\GeographyController;
+use Modules\Tenants\Http\Controllers\MediaServeController;
 use Modules\Tenants\Http\Controllers\SecureFileController;
 use Modules\Tenants\Http\Controllers\DenominationsController;
 use Modules\Tenants\Http\Controllers\ArchdiocesesController;
@@ -15,6 +16,7 @@ use Modules\Tenants\Http\Controllers\ChurchSocialMediaController;
 use Modules\Tenants\Http\Controllers\PopeDetailsController;
 use Modules\Tenants\Http\Controllers\PlatformHealthController;
 use Modules\Tenants\Http\Controllers\TenantDataExportController;
+use Modules\Tenants\Http\Controllers\DefaultSeedsController;
 use Modules\Tenants\Http\Middleware\VerifyPlatformHealthToken;
 
 /*
@@ -80,9 +82,11 @@ Route::middleware('auth:api')->group(function () {
     
     // Logo management
     Route::post('/tenant/{id}/logo', [TenantsController::class, 'uploadLogo'])
-        ->where('id', '[0-9]+');
+        ->where('id', '[0-9]+')
+        ->middleware('api.throttle:uploads');
     Route::delete('/tenant/{id}/logo', [TenantsController::class, 'deleteLogo'])
-        ->where('id', '[0-9]+');
+        ->where('id', '[0-9]+')
+        ->middleware('api.throttle:uploads');
     
     // Subscription management
     Route::get('/tenant/subscription/plans', [TenantsController::class, 'getSubscriptionPlans']);
@@ -145,15 +149,19 @@ Route::middleware('auth:api')->group(function () {
         Route::put('/', [ChurchProfileController::class, 'update'])->middleware('tenant.permission:church.settings.edit');
         
         // Patron Image Management (tenant-specific)
-        Route::post('/upload-patron-image', [ChurchProfileController::class, 'uploadPatronImage'])->middleware('tenant.permission:church.settings.edit');
-        Route::delete('/patron-image', [ChurchProfileController::class, 'deletePatronImage'])->middleware('tenant.permission:church.settings.delete');
+        Route::post('/upload-patron-image', [ChurchProfileController::class, 'uploadPatronImage'])
+            ->middleware(['tenant.permission:church.settings.edit', 'api.throttle:uploads']);
+        Route::delete('/patron-image', [ChurchProfileController::class, 'deletePatronImage'])
+            ->middleware(['tenant.permission:church.settings.delete', 'api.throttle:uploads']);
         
         // Pope Details Management (requires manage_pope_details permission)
         Route::prefix('pope')->group(function () {
             Route::get('/', [PopeDetailsController::class, 'show']);
             Route::put('/', [PopeDetailsController::class, 'update']);
-            Route::post('/upload-image', [PopeDetailsController::class, 'uploadImage']);
-            Route::delete('/image', [PopeDetailsController::class, 'deleteImage']);
+            Route::post('/upload-image', [PopeDetailsController::class, 'uploadImage'])
+                ->middleware('api.throttle:uploads');
+            Route::delete('/image', [PopeDetailsController::class, 'deleteImage'])
+                ->middleware('api.throttle:uploads');
         });
 
         // Leadership governance (assignments, handover, history)
@@ -169,7 +177,8 @@ Route::middleware('auth:api')->group(function () {
             Route::put('/assignments/{id}/terminate', [ChurchLeadershipGovernanceController::class, 'terminate'])
                 ->whereUuid('id');
             Route::post('/assignments/{id}/photo', [ChurchLeadershipGovernanceController::class, 'uploadPhoto'])
-                ->whereUuid('id');
+                ->whereUuid('id')
+                ->middleware('api.throttle:uploads');
         });
     });
     
@@ -178,7 +187,9 @@ Route::middleware('auth:api')->group(function () {
         Route::get('/', [ChurchLeadershipController::class, 'index']);
         Route::post('/', [ChurchLeadershipController::class, 'store'])->middleware('tenant.permission:church.settings.create');
         Route::get('/{id}', [ChurchLeadershipController::class, 'show'])->where('id', '[0-9]+');
-        Route::post('/{id}/upload-photo', [ChurchLeadershipController::class, 'uploadPhoto'])->where('id', '[0-9]+')->middleware('tenant.permission:church.settings.edit');
+        Route::post('/{id}/upload-photo', [ChurchLeadershipController::class, 'uploadPhoto'])
+            ->where('id', '[0-9]+')
+            ->middleware(['tenant.permission:church.settings.edit', 'api.throttle:uploads']);
         Route::put('/{id}', [ChurchLeadershipController::class, 'update'])->where('id', '[0-9]+')->middleware('tenant.permission:church.settings.edit');
         Route::delete('/{id}', [ChurchLeadershipController::class, 'destroy'])->where('id', '[0-9]+')->middleware('tenant.permission:church.settings.delete');
     });
@@ -217,9 +228,21 @@ Route::middleware('auth:api')->group(function () {
                 ->whereUuid('id');
         });
     });
+
+    // Default Seeds (Settings → Default Seeds)
+    Route::prefix('tenant/default-seeds')->group(function () {
+        Route::get('/', [DefaultSeedsController::class, 'index'])
+            ->middleware('tenant.permission:settings.default-seeds.view');
+        Route::post('/', [DefaultSeedsController::class, 'store'])
+            ->middleware('tenant.permission:settings.default-seeds.run');
+    });
 });
 
 // Public route with signature verification
 Route::get('/tenant/files/serve', [SecureFileController::class, 'serveFile'])
     ->middleware('signed')
     ->name('tenants.files.serve');
+
+Route::get('/tenant/media/serve', [MediaServeController::class, 'serve'])
+    ->middleware(['signed', 'api.throttle:media_serve'])
+    ->name('tenants.media.serve');

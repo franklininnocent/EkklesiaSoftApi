@@ -20,12 +20,15 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
+use Modules\Authentication\Support\UserProfileImageAuthorization;
+use Modules\Tenants\Services\Media\ImageMediaUrlSigner;
 use Laravel\Passport\HasApiTokens;
 use Modules\Authentication\Database\Factories\UserFactory;
 use Modules\Family\Models\Person;
 use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Tenants\Models\Address;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Support\TenantContext;
 use Modules\Tenants\Support\TenantCacheVersion;
 
 class User extends Authenticatable
@@ -78,6 +81,15 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
         'remember_token',
+        'profile_image_path',
+    ];
+
+    /**
+     * @var list<string>
+     */
+    protected $appends = [
+        'profile_image_full_url',
+        'profile_image_thumb_url',
     ];
 
     /**
@@ -97,6 +109,50 @@ class User extends Authenticatable
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
+
+    /**
+     * Signed display URL for the user's profile image.
+     */
+    public function getProfileImageFullUrlAttribute(): ?string
+    {
+        if (empty($this->profile_image_path) || ! $this->tenant_id) {
+            return null;
+        }
+
+        $signer = app(ImageMediaUrlSigner::class);
+
+        return $signer->displayUrl(
+            $this->profile_image_path,
+            (int) $this->tenant_id,
+            fn (): bool => UserProfileImageAuthorization::canView($this, auth()->user())
+        );
+    }
+
+    /**
+     * Signed thumbnail URL for list views.
+     */
+    public function getProfileImageThumbUrlAttribute(): ?string
+    {
+        if (empty($this->profile_image_path) || ! $this->tenant_id) {
+            return null;
+        }
+
+        $signer = app(ImageMediaUrlSigner::class);
+
+        return $signer->thumbUrl(
+            $this->profile_image_path,
+            (int) $this->tenant_id,
+            fn (): bool => UserProfileImageAuthorization::canView($this, auth()->user())
+        );
+    }
+
+    /**
+     * Whether the user has a profile image stored.
+     */
+    public function hasProfileImage(): bool
+    {
+        return ! empty($this->profile_image_path);
+    }
 
     /**
      * Get the role that owns the user (Legacy - single role).
@@ -283,13 +339,9 @@ class User extends Authenticatable
                 }
 
                 if (is_null($permission->tenant_id)) {
-                    // Platform catalog permissions are only resolvable by platform operators.
-                    // Tenant users must never inherit them through hasPermission().
-                    if (($permission->scope ?? null) === Permission::SCOPE_PLATFORM) {
-                        return $this->canResolvePlatformPermissions();
-                    }
-
-                    return true; // System/tenant-shared catalog permissions
+                    // Platform scope is gated at hasPermission() check time so support-session
+                    // elevation can resolve without stale cache entries.
+                    return true;
                 }
 
                 return $permission->tenant_id === $this->tenant_id;
@@ -349,7 +401,18 @@ class User extends Authenticatable
             self::$requestPermissionCache[$cacheKey] = $this->getAllPermissions(true);
         }
 
-        return self::$requestPermissionCache[$cacheKey]->contains('name', $permissionName);
+        if (! self::$requestPermissionCache[$cacheKey]->contains('name', $permissionName)) {
+            return false;
+        }
+
+        $resolved = self::$requestPermissionCache[$cacheKey]->firstWhere('name', $permissionName);
+        if ($resolved !== null
+            && ($resolved->scope ?? null) === Permission::SCOPE_PLATFORM
+            && ! $this->canResolvePlatformPermissions()) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
@@ -628,17 +691,36 @@ class User extends Authenticatable
 
     /**
      * Whether this actor may resolve SCOPE_PLATFORM permissions via hasPermission().
-     * Requires a platform Ekklesia role and no tenant home context.
+     * Platform operators without a parish home always qualify; parish-home platform
+     * staff qualify only during their own active support session elevation.
      */
     public function canResolvePlatformPermissions(): bool
     {
-        if ($this->tenant_id !== null) {
+        if ($this->isSuperAdmin()) {
+            return true;
+        }
+
+        $isPlatformSupportOperator = $this->isEkklesiaAdmin()
+            || $this->isEkklesiaManager()
+            || $this->isEkklesiaUser()
+            || $this->hasRole('SupportAdmin');
+
+        if (! $isPlatformSupportOperator) {
             return false;
         }
 
-        return $this->isEkklesiaAdmin()
-            || $this->isEkklesiaManager()
-            || $this->isEkklesiaUser();
+        if ($this->tenant_id === null) {
+            return true;
+        }
+
+        if (! app()->bound(TenantContext::class)) {
+            return false;
+        }
+
+        $context = app(TenantContext::class);
+
+        return $context->isSupportSession()
+            && $context->actorUserId() === (int) $this->getAuthIdentifier();
     }
 
     /**
@@ -777,17 +859,19 @@ class User extends Authenticatable
         }
 
         // First try using loaded relationship if available (more efficient)
+        $tenantId = (int) $this->tenant_id;
+
         if ($this->relationLoaded('roles')) {
-            return $this->roles->contains(function ($role) {
+            return $this->roles->contains(function ($role) use ($tenantId) {
                 return $role->name === 'Administrator' &&
-                       $role->tenant_id === $this->tenant_id;
+                       (int) $role->tenant_id === $tenantId;
             });
         }
 
         // Fallback to query if relationship not loaded
         return $this->roles()
             ->where('name', 'Administrator')
-            ->where('tenant_id', $this->tenant_id)
+            ->where('tenant_id', $tenantId)
             ->exists();
     }
 

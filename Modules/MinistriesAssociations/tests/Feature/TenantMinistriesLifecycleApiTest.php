@@ -486,6 +486,27 @@ class TenantMinistriesLifecycleApiTest extends TestCase
             ->assertUnauthorized();
     }
 
+    #[Test]
+    public function categories_index_is_forbidden_when_ministries_feature_is_not_entitled(): void
+    {
+        $this->tenant->update(['features' => ['donations', 'events', 'groups']]);
+        $this->authenticateAdmin();
+
+        $this->getJson('/api/tenant/ministries/categories?is_active=1&per_page=100')
+            ->assertForbidden()
+            ->assertJsonPath('reason', 'feature_not_entitled');
+    }
+
+    #[Test]
+    public function categories_index_succeeds_when_ministries_feature_is_entitled(): void
+    {
+        $this->authenticateAdmin();
+
+        $this->getJson('/api/tenant/ministries/categories?is_active=1&per_page=100')
+            ->assertOk()
+            ->assertJsonPath('success', true);
+    }
+
     /**
      * @param  array<string, mixed>  $overrides
      */

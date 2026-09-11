@@ -2,22 +2,28 @@
 
 namespace Modules\Authentication\Http\Controllers;
 
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Modules\Authentication\Models\User;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use App\Events\Auth\LoginFailed;
 use App\Services\TokenService;
+use Modules\Authentication\Http\Requests\UploadSelfProfileImageRequest;
+use Modules\Authentication\Services\UserProfileImageService;
+use Modules\Tenants\Services\Media\ImageMediaException;
 use Modules\Tenants\Models\Country;
+use Modules\Tenants\Support\TenantContext;
 
 class AuthenticationController extends Controller
 {
-    protected $tokenService;
-
-    public function __construct(TokenService $tokenService)
-    {
-        $this->tokenService = $tokenService;
+    public function __construct(
+        protected TokenService $tokenService,
+        protected UserProfileImageService $userProfileImageService,
+    ) {
     }
 
     /**
@@ -50,7 +56,7 @@ class AuthenticationController extends Controller
 
         // Generate OAuth2 tokens with refresh token
         try {
-            $tokens = $this->tokenService->createTokens($user);
+            $tokens = $this->tokenService->createTokens($user, null, [], null, 'register');
 
             return response()->json([
                 'access_token' => $tokens['access_token_string'],
@@ -83,6 +89,7 @@ class AuthenticationController extends Controller
 
         // Check if user exists
         if (! $user) {
+            event(new LoginFailed($request->email, 'invalid_credentials'));
             throw ValidationException::withMessages([
                 'email' => ['The provided credentials are incorrect.'],
             ]);
@@ -90,6 +97,7 @@ class AuthenticationController extends Controller
 
         // Check password
         if (! Hash::check($request->password, $user->password)) {
+            event(new LoginFailed($request->email, 'invalid_credentials'));
             throw ValidationException::withMessages([
                 'email' => ['The provided credentials are incorrect.'],
             ]);
@@ -97,6 +105,7 @@ class AuthenticationController extends Controller
 
         // Check if user is active
         if ($user->active !== 1) {
+            event(new LoginFailed($request->email, 'account_deactivated'));
             throw ValidationException::withMessages([
                 'email' => ['Your account has been deactivated. Please contact support.'],
             ]);
@@ -104,6 +113,7 @@ class AuthenticationController extends Controller
 
         // Check if user role is active
         if ($user->role && $user->role->active !== 1) {
+            event(new LoginFailed($request->email, 'role_deactivated'));
             throw ValidationException::withMessages([
                 'email' => ['Your role has been deactivated. Please contact support.'],
             ]);
@@ -111,7 +121,7 @@ class AuthenticationController extends Controller
 
         // Generate OAuth2 tokens with refresh token
         try {
-            $tokens = $this->tokenService->createTokens($user);
+            $tokens = $this->tokenService->createTokens($user, null, [], null, 'login');
 
             return response()->json([
                 'access_token' => $tokens['access_token_string'],
@@ -271,6 +281,7 @@ class AuthenticationController extends Controller
             'user_type' => $user->user_type,
             'is_primary_admin' => $user->is_primary_admin ?? false,
             'tenant_id' => $user->tenant_id,
+            'profile_image_full_url' => $user->profile_image_full_url,
             'role_id' => $user->role_id, // Legacy
             'role_name' => $user->role ? $user->role->name : null, // Legacy
             'role_level' => $user->role ? $user->role->level : null, // Legacy
@@ -303,6 +314,143 @@ class AuthenticationController extends Controller
             'data' => $userData,
             'message' => 'User details retrieved successfully'
         ]);
+    }
+
+    /**
+     * Upload or replace the authenticated tenant administrator's own profile image.
+     */
+    public function uploadSelfProfileImage(UploadSelfProfileImageRequest $request): JsonResponse
+    {
+        $authUser = $request->user();
+
+        if ($denied = $this->denyUnlessTenantAdminSelfService($authUser)) {
+            return $denied;
+        }
+
+        try {
+            $hadImage = $authUser->profile_image_path !== null;
+
+            $this->userProfileImageService->replaceProfileImage(
+                $request->file('profile_image'),
+                $authUser
+            );
+
+            $authUser->refresh();
+            $authUser->load(['roles', 'tenant']);
+
+            Log::info('User profile image updated', [
+                'updated_by' => $authUser->id,
+                'user_id' => $authUser->id,
+                'tenant_id' => $authUser->tenant_id,
+                'action' => $hadImage ? 'replaced' : 'uploaded',
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Profile image uploaded successfully.',
+                'data' => $authUser,
+            ]);
+        } catch (ImageMediaException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->publicMessage(),
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Error uploading self profile image: '.$e->getMessage(), [
+                'user_id' => $authUser->id,
+                'exception' => $e,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An error occurred while uploading the profile image.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Remove the authenticated tenant administrator's own profile image.
+     */
+    public function deleteSelfProfileImage(Request $request): JsonResponse
+    {
+        $authUser = $request->user();
+
+        if ($denied = $this->denyUnlessTenantAdminSelfService($authUser)) {
+            return $denied;
+        }
+
+        try {
+            if ($authUser->profile_image_path && $authUser->tenant_id) {
+                $this->userProfileImageService->deleteProfileImage(
+                    $authUser->profile_image_path,
+                    (int) $authUser->tenant_id
+                );
+            }
+
+            $authUser->profile_image_path = null;
+            $authUser->save();
+            $authUser->load(['roles', 'tenant']);
+
+            Log::info('User profile image removed', [
+                'updated_by' => $authUser->id,
+                'user_id' => $authUser->id,
+                'tenant_id' => $authUser->tenant_id,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Profile image removed successfully.',
+                'data' => $authUser,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error deleting self profile image: '.$e->getMessage(), [
+                'user_id' => $authUser->id,
+                'exception' => $e,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An error occurred while removing the profile image.',
+            ], 500);
+        }
+    }
+
+    private function denyUnlessTenantAdminSelfService(?User $user): ?JsonResponse
+    {
+        if (! $user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated',
+            ], 401);
+        }
+
+        $user->loadMissing(['roles', 'role']);
+
+        if (! $user->tenant_id || ! $this->canManageOwnProfileImage($user)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tenant administrator access required.',
+            ], 403);
+        }
+
+        return null;
+    }
+
+    private function canManageOwnProfileImage(User $user): bool
+    {
+        if ($user->is_primary_admin) {
+            return true;
+        }
+
+        if ($user->isTenantAdmin()) {
+            return true;
+        }
+
+        $legacyRole = $user->relationLoaded('role') ? $user->role : $user->role()->first();
+
+        return $legacyRole !== null
+            && $legacyRole->name === \Modules\Authentication\Models\Role::TENANT_ADMINISTRATOR
+            && (int) $legacyRole->tenant_id === (int) $user->tenant_id;
     }
 
     /**

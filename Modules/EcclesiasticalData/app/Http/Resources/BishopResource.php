@@ -38,8 +38,6 @@ class BishopResource extends JsonResource
             'status' => $this->status,
             'is_current' => (bool) $this->is_current,
             'is_active' => (bool) ($this->active ?? false),
-            'photo_url' => $this->photo_url,
-            'photo_path' => $this->photo_path,
             'photo_public_url' => $uploadService->resolvePhotoUrl($this->photo_path, $this->photo_url),
             'has_photo' => $uploadService->hasPhoto($this->photo_path, $this->photo_url),
             'coat_of_arms_path' => $this->coat_of_arms_path,

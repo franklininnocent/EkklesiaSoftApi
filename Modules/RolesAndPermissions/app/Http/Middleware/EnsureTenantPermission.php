@@ -4,7 +4,7 @@ namespace Modules\RolesAndPermissions\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
-use Modules\Tenants\Support\SupportSessionMode;
+use Modules\Tenants\Services\SupportSessionAuthorizationService;
 use Modules\Tenants\Support\TenantContext;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -70,15 +70,11 @@ class EnsureTenantPermission
     private function authorizeSupportSession(Request $request, Closure $next, TenantContext $context): Response
     {
         $user = $request->user();
-        $mode = $context->supportMode();
-        $modePermission = match ($mode) {
-            SupportSessionMode::Readonly => 'support.sessions.readonly',
-            SupportSessionMode::Standard => 'support.sessions.standard',
-            SupportSessionMode::Emergency => 'support.sessions.emergency',
-            default => null,
-        };
+        $supportAuth = app(SupportSessionAuthorizationService::class);
 
-        if ($modePermission === null || !method_exists($user, 'hasPermission') || !$user->hasPermission($modePermission)) {
+        if (! $supportAuth->grantsTenantProductAccess($user)) {
+            $modePermission = $supportAuth->modePermissionName($context->supportMode());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Support session mode is not authorized.',

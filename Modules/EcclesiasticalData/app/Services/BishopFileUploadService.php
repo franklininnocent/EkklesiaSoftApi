@@ -3,144 +3,96 @@
 namespace Modules\EcclesiasticalData\Services;
 
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
-use InvalidArgumentException;
 use Modules\EcclesiasticalData\Models\BishopManagement;
+use Modules\EcclesiasticalData\Support\BishopPhotoAuthorization;
+use Modules\Tenants\Services\Media\ImageMediaException;
+use Modules\Tenants\Services\Media\ImageMediaPolicy;
+use Modules\Tenants\Services\Media\ImageMediaService;
+use Modules\Tenants\Services\Media\ImageMediaStoreResult;
+use Modules\Tenants\Services\Media\ImageMediaUrlSigner;
 
 class BishopFileUploadService
 {
-    private const MAX_FILE_SIZE = 3 * 1024 * 1024;
+    private const PLATFORM_TENANT_ID = 0;
 
-    private const MAX_DIMENSION = 800;
+    public function __construct(
+        private readonly ImageMediaService $imageMediaService,
+        private readonly ImageMediaUrlSigner $urlSigner,
+    ) {}
 
-    private const MIN_DIMENSION = 64;
+    public function replacePhoto(BishopManagement $bishop, UploadedFile $file): string
+    {
+        $previousPath = $bishop->photo_path;
 
-    /** @var list<string> */
-    private const ALLOWED_MIME_TYPES = [
-        'image/jpeg',
-        'image/jpg',
-        'image/png',
-        'image/webp',
-    ];
+        $result = $this->imageMediaService->replace(
+            $file,
+            self::PLATFORM_TENANT_ID,
+            ImageMediaPolicy::CATEGORY_BISHOPS,
+            $previousPath,
+            function (string $storageKey) use ($bishop): void {
+                DB::transaction(function () use ($bishop, $storageKey): void {
+                    $locked = BishopManagement::query()->whereKey($bishop->id)->lockForUpdate()->firstOrFail();
+                    $locked->photo_path = $storageKey;
+                    $locked->photo_url = null;
+                    $locked->save();
+                });
+            }
+        );
 
-    /** @var array<string, string> */
-    private const MIME_TO_EXTENSION = [
-        'image/jpeg' => 'jpg',
-        'image/jpg' => 'jpg',
-        'image/png' => 'png',
-        'image/webp' => 'webp',
-    ];
+        Log::info('Bishop photo stored', [
+            'bishop_id' => $bishop->id,
+            'uploaded_by' => auth()->id(),
+        ]);
+
+        return $result->storageKey;
+    }
 
     public function uploadPhoto(BishopManagement $bishop, UploadedFile $file): string
     {
-        $this->assertValidImage($file);
-
-        $this->deleteStoredFile($bishop->photo_path);
-
-        $path = $this->storeFile($bishop, $file, 'photo');
-        $this->optimizeImage($path);
-
-        $bishop->update([
-            'photo_path' => $path,
-            'photo_url' => $this->publicUrl($path),
-        ]);
-
-        return $path;
-    }
-
-    public function uploadCoatOfArms(BishopManagement $bishop, UploadedFile $file): string
-    {
-        $this->assertValidImage($file);
-
-        $this->deleteStoredFile($bishop->coat_of_arms_path);
-
-        $path = $this->storeFile($bishop, $file, 'coat-of-arms');
-        $this->optimizeImage($path);
-
-        $bishop->update(['coat_of_arms_path' => $path]);
-
-        return $path;
+        return $this->replacePhoto($bishop, $file);
     }
 
     public function deletePhoto(BishopManagement $bishop): void
     {
-        $this->deleteStoredFile($bishop->photo_path);
-        $bishop->update(['photo_path' => null, 'photo_url' => null]);
+        $previousPath = $bishop->photo_path;
+
+        DB::transaction(function () use ($bishop): void {
+            $locked = BishopManagement::query()->whereKey($bishop->id)->lockForUpdate()->firstOrFail();
+            $locked->photo_path = null;
+            $locked->photo_url = null;
+            $locked->save();
+        });
+
+        $this->imageMediaService->deletePair($previousPath, self::PLATFORM_TENANT_ID);
     }
 
-    public function deleteCoatOfArms(BishopManagement $bishop): void
+    public function signedPhotoUrl(?string $photoPath): ?string
     {
-        $this->deleteStoredFile($bishop->coat_of_arms_path);
-        $bishop->update(['coat_of_arms_path' => null]);
-    }
-
-    public function publicUrl(?string $path): ?string
-    {
-        if (! $path) {
+        if ($photoPath === null || $photoPath === '') {
             return null;
         }
 
-        return Storage::disk('public')->url($path);
-    }
-
-    public function resolvePhotoUrl(?string $photoPath, ?string $photoUrl = null): ?string
-    {
-        return $this->publicUrl($photoPath) ?? $photoUrl;
-    }
-
-    public function hasPhoto(?string $photoPath, ?string $photoUrl = null): bool
-    {
-        return $photoPath !== null || ($photoUrl !== null && $photoUrl !== '');
-    }
-
-    public function storePendingSuggestionPhoto(string $requestId, UploadedFile $file): string
-    {
-        $this->assertValidImage($file);
-
-        $extension = $this->resolveExtension($file);
-        $filename = sprintf('photo-%s.%s', Str::uuid()->toString(), $extension);
-        $directory = 'ecclesiastical/bishop-update-requests/'.$requestId;
-
-        $path = Storage::disk('public')->putFileAs(
-            $directory,
-            $file,
-            $filename,
-            ['visibility' => 'public']
+        return $this->urlSigner->displayUrl(
+            $photoPath,
+            self::PLATFORM_TENANT_ID,
+            fn (): bool => BishopPhotoAuthorization::canView(auth()->user())
         );
-
-        $this->optimizeImage($path);
-
-        return $path;
     }
 
-    public function applyPendingPhotoToBishop(BishopManagement $bishop, string $pendingPath): string
+    public function resolvePhotoUrl(?string $photoPath, ?string $legacyPhotoUrl = null): ?string
     {
-        if (! Storage::disk('public')->exists($pendingPath)) {
-            throw new InvalidArgumentException('Suggested bishop photo is no longer available.');
+        if ($photoPath !== null && $photoPath !== '') {
+            return $this->signedPhotoUrl($photoPath);
         }
 
-        $this->deleteStoredFile($bishop->photo_path);
-
-        $extension = strtolower((string) pathinfo($pendingPath, PATHINFO_EXTENSION)) ?: 'jpg';
-        $filename = sprintf('photo-%s.%s', Str::uuid()->toString(), $extension);
-        $directory = "ecclesiastical/bishops/{$bishop->id}";
-        $destination = $directory.'/'.$filename;
-
-        Storage::disk('public')->copy($pendingPath, $destination);
-
-        $bishop->update([
-            'photo_path' => $destination,
-            'photo_url' => $this->publicUrl($destination),
-        ]);
-
-        return $destination;
+        return null;
     }
 
-    public function deleteStoredPath(?string $path): void
+    public function hasPhoto(?string $photoPath, ?string $legacyPhotoUrl = null): bool
     {
-        $this->deleteStoredFile($path);
+        return $photoPath !== null && $photoPath !== '';
     }
 
     /**
@@ -148,177 +100,115 @@ class BishopFileUploadService
      */
     public function validateFile(UploadedFile $file): array
     {
-        if ($file->getSize() > self::MAX_FILE_SIZE) {
-            return [
-                'valid' => false,
-                'error' => 'File size must not exceed 3MB',
-            ];
-        }
+        try {
+            (new ImageMediaPolicy)->assertPreUpload($file, ImageMediaPolicy::CATEGORY_BISHOPS);
 
-        $mimeType = strtolower((string) $file->getMimeType());
-        if (! in_array($mimeType, self::ALLOWED_MIME_TYPES, true)) {
-            return [
-                'valid' => false,
-                'error' => 'File must be a JPEG, PNG, or WebP image',
-            ];
-        }
+            $imageInfo = @getimagesize($file->getRealPath());
+            if ($imageInfo === false) {
+                return [
+                    'valid' => false,
+                    'error' => 'File is not a valid image',
+                ];
+            }
 
-        $imageInfo = @getimagesize($file->getRealPath());
-        if ($imageInfo === false) {
-            return [
-                'valid' => false,
-                'error' => 'File is not a valid image',
-            ];
+            return ['valid' => true, 'error' => null];
+        } catch (ImageMediaException $e) {
+            return ['valid' => false, 'error' => $e->publicMessage()];
         }
-
-        [$width, $height] = $imageInfo;
-        if ($width < self::MIN_DIMENSION || $height < self::MIN_DIMENSION) {
-            return [
-                'valid' => false,
-                'error' => 'Image must be at least '.self::MIN_DIMENSION.'x'.self::MIN_DIMENSION.' pixels',
-            ];
-        }
-
-        return ['valid' => true, 'error' => null];
     }
 
-    private function assertValidImage(UploadedFile $file): void
+    public function storePendingSuggestionPhoto(string $requestId, UploadedFile $file): string
+    {
+        $result = $this->imageMediaService->store(
+            $file,
+            self::PLATFORM_TENANT_ID,
+            ImageMediaPolicy::CATEGORY_BISHOPS,
+        );
+
+        return $result->storageKey;
+    }
+
+    public function applyPendingPhotoToBishop(BishopManagement $bishop, string $pendingPath): string
+    {
+        if ($this->imageMediaService->checksumForKey($pendingPath) === null) {
+            throw new ImageMediaException(
+                ImageMediaException::CODE_INVALID_PATH,
+                'Suggested bishop photo is no longer available.'
+            );
+        }
+
+        $previousPath = $bishop->photo_path;
+
+        DB::transaction(function () use ($bishop, $pendingPath): void {
+            $locked = BishopManagement::query()->whereKey($bishop->id)->lockForUpdate()->firstOrFail();
+            $locked->photo_path = $pendingPath;
+            $locked->photo_url = null;
+            $locked->save();
+        });
+
+        if ($previousPath !== null && $previousPath !== $pendingPath) {
+            $this->imageMediaService->deletePair($previousPath, self::PLATFORM_TENANT_ID);
+        }
+
+        return $pendingPath;
+    }
+
+    public function deleteStoredPath(?string $path): void
+    {
+        $this->imageMediaService->deletePair($path, self::PLATFORM_TENANT_ID);
+    }
+
+    public function uploadCoatOfArms(BishopManagement $bishop, UploadedFile $file): string
     {
         $validation = $this->validateFile($file);
         if (! $validation['valid']) {
-            throw new InvalidArgumentException($validation['error'] ?? 'Invalid image file');
+            throw new ImageMediaException(
+                ImageMediaException::CODE_INVALID_IMAGE,
+                $validation['error'] ?? 'Invalid image file'
+            );
         }
-    }
 
-    private function storeFile(BishopManagement $bishop, UploadedFile $file, string $type): string
-    {
-        $extension = $this->resolveExtension($file);
-        $filename = sprintf('%s-%s.%s', $type, Str::uuid()->toString(), $extension);
+        $this->deleteCoatOfArmsFile($bishop->coat_of_arms_path);
+
+        $extension = strtolower((string) $file->getClientOriginalExtension()) ?: 'jpg';
+        $filename = sprintf('coat-of-arms-%s.%s', \Illuminate\Support\Str::uuid()->toString(), $extension);
         $directory = "ecclesiastical/bishops/{$bishop->id}";
 
-        return Storage::disk('public')->putFileAs(
+        $path = \Illuminate\Support\Facades\Storage::disk('public')->putFileAs(
             $directory,
             $file,
             $filename,
             ['visibility' => 'public']
         );
+
+        $bishop->update(['coat_of_arms_path' => $path]);
+
+        return $path;
     }
 
-    private function resolveExtension(UploadedFile $file): string
+    public function deleteCoatOfArms(BishopManagement $bishop): void
     {
-        $mimeType = strtolower((string) $file->getMimeType());
-
-        return self::MIME_TO_EXTENSION[$mimeType] ?? 'jpg';
+        $this->deleteCoatOfArmsFile($bishop->coat_of_arms_path);
+        $bishop->update(['coat_of_arms_path' => null]);
     }
 
-    private function deleteStoredFile(?string $path): void
+    public function publicUrl(?string $path): ?string
     {
-        if ($path && Storage::disk('public')->exists($path)) {
-            Storage::disk('public')->delete($path);
+        if ($path === null || $path === '') {
+            return null;
         }
+
+        if (str_starts_with($path, 'platform/')) {
+            return $this->signedPhotoUrl($path);
+        }
+
+        return \Illuminate\Support\Facades\Storage::disk('public')->url($path);
     }
 
-    private function optimizeImage(string $path): void
+    private function deleteCoatOfArmsFile(?string $path): void
     {
-        try {
-            $fullPath = Storage::disk('public')->path($path);
-            if (! is_file($fullPath)) {
-                return;
-            }
-
-            $contents = file_get_contents($fullPath);
-            if ($contents === false) {
-                return;
-            }
-
-            $image = @imagecreatefromstring($contents);
-            if ($image === false) {
-                throw new InvalidArgumentException('File is not a valid image');
-            }
-
-            $image = $this->applyExifOrientation($image, $fullPath);
-
-            $width = imagesx($image);
-            $height = imagesy($image);
-
-            if ($width > self::MAX_DIMENSION || $height > self::MAX_DIMENSION) {
-                $ratio = min(self::MAX_DIMENSION / $width, self::MAX_DIMENSION / $height);
-                $newWidth = max(1, (int) round($width * $ratio));
-                $newHeight = max(1, (int) round($height * $ratio));
-
-                $resized = imagecreatetruecolor($newWidth, $newHeight);
-                imagealphablending($resized, false);
-                imagesavealpha($resized, true);
-                imagecopyresampled(
-                    $resized,
-                    $image,
-                    0,
-                    0,
-                    0,
-                    0,
-                    $newWidth,
-                    $newHeight,
-                    $width,
-                    $height
-                );
-                imagedestroy($image);
-                $image = $resized;
-            }
-
-            $this->saveImageResource($image, $fullPath);
-            imagedestroy($image);
-        } catch (\Throwable $e) {
-            Log::warning('Bishop image optimization failed', [
-                'path' => basename($path),
-                'error' => $e->getMessage(),
-            ]);
-        }
-    }
-
-    /**
-     * @param \GdImage|resource $image
-     * @return \GdImage|resource
-     */
-    private function applyExifOrientation($image, string $fullPath)
-    {
-        if (! function_exists('exif_read_data')) {
-            return $image;
-        }
-
-        $extension = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
-        if (! in_array($extension, ['jpg', 'jpeg'], true)) {
-            return $image;
-        }
-
-        $exif = @exif_read_data($fullPath);
-        if (! is_array($exif) || ! isset($exif['Orientation'])) {
-            return $image;
-        }
-
-        return match ((int) $exif['Orientation']) {
-            3 => imagerotate($image, 180, 0),
-            6 => imagerotate($image, -90, 0),
-            8 => imagerotate($image, 90, 0),
-            default => $image,
-        };
-    }
-
-    /**
-     * @param \GdImage|resource $image
-     */
-    private function saveImageResource($image, string $fullPath): void
-    {
-        $extension = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
-
-        switch ($extension) {
-            case 'png':
-                imagepng($image, $fullPath, 8);
-                break;
-            case 'webp':
-                imagewebp($image, $fullPath, 80);
-                break;
-            default:
-                imagejpeg($image, $fullPath, 85);
+        if ($path && \Illuminate\Support\Facades\Storage::disk('public')->exists($path)) {
+            \Illuminate\Support\Facades\Storage::disk('public')->delete($path);
         }
     }
 }

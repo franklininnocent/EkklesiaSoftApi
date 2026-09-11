@@ -28,6 +28,12 @@ Route::prefix('auth')->group(function () {
     Route::middleware('auth:api')->group(function () {
         Route::get('user', [AuthenticationController::class, 'user']);
         Route::get('get-user', [AuthenticationController::class, 'getUser']);
+        Route::post('profile-image', [AuthenticationController::class, 'uploadSelfProfileImage'])
+            ->middleware('api.throttle:uploads')
+            ->name('auth.upload-self-profile-image');
+        Route::delete('profile-image', [AuthenticationController::class, 'deleteSelfProfileImage'])
+            ->middleware('api.throttle:uploads')
+            ->name('auth.delete-self-profile-image');
     });
 });
 
@@ -67,6 +73,16 @@ Route::middleware('auth:api')->prefix('users')->group(function () {
     Route::patch('/{id}/status', [UserController::class, 'updateStatus'])
         ->where('id', '[0-9]+')
         ->name('users.update-status');
+
+    Route::post('/{id}/profile-image', [UserController::class, 'uploadProfileImage'])
+        ->where('id', '[0-9]+')
+        ->middleware('api.throttle:uploads')
+        ->name('users.upload-profile-image');
+
+    Route::delete('/{id}/profile-image', [UserController::class, 'deleteProfileImage'])
+        ->where('id', '[0-9]+')
+        ->middleware('api.throttle:uploads')
+        ->name('users.delete-profile-image');
     
     // Statistics Operation
     Route::get('/statistics', [UserController::class, 'statistics'])

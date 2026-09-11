@@ -88,6 +88,10 @@ class TenantPermissionCatalogSeeder extends Seeder
             // Tenant data export (Settings → Data Export)
             ['name' => 'tenant.data.export', 'display_name' => 'Export Tenant Data', 'description' => 'Request, view, and download parish business data exports', 'module' => 'TenantDataExport', 'category' => 'settings'],
 
+            // Default Seeds (Settings → Default Seeds)
+            ['name' => 'settings.default-seeds.view', 'display_name' => 'View Default Seeds', 'description' => 'View recommended default configuration for enabled modules', 'module' => 'TenantDefaultSeeds', 'category' => 'settings'],
+            ['name' => 'settings.default-seeds.run', 'display_name' => 'Add Default Seeds', 'description' => 'Add missing recommended default configuration for enabled modules', 'module' => 'TenantDefaultSeeds', 'category' => 'settings'],
+
             // Pastoral care (staff-only visit requests)
             ['name' => 'pastoral.care.view', 'display_name' => 'View Pastoral Care', 'description' => 'View visit requests and pastoral workflow', 'module' => 'PastoralCare', 'category' => 'pastoral'],
             ['name' => 'pastoral.care.create', 'display_name' => 'Request a Visit', 'description' => 'Create pastoral visit requests for a family', 'module' => 'PastoralCare', 'category' => 'pastoral'],

@@ -3,15 +3,14 @@
 namespace Modules\MinistriesAssociations\Policies;
 
 use Modules\Authentication\Models\User;
+use Modules\Tenants\Policies\Concerns\AuthorizesTenantPermission;
 
 class MinistriesModulePolicy
 {
+    use AuthorizesTenantPermission;
+
     public function viewStatus(User $user): bool
     {
-        if (method_exists($user, 'isSuperAdmin') && $user->isSuperAdmin()) {
-            return true;
-        }
-
-        return $user->hasPermission('ministries.view');
+        return $this->allows($user, 'ministries.view');
     }
 }

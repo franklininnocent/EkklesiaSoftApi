@@ -14,6 +14,10 @@ use Modules\Tenants\Export\Contributors\MinistriesDataExportContributor;
 use Modules\Tenants\Export\Contributors\SacramentsDataExportContributor;
 use Modules\Tenants\Export\Contributors\UsersDataExportContributor;
 use Modules\Tenants\Export\TenantDataExportContributorRegistry;
+use Modules\Tenants\DefaultSeeds\DefaultSeedRegistry;
+use Modules\Tenants\Services\DefaultSeedAuthorizationService;
+use Modules\Tenants\Services\DefaultSeedCatalogService;
+use Modules\Tenants\Services\DefaultSeedExecutionService;
 use Modules\Tenants\Support\SlowQueryLogger;
 use Modules\Tenants\Support\TenantRlsManager;
 use Modules\Tenants\Contracts\SupportSessionResolver;
@@ -76,6 +80,7 @@ class TenantsServiceProvider extends ServiceProvider
         $this->app->singleton(SupportSessionResolver::class, NullSupportSessionResolver::class);
         $this->app->scoped(TenantContext::class, static fn () => TenantContext::empty());
         $this->app->singleton(\Modules\Tenants\Services\TenantAuthorizationService::class);
+        $this->app->singleton(\Modules\Tenants\Services\SupportSessionAuthorizationService::class);
         $this->app->singleton(\Modules\Tenants\Services\PlatformAuditLogger::class);
         $this->app->singleton(\Modules\Tenants\Support\AuditPiiRedactor::class);
         $this->app->singleton(
@@ -100,6 +105,16 @@ class TenantsServiceProvider extends ServiceProvider
             return $registry;
         });
 
+        $this->app->singleton(DefaultSeedRegistry::class, static fn () => new DefaultSeedRegistry);
+        $this->app->singleton(DefaultSeedAuthorizationService::class);
+        $this->app->singleton(DefaultSeedCatalogService::class);
+        $this->app->singleton(DefaultSeedExecutionService::class);
+
+        $this->app->singleton(\Modules\Tenants\Services\Media\ImageMediaPolicy::class);
+        $this->app->singleton(\Modules\Tenants\Services\Media\ImageMediaService::class);
+        $this->app->singleton(\Modules\Tenants\Services\Media\ImageMediaStorageResolver::class);
+        $this->app->singleton(\Modules\Tenants\Services\Media\ImageMediaUrlSigner::class);
+
         $this->app->register(EventServiceProvider::class);
         $this->app->register(RouteServiceProvider::class);
     }
@@ -111,6 +126,8 @@ class TenantsServiceProvider extends ServiceProvider
     {
         $this->commands([
             \Modules\Tenants\Console\Commands\CleanupAuditLogs::class,
+            \Modules\Tenants\Console\Commands\CleanupOrphanMedia::class,
+            \Modules\Tenants\Console\Commands\PromotePublicImagesToPrivate::class,
             \Modules\Tenants\Console\Commands\AssignPermissionsToAdministrators::class,
             \Modules\Tenants\Console\Commands\BackfillTenantRbac::class,
             \Modules\Tenants\Console\Commands\CleanupExpiredTenantDataExports::class,

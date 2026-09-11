@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Modules\Family\app\Support\FamilyProfileImageAuthorization;
+use Modules\Tenants\Services\Media\ImageMediaUrlSigner;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Models\Country;
 use Modules\Tenants\Models\State;
@@ -70,6 +72,11 @@ class Family extends Model
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
         'deleted_at' => 'datetime',
+    ];
+
+    protected $hidden = [
+        'profile_image_url',
+        'head_profile_image_url',
     ];
 
     /**
@@ -250,25 +257,31 @@ class Family extends Model
      */
     public function getProfileImageFullUrlAttribute(): ?string
     {
-        if (!$this->profile_image_url) {
+        if (! $this->profile_image_url || ! $this->tenant_id) {
             return null;
         }
 
-        return \Storage::disk('public')->url($this->profile_image_url);
+        return app(ImageMediaUrlSigner::class)->displayUrl(
+            $this->profile_image_url,
+            (int) $this->tenant_id,
+            fn (): bool => FamilyProfileImageAuthorization::canView($this, auth()->user())
+        );
     }
 
     /**
      * Get the full URL for the head profile image.
-     *
-     * @return string|null
      */
     public function getHeadProfileImageFullUrlAttribute(): ?string
     {
-        if (!$this->head_profile_image_url) {
+        if (! $this->head_profile_image_url || ! $this->tenant_id) {
             return null;
         }
 
-        return \Storage::disk('public')->url($this->head_profile_image_url);
+        return app(ImageMediaUrlSigner::class)->displayUrl(
+            $this->head_profile_image_url,
+            (int) $this->tenant_id,
+            fn (): bool => FamilyProfileImageAuthorization::canView($this, auth()->user())
+        );
     }
 
     /**

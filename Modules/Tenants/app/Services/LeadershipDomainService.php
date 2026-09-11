@@ -7,8 +7,6 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use Modules\EcclesiasticalData\Services\Leadership\EcclesiasticalLeadershipService;
 use Modules\Family\app\Services\PersonService;
 use Modules\Family\Models\Person;
@@ -27,6 +25,7 @@ class LeadershipDomainService
         private readonly ChurchAuditService $auditService,
         private readonly PersonService $personService,
         private readonly EcclesiasticalLeadershipService $leadershipService,
+        private readonly ChurchMediaImageService $churchMediaImageService,
     ) {}
 
     /**
@@ -207,38 +206,23 @@ class LeadershipDomainService
             throw ChurchLeadershipDomainException::notFound();
         }
 
-        $this->deleteAssignmentPhotoFile($assignment->photo_url);
+        $previousPhoto = $assignment->photo_url;
 
-        $extension = strtolower($file->getClientOriginalExtension());
-        $allowedExtensions = ['jpg', 'jpeg', 'png', 'webp'];
-        if (! in_array($extension, $allowedExtensions, true)) {
-            $extension = 'jpg';
-        }
+        $this->churchMediaImageService->replaceAssignmentPhoto($file, $assignment);
 
-        $filename = sprintf(
-            'assignment_t%d_%s_%s_%s.%s',
+        $assignment->refresh();
+
+        $this->auditService->log(
             $tenantId,
+            'leadership.photo.uploaded',
+            'leadership_assignment',
             $assignment->id,
-            now()->format('YmdHis'),
-            Str::random(12),
-            $extension,
+            $previousPhoto !== null ? ['photo_url' => $previousPhoto] : null,
+            ['photo_url' => '[stored]'],
+            $profile->id,
         );
 
-        $directory = "tenants/{$tenantId}/leadership";
-        $storedPath = Storage::disk('public')->putFileAs(
-            $directory,
-            $file,
-            $filename,
-            ['visibility' => 'public'],
-        );
-
-        if ($storedPath === false) {
-            throw new ChurchLeadershipDomainException('Failed to upload leader photo.');
-        }
-
-        $assignment->photo_url = $storedPath;
-        $assignment->updated_by = Auth::id();
-        $assignment->save();
+        $this->leadershipService->invalidateParish((int) $profile->id, $tenantId);
 
         return $assignment->fresh(['person' => fn ($q) => $q->withTrashed(), 'role', 'legacyChurchLeadership']);
     }
@@ -613,7 +597,7 @@ class LeadershipDomainService
                 'phone' => $person->phone,
                 'status' => $person->status,
                 'photo_url' => $photoUrl,
-                'photo_full_url' => $this->resolvePhotoFullUrl($photoUrl),
+                'photo_full_url' => $this->resolvePhotoFullUrl($photoUrl, (int) $assignment->tenant_id),
             ] : null,
             'role_id' => $assignment->role_id,
             'role' => $role ? [
@@ -704,7 +688,7 @@ class LeadershipDomainService
         return null;
     }
 
-    private function resolvePhotoFullUrl(?string $photoUrl): ?string
+    private function resolvePhotoFullUrl(?string $photoUrl, int $tenantId): ?string
     {
         if ($photoUrl === null || $photoUrl === '') {
             return null;
@@ -714,21 +698,6 @@ class LeadershipDomainService
             return $photoUrl;
         }
 
-        return Storage::disk('public')->url($photoUrl);
-    }
-
-    private function deleteAssignmentPhotoFile(?string $photoPath): void
-    {
-        if ($photoPath === null || $photoPath === '') {
-            return;
-        }
-
-        if (str_starts_with($photoPath, 'http://') || str_starts_with($photoPath, 'https://')) {
-            return;
-        }
-
-        if (Storage::disk('public')->exists($photoPath)) {
-            Storage::disk('public')->delete($photoPath);
-        }
+        return $this->churchMediaImageService->leadershipPhotoUrl($photoUrl, $tenantId);
     }
 }

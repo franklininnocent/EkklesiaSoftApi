@@ -65,18 +65,18 @@ Route::middleware(['auth:api'])->prefix('families')->group(function () {
 
     // Family Profile Image Routes
     Route::post('/{id}/profile-image', [FamilyController::class, 'uploadProfileImage'])
-        ->middleware('tenant.permission:families.edit')
+        ->middleware(['tenant.permission:families.edit', 'api.throttle:uploads'])
         ->name('families.profile-image.upload');
     Route::delete('/{id}/profile-image', [FamilyController::class, 'deleteProfileImage'])
-        ->middleware('tenant.permission:families.edit')
+        ->middleware(['tenant.permission:families.edit', 'api.throttle:uploads'])
         ->name('families.profile-image.delete');
 
     // Family Head Profile Image Routes
     Route::post('/{id}/head-profile-image', [FamilyController::class, 'uploadHeadProfileImage'])
-        ->middleware('tenant.permission:families.edit')
+        ->middleware(['tenant.permission:families.edit', 'api.throttle:uploads'])
         ->name('families.head-profile-image.upload');
     Route::delete('/{id}/head-profile-image', [FamilyController::class, 'deleteHeadProfileImage'])
-        ->middleware('tenant.permission:families.edit')
+        ->middleware(['tenant.permission:families.edit', 'api.throttle:uploads'])
         ->name('families.head-profile-image.delete');
 
     // Family Member Nested Routes

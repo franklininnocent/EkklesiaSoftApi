@@ -10,6 +10,11 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Middleware\HandleCors;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Middleware\SubstituteBindings;
+use Modules\ApplicationAccess\Http\Middleware\AssignRequestId;
+use Modules\ApplicationAccess\Http\Middleware\CaptureApplicationAccess;
+use Modules\ApplicationAccess\Http\Middleware\EnforceApplicationIpBlocks;
+use Modules\ApplicationAccess\Http\Middleware\EnsureApplicationAccessPermission;
+use Modules\ApplicationAccess\Support\TrustedProxyConfiguration;
 use Modules\Donations\Http\Middleware\EnsureDonationFeatureEnabled;
 use Modules\Donations\Http\Middleware\LogDonationSecurityResponse;
 use Modules\EcclesiasticalData\Http\Middleware\EnsureEcclesiasticalPermission;
@@ -18,6 +23,7 @@ use Modules\MinistriesAssociations\Http\Middleware\EnsureMinistriesFeatureEnable
 use Modules\RolesAndPermissions\Http\Middleware\EnsureTenantPermission;
 use Modules\SupportAccess\Http\Middleware\EnforceSupportSessionMode;
 use Modules\SupportAccess\Http\Middleware\EnsureSupportPermission;
+use Modules\SupportTickets\Http\Middleware\EnsureParishTicketActor;
 use Modules\Tenants\Http\Middleware\ApplyTenantRlsTransaction;
 use Modules\Tenants\Http\Middleware\EnforceApiPaginationLimits;
 use Modules\Tenants\Http\Middleware\EnsureSubscriptionAccess;
@@ -39,6 +45,17 @@ return Application::configure(basePath: dirname(__DIR__))
         // Enable CORS for API requests
         $middleware->prepend(HandleCors::class);
 
+        $trustedProxies = TrustedProxyConfiguration::proxies();
+        if ($trustedProxies !== []) {
+            $middleware->trustProxies(
+                at: $trustedProxies,
+                headers: Request::HEADER_X_FORWARDED_FOR
+                    | Request::HEADER_X_FORWARDED_HOST
+                    | Request::HEADER_X_FORWARDED_PORT
+                    | Request::HEADER_X_FORWARDED_PROTO
+            );
+        }
+
         // Register auth middleware alias for Passport
         $middleware->alias([
             'auth' => Authenticate::class,
@@ -50,22 +67,27 @@ return Application::configure(basePath: dirname(__DIR__))
             'tenant.subscription' => EnsureSubscriptionAccess::class,
             'support.permission' => EnsureSupportPermission::class,
             'support.mode' => EnforceSupportSessionMode::class,
+            'support.ticket.parish_actor' => EnsureParishTicketActor::class,
             'ministries.platform.permission' => EnsureAdminMinistriesPermission::class,
             'ecclesiastical.permission' => EnsureEcclesiasticalPermission::class,
             'api.throttle' => ThrottleTenantApiRequests::class,
+            'application_access.permission' => EnsureApplicationAccessPermission::class,
         ]);
 
         // Configure API middleware group - set default guard to API
         // Order: bindings → Passport identity → TenantContext bind (SSOT for effective tenant)
         $middleware->api(prepend: [
+            AssignRequestId::class,
             SubstituteBindings::class,
             PassportAuthenticate::class,
+            EnforceApplicationIpBlocks::class,
             ResolveTenantContext::class,
             EnforceApiPaginationLimits::class,
             ThrottleTenantApiRequests::class,
             ApplyTenantRlsTransaction::class,
             EnforceSupportSessionMode::class,
             EnsureSubscriptionAccessMode::class,
+            CaptureApplicationAccess::class,
         ]);
 
         // Add security headers to all responses

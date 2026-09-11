@@ -9,5 +9,7 @@
     "Donations": true,
     "MinistriesAssociations": true,
     "SupportAccess": true,
-    "PastoralCare": true
+    "PastoralCare": true,
+    "SupportTickets": true,
+    "ApplicationAccess": true
 }

@@ -35,5 +35,6 @@
         <env name="TENANT_ORM_GLOBAL_SCOPE" value="false"/>
         <env name="TENANT_RLS_ENABLED" value="false"/>
         <env name="TENANT_API_RATE_LIMIT_ENABLED" value="false"/>
+        <env name="APPLICATION_ACCESS_TELEMETRY_ENABLED" value="false"/>
     </php>
 </phpunit>

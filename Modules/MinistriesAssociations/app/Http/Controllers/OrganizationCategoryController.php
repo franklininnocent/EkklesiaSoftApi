@@ -11,6 +11,7 @@ use Modules\MinistriesAssociations\Http\Requests\StoreOrganizationCategoryReques
 use Modules\MinistriesAssociations\Http\Requests\UpdateOrganizationCategoryRequest;
 use Modules\MinistriesAssociations\Http\Requests\UpdateTaxonomyStatusRequest;
 use Modules\MinistriesAssociations\Models\Organization;
+use Modules\MinistriesAssociations\DefaultSeeds\OrganizationCategoriesDefaultSeedDefinition;
 use Modules\MinistriesAssociations\Models\OrganizationCategory;
 use Modules\MinistriesAssociations\Services\MinistriesAuditService;
 
@@ -18,8 +19,10 @@ class OrganizationCategoryController extends Controller
 {
     use AuthorizesRequests;
 
-    public function __construct(private readonly MinistriesAuditService $auditService)
-    {
+    public function __construct(
+        private readonly MinistriesAuditService $auditService,
+        private readonly OrganizationCategoriesDefaultSeedDefinition $categoriesDefaultSeed,
+    ) {
     }
 
     public function index(IndexTaxonomyRequest $request): JsonResponse
@@ -183,40 +186,15 @@ class OrganizationCategoryController extends Controller
         $this->authorize('seedDefaults', OrganizationCategory::class);
 
         $tenantId = $this->tenantId();
-        $displayOrder = 0;
+        $userId = Auth::id() ? (int) Auth::id() : null;
 
-        foreach ($this->defaultCategories() as $defaults) {
-            OrganizationCategory::updateOrCreate(
-                [
-                    'tenant_id' => $tenantId,
-                    'code' => $defaults['code'],
-                ],
-                [
-                    'name' => $defaults['name'],
-                    'description' => $defaults['description'] ?? null,
-                    'is_system' => true,
-                    'is_active' => true,
-                    'display_order' => $displayOrder,
-                ]
-            );
-
-            $displayOrder++;
-        }
+        $this->categoriesDefaultSeed->execute($tenantId, $userId);
 
         $categories = OrganizationCategory::query()
             ->forTenant($tenantId)
             ->orderBy('display_order')
             ->orderBy('name')
             ->get();
-
-        $this->auditService->log(
-            $tenantId,
-            'category.defaults_seeded',
-            'organization_category',
-            (string) $tenantId,
-            null,
-            ['count' => $categories->count()],
-        );
 
         return response()->json([
             'success' => true,

@@ -52,6 +52,9 @@
             "Modules\\PastoralCare\\": "Modules/PastoralCare/app/",
             "Modules\\PastoralCare\\Database\\Factories\\": "Modules/PastoralCare/database/factories/",
             "Modules\\PastoralCare\\Database\\Seeders\\": "Modules/PastoralCare/database/seeders/",
+            "Modules\\SupportTickets\\": "Modules/SupportTickets/app/",
+            "Modules\\SupportTickets\\Database\\Factories\\": "Modules/SupportTickets/database/factories/",
+            "Modules\\SupportTickets\\Database\\Seeders\\": "Modules/SupportTickets/database/seeders/",
             "Modules\\RolesAndPermissions\\": "Modules/RolesAndPermissions/app/",
             "Modules\\RolesAndPermissions\\Database\\Factories\\": "Modules/RolesAndPermissions/database/factories/",
             "Modules\\RolesAndPermissions\\Database\\Seeders\\": "Modules/RolesAndPermissions/database/seeders/",
@@ -60,6 +63,8 @@
             "Modules\\Sacraments\\Database\\Seeders\\": "Modules/Sacraments/database/seeders/",
             "Modules\\SupportAccess\\": "Modules/SupportAccess/app/",
             "Modules\\SupportAccess\\Database\\Seeders\\": "Modules/SupportAccess/database/seeders/",
+            "Modules\\ApplicationAccess\\": "Modules/ApplicationAccess/app/",
+            "Modules\\ApplicationAccess\\Database\\Seeders\\": "Modules/ApplicationAccess/database/seeders/",
             "Modules\\Tenants\\": "Modules/Tenants/app/",
             "Modules\\Tenants\\Database\\Factories\\": "Modules/Tenants/database/factories/",
             "Modules\\Tenants\\Database\\Seeders\\": "Modules/Tenants/database/seeders/",
@@ -68,7 +73,8 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "Tests\\": "tests/"
+            "Tests\\": "tests/",
+            "Modules\\SupportTickets\\Tests\\": "Modules/SupportTickets/tests/"
         }
     },
     "scripts": {

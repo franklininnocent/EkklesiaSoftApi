@@ -11,6 +11,7 @@ use Modules\MinistriesAssociations\Http\Requests\StorePositionRequest;
 use Modules\MinistriesAssociations\Http\Requests\UpdatePositionRequest;
 use Modules\MinistriesAssociations\Http\Requests\UpdateTaxonomyStatusRequest;
 use Modules\MinistriesAssociations\Models\LeadershipTerm;
+use Modules\MinistriesAssociations\DefaultSeeds\PositionsDefaultSeedDefinition;
 use Modules\MinistriesAssociations\Models\Position;
 use Modules\MinistriesAssociations\Services\MinistriesAuditService;
 
@@ -18,8 +19,10 @@ class PositionController extends Controller
 {
     use AuthorizesRequests;
 
-    public function __construct(private readonly MinistriesAuditService $auditService)
-    {
+    public function __construct(
+        private readonly MinistriesAuditService $auditService,
+        private readonly PositionsDefaultSeedDefinition $positionsDefaultSeed,
+    ) {
     }
 
     public function index(IndexTaxonomyRequest $request): JsonResponse
@@ -184,40 +187,15 @@ class PositionController extends Controller
         $this->authorize('seedDefaults', Position::class);
 
         $tenantId = $this->tenantId();
-        $displayOrder = 0;
+        $userId = Auth::id() ? (int) Auth::id() : null;
 
-        foreach ($this->defaultPositions() as $defaults) {
-            Position::updateOrCreate(
-                [
-                    'tenant_id' => $tenantId,
-                    'code' => $defaults['code'],
-                ],
-                [
-                    'name' => $defaults['name'],
-                    'single_occupancy' => $defaults['single_occupancy'],
-                    'is_system' => true,
-                    'is_active' => true,
-                    'display_order' => $displayOrder,
-                ]
-            );
-
-            $displayOrder++;
-        }
+        $this->positionsDefaultSeed->execute($tenantId, $userId);
 
         $positions = Position::query()
             ->forTenant($tenantId)
             ->orderBy('display_order')
             ->orderBy('name')
             ->get();
-
-        $this->auditService->log(
-            $tenantId,
-            'position.defaults_seeded',
-            'position',
-            (string) $tenantId,
-            null,
-            ['count' => $positions->count()],
-        );
 
         return response()->json([
             'success' => true,

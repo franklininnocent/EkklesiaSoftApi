@@ -12,6 +12,10 @@ use Modules\Tenants\Support\TenantContext;
 use Modules\Tenants\Support\TenantScopedPublicStorage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
+/**
+ * @deprecated Use {@see MediaServeController} with encrypted media tokens instead.
+ * Legacy public-disk signed path serve — retained only during dual-read cutover.
+ */
 class SecureFileController
 {
     /**

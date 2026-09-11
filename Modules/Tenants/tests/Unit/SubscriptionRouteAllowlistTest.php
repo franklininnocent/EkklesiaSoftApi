@@ -26,4 +26,15 @@ class SubscriptionRouteAllowlistTest extends TestCase
         $this->assertTrue($allowlist->allows($matches));
         $this->assertFalse($allowlist->allows($blocked));
     }
+
+    public function test_application_access_revoke_is_allowlisted_from_config(): void
+    {
+        $allowlist = SubscriptionRouteAllowlist::fromConfig();
+
+        $revoke = Request::create('/api/admin/application-access/sessions/abc/revoke', 'POST');
+        $block = Request::create('/api/admin/application-access/ip-blocks', 'POST');
+
+        $this->assertTrue($allowlist->allows($revoke));
+        $this->assertTrue($allowlist->allows($block));
+    }
 }

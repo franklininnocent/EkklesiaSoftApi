@@ -12,6 +12,8 @@ use Modules\Family\Policies\FamilyPolicy;
 use Modules\Family\Policies\PersonPolicy;
 use Modules\PastoralCare\Models\PastoralCareRequest;
 use Modules\PastoralCare\Policies\PastoralCareRequestPolicy;
+use Modules\SupportTickets\Models\SupportTicket;
+use Modules\SupportTickets\Policies\SupportTicketPolicy;
 use Modules\Sacraments\Models\Sacrament;
 use Modules\Sacraments\Policies\SacramentPolicy;
 use Modules\Tenants\Models\LeadershipAssignment;
@@ -41,6 +43,7 @@ class EventServiceProvider extends ServiceProvider
         Gate::policy(Sacrament::class, SacramentPolicy::class);
         Gate::policy(DonationPayment::class, DonationPaymentPolicy::class);
         Gate::policy(PastoralCareRequest::class, PastoralCareRequestPolicy::class);
+        Gate::policy(SupportTicket::class, SupportTicketPolicy::class);
     }
 
     /**

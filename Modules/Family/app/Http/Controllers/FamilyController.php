@@ -18,7 +18,8 @@ use Modules\Family\app\Http\Requests\SplitFamilyMemberRequest;
 use Modules\Family\app\Http\Requests\StoreFamilyMemberRequest;
 use Modules\Family\app\Http\Requests\StoreFamilyRequest;
 use Modules\Family\app\Http\Requests\UpdateFamilyMemberRequest;
-use Modules\Family\app\Http\Requests\UpdateFamilyRequest;
+use Modules\Family\app\Http\Requests\UploadFamilyHeadProfileImageRequest;
+use Modules\Family\app\Http\Requests\UploadFamilyProfileImageRequest;
 use Modules\Family\app\Services\BccRelocationService;
 use Modules\Family\app\Services\FamilyMergeService;
 use Modules\Family\app\Services\FamilyService;
@@ -27,7 +28,9 @@ use Modules\Family\app\Services\HouseholdTransitionHistoryRecorder;
 use Modules\Family\app\Services\MarriageHouseholdService;
 use Modules\Family\app\Services\ParishionerFamilyAccessService;
 use Modules\Family\Models\Family;
+use Modules\Tenants\Services\SupportSessionAuthorizationService;
 use Modules\Tenants\Support\TenantContext;
+use Modules\Tenants\Services\Media\ImageMediaException;
 
 class FamilyController extends Controller
 {
@@ -91,6 +94,10 @@ class FamilyController extends Controller
         }
 
         if ($this->parishionerAccessService->isParishioner($user)) {
+            return null;
+        }
+
+        if (app(SupportSessionAuthorizationService::class)->grantsTenantProductAccess($user)) {
             return null;
         }
 
@@ -1101,7 +1108,7 @@ class FamilyController extends Controller
     /**
      * Upload profile image for family head
      */
-    public function uploadProfileImage(Request $request, string $id): JsonResponse
+    public function uploadProfileImage(UploadFamilyProfileImageRequest $request, string $id): JsonResponse
     {
         try {
             $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
@@ -1113,11 +1120,6 @@ class FamilyController extends Controller
                     'message' => 'Tenant ID is required',
                 ], 403);
             }
-
-            // Validate image file
-            $request->validate([
-                'profile_image' => ['required', 'image', 'mimes:jpeg,jpg,png,gif,webp', 'max:5120'],
-            ]);
 
             $family = $this->familyService->uploadProfileImage(
                 $id,
@@ -1139,6 +1141,11 @@ class FamilyController extends Controller
                 'data' => $family,
             ]);
 
+        } catch (ImageMediaException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->publicMessage(),
+            ], 422);
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
@@ -1149,7 +1156,6 @@ class FamilyController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to upload profile image',
-                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -1197,7 +1203,7 @@ class FamilyController extends Controller
     /**
      * Upload profile image for family head
      */
-    public function uploadHeadProfileImage(Request $request, string $id): JsonResponse
+    public function uploadHeadProfileImage(UploadFamilyHeadProfileImageRequest $request, string $id): JsonResponse
     {
         try {
             $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
@@ -1209,11 +1215,6 @@ class FamilyController extends Controller
                     'message' => 'Tenant ID is required',
                 ], 403);
             }
-
-            // Validate image file
-            $request->validate([
-                'head_profile_image' => ['required', 'image', 'mimes:jpeg,jpg,png,gif,webp', 'max:5120'],
-            ]);
 
             $family = $this->familyService->uploadHeadProfileImage(
                 $id,
@@ -1235,6 +1236,11 @@ class FamilyController extends Controller
                 'data' => $family,
             ]);
 
+        } catch (ImageMediaException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->publicMessage(),
+            ], 422);
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
@@ -1245,7 +1251,6 @@ class FamilyController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to upload head profile image',
-                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -1319,7 +1324,7 @@ class FamilyController extends Controller
                 'bcc_id' => $request->input('bcc_id'),
                 'is_head' => $request->input('is_head'),
                 'progression' => $request->input('progression'),
-                'sort_by' => $request->input('sort_by', 'last_name'),
+                'sort_by' => $request->input('sort_by', 'name'),
                 'sort_order' => $request->input('sort_order', 'asc'),
             ];
 

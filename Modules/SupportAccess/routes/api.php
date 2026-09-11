@@ -62,12 +62,14 @@ Route::prefix('support')
             ->middleware('support.permission:support.sessions.view');
         Route::post('/sessions/{sessionId}/renew', [SupportSessionController::class, 'renew'])
             ->middleware('support.permission:support.sessions.start');
+        // Owners may end their own session; service enforces ownership. Start permission
+        // aligns with who can enter a tenant (force-end still requires support.sessions.end).
         Route::post('/sessions/{sessionId}/end', [SupportSessionController::class, 'end'])
-            ->middleware('support.permission:support.sessions.end');
+            ->middleware('support.permission:support.sessions.start');
         Route::post('/sessions/{sessionId}/force-end', [SupportSessionController::class, 'forceEnd'])
             ->middleware('support.permission:support.sessions.end');
-        Route::post('/sessions/{sessionId}/events', [SupportSessionController::class, 'recordEvent'])
-            ->middleware('support.permission:support.sessions.view');
+        // Ownership + active session enforced in SupportSessionService::recordEvent.
+        Route::post('/sessions/{sessionId}/events', [SupportSessionController::class, 'recordEvent']);
     });
 
 Route::prefix('tenant/support-access')

@@ -83,7 +83,6 @@ class BishopCreateModalApiTest extends TestCase
             ->assertJsonPath('data.is_current', true)
             ->assertJsonPath('data.email', 'bishop.qa@example.com')
             ->assertJsonPath('data.phone', '9876543210')
-            ->assertJsonPath('data.photo_url', 'https://cdn.example.com/bishop.jpg')
             ->assertJsonPath('data.education', "STB, Rome\nMA Theology")
             ->assertJsonPath('data.date_of_birth', '1955-03-15')
             ->assertJsonPath('data.ordained_priest_date', '1980-06-01')
@@ -290,14 +289,14 @@ class BishopCreateModalApiTest extends TestCase
     }
 
     #[Test]
-    public function it_accepts_https_photo_url(): void
+    public function it_rejects_client_photo_url_on_create(): void
     {
         Passport::actingAs($this->createEkklesiaAdmin());
 
         $this->postJson($this->baseUrl, $this->validModalPayload([
             'photo_url' => 'https://cdn.example.com/images/bishop.webp?size=large',
-        ]))->assertCreated()
-            ->assertJsonPath('data.photo_url', 'https://cdn.example.com/images/bishop.webp?size=large');
+        ]))->assertStatus(422)
+            ->assertJsonValidationErrors(['photo_url']);
     }
 
     #[Test]
@@ -685,7 +684,6 @@ class BishopCreateModalApiTest extends TestCase
             'appointed_date' => '2006-01-01',
             'email' => 'bishop.qa@example.com',
             'phone' => '9876543210',
-            'photo_url' => 'https://cdn.example.com/bishop.jpg',
         ], $overrides);
     }
 

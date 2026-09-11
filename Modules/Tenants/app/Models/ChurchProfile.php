@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Modules\EcclesiasticalData\Models\BishopManagement;
 use Modules\EcclesiasticalData\Services\DioceseLeadershipQueryService;
+use Modules\Tenants\Database\Factories\ChurchProfileFactory;
 
 /**
  * ChurchProfile Model
@@ -99,5 +100,10 @@ class ChurchProfile extends Model
         return BishopManagement::query()
             ->with('ecclesiasticalTitle')
             ->find($bishopId);
+    }
+
+    protected static function newFactory(): ChurchProfileFactory
+    {
+        return ChurchProfileFactory::new();
     }
 }

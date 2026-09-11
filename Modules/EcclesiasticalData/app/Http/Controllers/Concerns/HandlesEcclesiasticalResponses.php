@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
 use Modules\EcclesiasticalData\Exceptions\EcclesiasticalDomainException;
+use Modules\Tenants\Services\Media\ImageMediaException;
 use Throwable;
 
 trait HandlesEcclesiasticalResponses
@@ -57,6 +58,13 @@ trait HandlesEcclesiasticalResponses
                 422,
                 $e->getMessage(),
                 ['image' => [$e->getMessage()]],
+            );
+        } catch (ImageMediaException $e) {
+            return $this->ecclesiasticalError(
+                $e->publicMessage(),
+                422,
+                $e->publicMessage(),
+                ['image' => [$e->publicMessage()]],
             );
         } catch (ModelNotFoundException $e) {
             return $this->ecclesiasticalError($failureMessage, 404, $e->getMessage());

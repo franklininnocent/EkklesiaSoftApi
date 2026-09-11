@@ -4,6 +4,7 @@ namespace Modules\Tenants\Tests\Feature;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Passport\Passport;
 use Modules\Authentication\Models\Role;
 use Modules\Authentication\Models\User;
@@ -15,6 +16,7 @@ use Modules\Tenants\Models\LeadershipAssignment;
 use Modules\Tenants\Models\LeadershipRole;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Support\LeadershipAssignmentStatus;
+use Modules\Tenants\Tests\Support\MediaSecurityFixtures;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Concerns\ActsAsTenantRoles;
 use Tests\TestCase;
@@ -77,6 +79,9 @@ class ChurchLeadershipGovernanceApiTest extends TestCase
     #[Test]
     public function assignment_profile_photo_can_be_uploaded_after_assign(): void
     {
+        Storage::fake('local');
+        Storage::fake('public');
+
         $this->authenticateAdmin();
         $person = $this->makePerson('Photo', 'Leader');
 
@@ -97,20 +102,88 @@ class ChurchLeadershipGovernanceApiTest extends TestCase
 
         $response->assertStatus(422);
 
-        $file = UploadedFile::fake()->image('leader.jpg');
-
         $upload = $this->postJson(
             "/api/church-profile/leadership/assignments/{$assignment->id}/photo",
-            ['image' => $file],
+            ['image' => MediaSecurityFixtures::validJpeg(200, 200)],
         );
 
         $upload->assertOk()
             ->assertJsonPath('success', true)
-            ->assertJsonPath('data.person.photo_url', fn ($value) => is_string($value) && $value !== '');
+            ->assertJsonPath('data.person.photo_full_url', fn ($value) => is_string($value) && $value !== '');
+
+        $assignment->refresh();
+        $this->assertNotNull($assignment->photo_url);
+        $this->assertStringContainsString("tenants/{$this->tenant->id}/leadership/", $assignment->photo_url);
+        Storage::disk('local')->assertExists($assignment->photo_url);
 
         $current = $this->getJson('/api/church-profile/leadership/current');
         $current->assertOk()
             ->assertJsonPath('data.assignments.0.person.photo_full_url', fn ($value) => is_string($value) && $value !== '');
+
+        $this->assertDatabaseHas('church_audit_logs', [
+            'tenant_id' => $this->tenant->id,
+            'event' => 'leadership.photo.uploaded',
+            'target_id' => $assignment->id,
+        ]);
+    }
+
+    #[Test]
+    public function assignment_profile_photo_rejects_invalid_uploads(): void
+    {
+        Storage::fake('local');
+        Storage::fake('public');
+
+        $this->authenticateAdmin();
+        $person = $this->makePerson('Invalid', 'Leader');
+
+        $assignment = LeadershipAssignment::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'church_profile_id' => $this->profile->id,
+            'person_id' => $person->id,
+            'role_id' => $this->pastorRole->id,
+            'status' => LeadershipAssignmentStatus::ACTIVE,
+            'start_date' => now()->subMonth()->toDateString(),
+        ]);
+
+        $this->postJson(
+            "/api/church-profile/leadership/assignments/{$assignment->id}/photo",
+            ['image' => MediaSecurityFixtures::textPlain()],
+        )->assertStatus(422);
+    }
+
+    #[Test]
+    public function assignment_profile_photo_replaces_existing_private_image(): void
+    {
+        Storage::fake('local');
+        Storage::fake('public');
+
+        $this->authenticateAdmin();
+        $person = $this->makePerson('Replace', 'Leader');
+
+        $assignment = LeadershipAssignment::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'church_profile_id' => $this->profile->id,
+            'person_id' => $person->id,
+            'role_id' => $this->pastorRole->id,
+            'status' => LeadershipAssignmentStatus::ACTIVE,
+            'start_date' => now()->subMonth()->toDateString(),
+        ]);
+
+        $this->postJson(
+            "/api/church-profile/leadership/assignments/{$assignment->id}/photo",
+            ['image' => MediaSecurityFixtures::validJpeg(200, 200)],
+        )->assertOk();
+        $firstPath = $assignment->fresh()->photo_url;
+
+        $this->postJson(
+            "/api/church-profile/leadership/assignments/{$assignment->id}/photo",
+            ['image' => MediaSecurityFixtures::validPng(220, 220)],
+        )->assertOk();
+        $secondPath = $assignment->fresh()->photo_url;
+
+        $this->assertNotSame($firstPath, $secondPath);
+        Storage::disk('local')->assertMissing($firstPath);
+        Storage::disk('local')->assertExists($secondPath);
     }
 
     #[Test]
@@ -143,7 +216,7 @@ class ChurchLeadershipGovernanceApiTest extends TestCase
         $response = $this->getJson('/api/church-profile/leadership/current');
         $response->assertOk()
             ->assertJsonPath('data.assignments.0.person.photo_url', 'church-leadership/test-pastor.jpg')
-            ->assertJsonPath('data.assignments.0.person.photo_full_url', url('storage/church-leadership/test-pastor.jpg'));
+            ->assertJsonPath('data.assignments.0.person.photo_full_url', fn ($value) => is_string($value) && $value !== '');
     }
 
     #[Test]
@@ -554,6 +627,7 @@ class ChurchLeadershipGovernanceApiTest extends TestCase
         $pastorB = $this->makePerson('Pastor', 'Beta');
 
         $assignResponse = $this->postJson('/api/church-profile/leadership/assign', [
+            'is_external' => false,
             'person_id' => $pastorA->id,
             'role_id' => $this->pastorRole->id,
             'start_date' => '2024-01-01',
@@ -564,7 +638,7 @@ class ChurchLeadershipGovernanceApiTest extends TestCase
         $this->postJson('/api/church-profile/leadership/handover', [
             'outgoing_assignment_id' => $outgoingId,
             'outgoing_end_date' => '2025-12-31',
-            'outgoing_exit_reason_code' => 'transfer',
+            'outgoing_exit_reason_code' => 'transferred',
             'person_id' => $pastorB->id,
             'role_id' => $this->pastorRole->id,
             'start_date' => '2026-01-01',

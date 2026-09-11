@@ -1,0 +1,28 @@
+{
+    "name": "nwidart/supporttickets",
+    "description": "Support ticket module for EkklesiaSoft",
+    "authors": [
+        {
+            "name": "EkklesiaSoft",
+            "email": "dev@ekklesiasoft.com"
+        }
+    ],
+    "extra": {
+        "laravel": {
+            "providers": [],
+            "aliases": {}
+        }
+    },
+    "autoload": {
+        "psr-4": {
+            "Modules\\SupportTickets\\": "app/",
+            "Modules\\SupportTickets\\Database\\Factories\\": "database/factories/",
+            "Modules\\SupportTickets\\Database\\Seeders\\": "database/seeders/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Modules\\SupportTickets\\Tests\\": "tests/"
+        }
+    }
+}

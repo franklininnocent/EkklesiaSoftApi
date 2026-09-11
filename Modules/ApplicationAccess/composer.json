@@ -1,0 +1,16 @@
+{
+    "name": "nwidart/applicationaccess",
+    "description": "Application Access & Security Monitoring platform module",
+    "extra": {
+        "laravel": {
+            "providers": [],
+            "aliases": {}
+        }
+    },
+    "autoload": {
+        "psr-4": {
+            "Modules\\ApplicationAccess\\": "app/",
+            "Modules\\ApplicationAccess\\Database\\Seeders\\": "database/seeders/"
+        }
+    }
+}

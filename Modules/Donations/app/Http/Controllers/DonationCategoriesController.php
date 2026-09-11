@@ -14,8 +14,10 @@ use Modules\Donations\Services\DonationAuditService;
 
 class DonationCategoriesController extends Controller
 {
-    public function __construct(private readonly DonationAuditService $auditService)
-    {
+    public function __construct(
+        private readonly DonationAuditService $auditService,
+        private readonly \Modules\Donations\DefaultSeeds\DonationCategoriesDefaultSeedDefinition $categoriesDefaultSeed,
+    ) {
     }
 
     public function index(): JsonResponse
@@ -53,10 +55,9 @@ class DonationCategoriesController extends Controller
         $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
 
-        (new \Modules\Donations\Database\Seeders\DonationCategorySeeder())->run($tenantId, $userId);
+        $this->categoriesDefaultSeed->execute($tenantId, $userId);
 
         $categories = DonationCategory::forTenant($tenantId)->orderBy('name')->get();
-        $this->auditService->log($tenantId, 'category.defaults_seeded', 'donation_category', (string) $tenantId, null, ['count' => $categories->count()]);
 
         return response()->json([
             'success' => true,

@@ -35,6 +35,9 @@ class BishopPhotoApiTest extends TestCase
     {
         parent::setUp();
 
+        Storage::fake('local');
+        Storage::fake('public');
+
         if (! Denomination::count()) {
             Denomination::create([
                 'name' => 'Roman Catholic',
@@ -62,11 +65,9 @@ class BishopPhotoApiTest extends TestCase
     #[Test]
     public function it_deletes_bishop_photo(): void
     {
-        Storage::fake('public');
-
         $bishop = $this->createBishop('Bishop David');
         $this->postJson("/api/ecclesiastical/bishops/{$bishop->id}/upload-photo", [
-            'image' => UploadedFile::fake()->image('david.jpg', 100, 100),
+            'image' => UploadedFile::fake()->image('david.jpg', 200, 200),
         ])->assertOk();
 
         $this->deleteJson("/api/ecclesiastical/bishops/{$bishop->id}/photo")
@@ -79,47 +80,47 @@ class BishopPhotoApiTest extends TestCase
     }
 
     #[Test]
-    public function it_returns_photo_public_url_on_bishop_resource(): void
+    public function it_returns_signed_photo_url_on_bishop_resource(): void
     {
-        Storage::fake('public');
-
         $bishop = $this->createBishop('Bishop David');
         $this->postJson("/api/ecclesiastical/bishops/{$bishop->id}/upload-photo", [
-            'image' => UploadedFile::fake()->image('david.jpg', 100, 100),
+            'image' => UploadedFile::fake()->image('david.jpg', 200, 200),
         ])->assertOk();
+
+        $bishop->refresh();
+        $this->assertStringContainsString('platform/bishops/', $bishop->photo_path);
+        Storage::disk('local')->assertExists($bishop->photo_path);
 
         $response = $this->getJson("/api/ecclesiastical/bishops/{$bishop->id}");
 
         $response->assertOk()
             ->assertJsonPath('data.has_photo', true)
-            ->assertJsonStructure(['data' => ['photo_public_url', 'photo_path', 'photo_url']]);
+            ->assertJsonPath('data.photo_public_url', fn ($url) => is_string($url) && $url !== '')
+            ->assertJsonMissingPath('data.photo_path')
+            ->assertJsonMissingPath('data.photo_url');
     }
 
     #[Test]
     public function it_returns_resolved_photo_on_diocese_leadership(): void
     {
-        Storage::fake('public');
-
         $bishop = $this->createOrdinary('Bishop David', '2024-01-01');
         $this->postJson("/api/ecclesiastical/bishops/{$bishop->id}/upload-photo", [
-            'image' => UploadedFile::fake()->image('david.jpg', 100, 100),
+            'image' => UploadedFile::fake()->image('david.jpg', 200, 200),
         ])->assertOk();
 
         $response = $this->getJson("/api/ecclesiastical/dioceses/{$this->diocese->id}/leadership");
 
         $response->assertOk()
             ->assertJsonPath('data.ordinary.has_photo', true)
-            ->assertJsonStructure(['data' => ['ordinary' => ['photo_public_url', 'photo_url']]]);
+            ->assertJsonPath('data.ordinary.photo_public_url', fn ($url) => is_string($url) && $url !== '');
     }
 
     #[Test]
     public function it_preserves_distinct_bishop_photos_after_succession(): void
     {
-        Storage::fake('public');
-
         $john = $this->createOrdinary('Bishop John', '2018-01-01');
         $this->postJson("/api/ecclesiastical/bishops/{$john->id}/upload-photo", [
-            'image' => UploadedFile::fake()->image('john.jpg', 100, 100),
+            'image' => UploadedFile::fake()->image('john.jpg', 200, 200),
         ])->assertOk();
         $johnPhotoPath = $john->fresh()->photo_path;
 
@@ -129,7 +130,7 @@ class BishopPhotoApiTest extends TestCase
         ], (int) $this->ekklesiaUser->id, true);
 
         $this->postJson("/api/ecclesiastical/bishops/{$david->id}/upload-photo", [
-            'image' => UploadedFile::fake()->image('david.jpg', 100, 100),
+            'image' => UploadedFile::fake()->image('david.jpg', 200, 200),
         ])->assertOk();
 
         app(SuccessionService::class)->replaceCurrentOrdinary(
@@ -151,8 +152,6 @@ class BishopPhotoApiTest extends TestCase
     #[Test]
     public function it_rejects_invalid_upload_types(): void
     {
-        Storage::fake('public');
-
         $bishop = $this->createBishop('Bishop Peter');
 
         $this->postJson("/api/ecclesiastical/bishops/{$bishop->id}/upload-photo", [
@@ -165,8 +164,6 @@ class BishopPhotoApiTest extends TestCase
     #[Test]
     public function it_rejects_oversized_uploads(): void
     {
-        Storage::fake('public');
-
         $bishop = $this->createBishop('Bishop Peter');
 
         $this->postJson("/api/ecclesiastical/bishops/{$bishop->id}/upload-photo", [
@@ -174,6 +171,27 @@ class BishopPhotoApiTest extends TestCase
         ])->assertStatus(422);
 
         $this->assertNull($bishop->fresh()->photo_path);
+    }
+
+    #[Test]
+    public function it_rejects_client_photo_url_on_bishop_create(): void
+    {
+        $this->postJson('/api/ecclesiastical/bishops', [
+            'full_name' => 'Bishop Client URL',
+            'photo_url' => 'https://cdn.example.com/bishop.jpg',
+        ])->assertStatus(422)
+            ->assertJsonValidationErrors(['photo_url']);
+    }
+
+    #[Test]
+    public function it_rejects_client_photo_url_on_bishop_update(): void
+    {
+        $bishop = $this->createBishop('Bishop Secure');
+
+        $this->putJson("/api/ecclesiastical/bishops/{$bishop->id}", [
+            'photo_url' => 'https://cdn.example.com/bishop.jpg',
+        ])->assertStatus(422)
+            ->assertJsonValidationErrors(['photo_url']);
     }
 
     #[Test]

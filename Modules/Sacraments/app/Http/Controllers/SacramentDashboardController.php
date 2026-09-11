@@ -8,10 +8,13 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Modules\Sacraments\Services\SacramentDashboardService;
 use Modules\Sacraments\Support\SacramentPrivacyAccess;
+use Modules\Tenants\Http\Concerns\VerifiesParishProductAccess;
 use Modules\Tenants\Support\TenantContext;
 
 class SacramentDashboardController extends Controller
 {
+    use VerifiesParishProductAccess;
+
     public function __construct(
         protected SacramentDashboardService $dashboardService,
         protected SacramentPrivacyAccess $privacyAccess
@@ -20,7 +23,11 @@ class SacramentDashboardController extends Controller
     public function summary(Request $request): JsonResponse
     {
         try {
-            if ($error = $this->verifyTenantUser($request)) {
+            if ($error = $this->verifyParishProductUser(
+                $request->user(),
+                'Unauthorized. Only tenant users can view sacrament analytics.',
+                'Ekklesia users cannot access tenant sacrament analytics without an active Support Center session.',
+            )) {
                 return $error;
             }
 
@@ -75,24 +82,4 @@ class SacramentDashboardController extends Controller
         }
     }
 
-    private function verifyTenantUser(Request $request): ?JsonResponse
-    {
-        $user = $request->user();
-
-        if (app(TenantContext::class)->effectiveTenantId() === null) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthorized. Only tenant users can view sacrament analytics.',
-            ], 403);
-        }
-
-        if ($user->hasEkklesiaRole()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ekklesia users cannot access tenant sacrament analytics. Please use a tenant account.',
-            ], 403);
-        }
-
-        return null;
-    }
 }

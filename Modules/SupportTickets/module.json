@@ -1,0 +1,11 @@
+{
+    "name": "SupportTickets",
+    "alias": "supporttickets",
+    "description": "Tenant and platform support ticket helpdesk",
+    "keywords": [],
+    "priority": 10,
+    "providers": [
+        "Modules\\SupportTickets\\Providers\\SupportTicketsServiceProvider"
+    ],
+    "files": []
+}

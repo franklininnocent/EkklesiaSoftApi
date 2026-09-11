@@ -4,6 +4,7 @@ namespace Modules\SupportAccess\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Modules\ApplicationAccess\Services\ApplicationAccessThreatWriter;
 use Modules\Tenants\Support\SupportSessionMode;
 use Modules\Tenants\Support\TenantContext;
 use Symfony\Component\HttpFoundation\Response;
@@ -44,10 +45,16 @@ class EnforceSupportSessionMode
             return $next($request);
         }
 
+        if (str_starts_with($path, 'api/admin/application-access')) {
+            return $next($request);
+        }
+
         $mode = $context->supportMode();
 
         if ($mode === SupportSessionMode::Readonly
             && in_array($request->method(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+            app(ApplicationAccessThreatWriter::class)->recordSupportSessionViolation($request, 'readonly_mutation');
+
             return response()->json([
                 'success' => false,
                 'message' => 'Support session is read-only.',

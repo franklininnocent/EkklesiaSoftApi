@@ -3,11 +3,14 @@
 namespace Modules\BCC\Policies;
 
 use Modules\Authentication\Models\User;
+use Modules\Tenants\Policies\Concerns\AuthorizesTenantPermission;
 use Modules\BCC\Models\BccFamilyMembership;
 use Modules\Tenants\Support\EffectiveTenant;
 
 class BccFamilyMembershipPolicy
 {
+    use AuthorizesTenantPermission;
+
     public function viewAny(User $user): bool
     {
         return $this->allows($user, 'bcc.view');
@@ -28,14 +31,5 @@ class BccFamilyMembershipPolicy
     {
         return $this->allows($user, 'bcc.manage_members')
             && EffectiveTenant::matches($user, $membership->tenant_id);
-    }
-
-    private function allows(User $user, string $permission): bool
-    {
-        if (method_exists($user, 'isSuperAdmin') && $user->isSuperAdmin()) {
-            return true;
-        }
-
-        return $user->hasPermission($permission);
     }
 }

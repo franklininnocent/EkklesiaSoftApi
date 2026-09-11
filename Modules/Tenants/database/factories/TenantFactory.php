@@ -28,7 +28,7 @@ class TenantFactory extends Factory
                 'language' => 'en',
                 'currency' => 'USD',
             ]),
-            'features' => json_encode(['donations', 'events', 'groups']),
+            'features' => json_encode(['donations', 'events', 'groups', 'ministries_associations']),
             'primary_color' => $this->faker->hexColor(),
             'secondary_color' => $this->faker->hexColor(),
             'created_by' => User::factory(),

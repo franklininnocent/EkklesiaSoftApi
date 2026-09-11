@@ -226,7 +226,7 @@ class TenantUsageService
             ->with(['role:id,name'])
             ->orderByDesc('id')
             ->limit(200)
-            ->get(['id', 'name', 'email', 'role_id', 'active', 'is_primary_admin', 'created_at']);
+            ->get(['id', 'name', 'email', 'role_id', 'active', 'is_primary_admin', 'created_at', 'profile_image_path']);
 
         return $users
             ->map(function (User $user) use ($tokenStats) {
@@ -279,6 +279,7 @@ class TenantUsageService
             'id' => $user->id,
             'name' => $user->name,
             'email' => $user->email,
+            'profile_image_full_url' => $user->profile_image_full_url,
             'role' => $user->role?->name,
             'status' => (int) $user->active === 1 ? 'active' : 'inactive',
             'is_primary_admin' => (bool) $user->is_primary_admin,

@@ -35,6 +35,7 @@ return [
         'Origin',
         'X-CSRF-TOKEN',
         'X-Tenant-Country',
+        'X-Support-Session-Id',
     ],
 
     'exposed_headers' => [

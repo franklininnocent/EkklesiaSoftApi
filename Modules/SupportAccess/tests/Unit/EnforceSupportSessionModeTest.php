@@ -74,6 +74,19 @@ class EnforceSupportSessionModeTest extends TestCase
     }
 
     #[Test]
+    public function readonly_allows_application_access_mutations(): void
+    {
+        $this->bindSupportContext(SupportSessionMode::Readonly);
+
+        $response = $this->middleware->handle(
+            Request::create('/api/admin/application-access/sessions/abc/revoke', 'POST'),
+            static fn () => response('ok', 200)
+        );
+
+        $this->assertSame(200, $response->getStatusCode());
+    }
+
+    #[Test]
     public function standard_blocks_billing_paths(): void
     {
         $this->bindSupportContext(SupportSessionMode::Standard);

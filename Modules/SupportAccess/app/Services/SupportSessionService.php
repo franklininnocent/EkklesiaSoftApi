@@ -10,9 +10,11 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Modules\Authentication\Models\User;
 use Modules\SupportAccess\Models\SupportSession;
 use Modules\SupportAccess\Models\SupportSessionEvent;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Services\SupportSessionAuthorizationService;
 use Modules\Tenants\Support\SupportSessionMode;
 use RuntimeException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -528,6 +530,10 @@ class SupportSessionService
 
         if (! $session->isActive()) {
             throw new RuntimeException('Support session is not active.');
+        }
+
+        if ($actor instanceof User) {
+            app(SupportSessionAuthorizationService::class)->assertEventSessionBinding($sessionId);
         }
 
         return SupportSessionEvent::query()->create([

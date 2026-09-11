@@ -25,28 +25,28 @@ return [
             'name' => 'Free Plan',
             'max_users' => 10,
             'max_storage_mb' => 100,
-            'features' => ['events', 'donations'],
+            'features' => ['events', 'donations', 'ministries_associations'],
             'price' => 0,
         ],
         'basic' => [
             'name' => 'Basic Plan',
             'max_users' => 50,
             'max_storage_mb' => 1000,
-            'features' => ['events', 'donations'],
+            'features' => ['events', 'donations', 'ministries_associations'],
             'price' => 29.99,
         ],
         'premium' => [
             'name' => 'Premium Plan',
             'max_users' => 100,
             'max_storage_mb' => 5000,
-            'features' => ['events', 'donations', 'groups', 'messaging'],
+            'features' => ['events', 'donations', 'groups', 'messaging', 'ministries_associations'],
             'price' => 99.99,
         ],
         'enterprise' => [
             'name' => 'Enterprise Plan',
             'max_users' => 999999,
             'max_storage_mb' => 50000,
-            'features' => ['events', 'donations', 'groups', 'messaging', 'custom_branding', 'api_access', 'dedicated_support'],
+            'features' => ['events', 'donations', 'groups', 'messaging', 'custom_branding', 'api_access', 'dedicated_support', 'ministries_associations'],
             'price' => 299.99,
         ],
     ],
@@ -62,6 +62,7 @@ return [
     'available_features' => [
         'events' => 'Event Management',
         'donations' => 'Donation Tracking',
+        'ministries_associations' => 'Ministries & Associations',
         'groups' => 'Group Management',
         'messaging' => 'Messaging & Notifications',
         'custom_branding' => 'Custom Branding',
@@ -129,10 +130,12 @@ return [
             'church_profile',
         ],
         'read_only_write_allowlist' => [
+            'api/admin/application-access*',
             'api/auth/refresh',
             'api/auth/logout',
             'api/tenant/subscription-access',
             'api/tenant/my-subscription',
+            'api/tenant/support/*',
             'api/tenant/export/bulk',
             'api/tenant/export/bulk/*/download',
             'api/donations/webhooks/*',
@@ -214,6 +217,37 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Enterprise image media (shared ImageMediaService)
+    |--------------------------------------------------------------------------
+    */
+    'media' => [
+        'allowed_mimes' => ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'],
+        'allowed_extensions' => ['jpg', 'jpeg', 'png', 'webp'],
+        'min_edge_px' => 64,
+        'max_edge_px' => 4096,
+        'max_pixels' => 8_000_000,
+        'display_max_edge_px' => 800,
+        'thumb_max_edge_px' => 128,
+        'webp_quality' => 80,
+        'ttl' => [
+            'thumb_minutes' => (int) env('TENANT_MEDIA_TTL_THUMB_MINUTES', 10),
+            'display_minutes' => (int) env('TENANT_MEDIA_TTL_DISPLAY_MINUTES', 15),
+        ],
+        'cache_max_age_seconds' => 300,
+        'categories' => [
+            'users' => ['max_bytes' => 3 * 1024 * 1024],
+            'logos' => ['max_bytes' => 5 * 1024 * 1024],
+            'families' => ['max_bytes' => 5 * 1024 * 1024],
+            'bishops' => ['max_bytes' => 3 * 1024 * 1024],
+            'patron' => ['max_bytes' => 3 * 1024 * 1024],
+            'leadership' => ['max_bytes' => 3 * 1024 * 1024],
+            'pope' => ['max_bytes' => 3 * 1024 * 1024],
+        ],
+        'dual_read_public_fallback' => (bool) env('TENANT_MEDIA_DUAL_READ_PUBLIC', true),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Tenant Data Export
     |--------------------------------------------------------------------------
     */
@@ -249,6 +283,22 @@ return [
                 'auth' => [
                     'max_attempts' => (int) env('TENANT_API_RATE_LIMIT_AUTH', 10),
                     'decay_seconds' => (int) env('TENANT_API_RATE_LIMIT_AUTH_DECAY_SECONDS', 60),
+                ],
+                'uploads' => [
+                    'max_attempts' => (int) env('TENANT_API_RATE_LIMIT_UPLOADS', 20),
+                    'decay_seconds' => (int) env('TENANT_API_RATE_LIMIT_UPLOADS_DECAY_SECONDS', 60),
+                ],
+                'media_serve' => [
+                    'max_attempts' => (int) env('TENANT_API_RATE_LIMIT_MEDIA_SERVE', 240),
+                    'decay_seconds' => (int) env('TENANT_API_RATE_LIMIT_MEDIA_SERVE_DECAY_SECONDS', 60),
+                ],
+                'application_access' => [
+                    'max_attempts' => (int) env('APPLICATION_ACCESS_API_RATE_LIMIT', 60),
+                    'decay_seconds' => (int) env('APPLICATION_ACCESS_API_RATE_LIMIT_DECAY_SECONDS', 60),
+                ],
+                'application_access_stream' => [
+                    'max_attempts' => (int) env('APPLICATION_ACCESS_STREAM_RATE_LIMIT', 10),
+                    'decay_seconds' => (int) env('APPLICATION_ACCESS_STREAM_RATE_LIMIT_DECAY_SECONDS', 60),
                 ],
             ],
         ],

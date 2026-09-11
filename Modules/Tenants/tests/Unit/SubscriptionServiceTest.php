@@ -241,4 +241,17 @@ class SubscriptionServiceTest extends TestCase
         $this->assertStringContainsString('free', $result['data'][0]['summary']);
         $this->assertStringContainsString('basic', $result['data'][0]['summary']);
     }
+
+    public function test_default_plans_entitle_ministries_associations(): void
+    {
+        $this->assertArrayHasKey('ministries_associations', config('tenants.available_features'));
+
+        foreach (array_keys(config('tenants.plans')) as $planKey) {
+            $this->assertContains(
+                'ministries_associations',
+                config("tenants.plans.{$planKey}.features"),
+                "Plan {$planKey} should include ministries_associations"
+            );
+        }
+    }
 }

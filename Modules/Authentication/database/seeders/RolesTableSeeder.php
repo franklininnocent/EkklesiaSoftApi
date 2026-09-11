@@ -62,6 +62,12 @@ class RolesTableSeeder extends Seeder
 
         DB::table('roles')->insert($roles);
 
+        // PostgreSQL: explicit IDs do not advance the sequence — reset it so tenant roles can be created.
+        if (DB::getDriverName() === 'pgsql') {
+            $maxId = (int) DB::table('roles')->max('id');
+            DB::statement("SELECT setval(pg_get_serial_sequence('roles', 'id'), ?)", [$maxId]);
+        }
+
         $this->command->info('✅ [Authentication Module] Roles table seeded successfully!');
         $this->command->info('   - SuperAdmin (Level 1)');
         $this->command->info('   - EkklesiaAdmin (Level 2)');

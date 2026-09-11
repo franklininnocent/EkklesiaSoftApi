@@ -16,7 +16,8 @@ use Modules\MinistriesAssociations\Database\Seeders\MinistriesAssociationsDefaul
 use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Sacraments\Services\TenantSacramentSettingsService;
 use Modules\Tenants\Http\Requests\StoreTenantRequest;
-use Modules\Tenants\Http\Requests\UpdateTenantRequest;
+use Modules\Tenants\Http\Requests\UploadTenantLogoRequest;
+use Modules\Tenants\Services\Media\ImageMediaException;
 use Modules\Tenants\Models\SubscriptionDurationOption;
 use Modules\Tenants\Models\SubscriptionPlan;
 use Modules\Tenants\Models\SubscriptionSettings;
@@ -165,7 +166,7 @@ class TenantsController extends Controller
 
             // Generate full logo URL
             if ($tenant->logo_url) {
-                $tenant->logo_full_url = $this->fileUploadService->getTenantLogoUrl($tenant->logo_url);
+                $tenant->logo_full_url = $this->fileUploadService->getTenantLogoUrl($tenant->logo_url, $tenant->id);
             }
 
             $subscriptionStatus = $this->subscriptionService->resolveStatus($tenant);
@@ -286,15 +287,12 @@ class TenantsController extends Controller
 
             // SECURITY: Handle logo upload AFTER tenant creation with tenant-specific path
             if ($request->hasFile('tenant_logo')) {
-                $logoPath = $this->fileUploadService->uploadTenantLogo(
+                $result = $this->fileUploadService->storeTenantLogo(
                     $request->file('tenant_logo'),
                     $tenant->id,
-                    null
                 );
-                if ($logoPath) {
-                    $tenant->logo_url = $logoPath;
-                    $tenant->save();
-                }
+                $tenant->logo_url = $result->storageKey;
+                $tenant->save();
             }
 
             // Step 1.5: Create tenant official address (stored as 'official' type)
@@ -489,7 +487,7 @@ class TenantsController extends Controller
 
             // Generate full logo URL for response
             if ($tenant->logo_url) {
-                $tenant->logo_full_url = $this->fileUploadService->getTenantLogoUrl($tenant->logo_url);
+                $tenant->logo_full_url = $this->fileUploadService->getTenantLogoUrl($tenant->logo_url, $tenant->id);
             }
 
             DB::commit();
@@ -546,7 +544,11 @@ class TenantsController extends Controller
     {
         return $permissions
             ->reject(function (Permission $permission) {
-                return $this->isGovernancePermissionName($permission->name);
+                return $this->isGovernancePermissionName($permission->name)
+                    || in_array($permission->name, [
+                        'support.tickets.view_all_tenant',
+                        'support.tickets.cancel',
+                    ], true);
             })
             ->pluck('id')
             ->map(fn ($id) => (int) $id)
@@ -616,14 +618,20 @@ class TenantsController extends Controller
 
             // SECURITY: Handle logo upload with tenant-specific path
             if ($request->hasFile('tenant_logo')) {
-                $logoPath = $this->fileUploadService->uploadTenantLogo(
+                $previousLogo = $tenant->logo_url;
+                $result = $this->fileUploadService->replaceTenantLogo(
                     $request->file('tenant_logo'),
                     $tenant->id,
-                    $tenant->logo_url
+                    $previousLogo,
+                    function (string $storageKey) use ($tenant): void {
+                        DB::transaction(function () use ($tenant, $storageKey): void {
+                            $locked = Tenant::query()->whereKey($tenant->id)->lockForUpdate()->firstOrFail();
+                            $locked->logo_url = $storageKey;
+                            $locked->save();
+                        });
+                    }
                 );
-                if ($logoPath) {
-                    $tenantUpdateData['logo_url'] = $logoPath;
-                }
+                $tenantUpdateData['logo_url'] = $result->storageKey;
             }
 
             if (! empty($tenantUpdateData)) {
@@ -754,7 +762,7 @@ class TenantsController extends Controller
 
             // Generate full logo URL for response
             if ($tenant->logo_url) {
-                $tenant->logo_full_url = $this->fileUploadService->getTenantLogoUrl($tenant->logo_url);
+                $tenant->logo_full_url = $this->fileUploadService->getTenantLogoUrl($tenant->logo_url, $tenant->id);
             }
 
             DB::commit();
@@ -946,7 +954,7 @@ class TenantsController extends Controller
      *
      * @route POST /api/tenant/{id}/logo
      */
-    public function uploadLogo(Request $request, $id): JsonResponse
+    public function uploadLogo(UploadTenantLogoRequest $request, $id): JsonResponse
     {
         try {
             if (! $this->canManageTenants()) {
@@ -956,42 +964,23 @@ class TenantsController extends Controller
                 ], 403);
             }
 
-            // Validate file
-            $request->validate([
-                'logo' => 'required|image|mimes:jpeg,jpg,png,gif,webp|max:5120',
-            ]);
-
             $tenant = Tenant::findOrFail($id);
 
-            // Additional file validation
-            $validation = $this->fileUploadService->validateFile($request->file('logo'));
-            if (! $validation['valid']) {
-                return response()->json([
-                    'success' => false,
-                    'message' => $validation['error'],
-                ], 422);
-            }
-
-            // SECURITY: Upload logo with tenant-specific path
-            $logoPath = $this->fileUploadService->uploadTenantLogo(
+            $result = $this->fileUploadService->replaceTenantLogo(
                 $request->file('logo'),
                 $tenant->id,
-                $tenant->logo_url
+                $tenant->logo_url,
+                function (string $storageKey) use ($tenant): void {
+                    DB::transaction(function () use ($tenant, $storageKey): void {
+                        $locked = Tenant::query()->whereKey($tenant->id)->lockForUpdate()->firstOrFail();
+                        $locked->logo_url = $storageKey;
+                        $locked->save();
+                    });
+                }
             );
-
-            if (! $logoPath) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Failed to upload logo',
-                ], 500);
-            }
-
-            // Update tenant
-            $tenant->update(['logo_url' => $logoPath]);
 
             Log::info('Tenant logo uploaded', [
                 'tenant_id' => $id,
-                'logo_path' => $logoPath,
                 'uploaded_by' => auth()->id(),
             ]);
 
@@ -999,10 +988,14 @@ class TenantsController extends Controller
                 'success' => true,
                 'message' => 'Logo uploaded successfully',
                 'data' => [
-                    'logo_url' => $logoPath,
-                    'logo_full_url' => $this->fileUploadService->getTenantLogoUrl($logoPath),
+                    'logo_full_url' => $this->fileUploadService->getTenantLogoUrl($result->storageKey, $tenant->id),
                 ],
             ]);
+        } catch (ImageMediaException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->publicMessage(),
+            ], 422);
         } catch (\Exception $e) {
             Log::error('Error uploading logo: '.$e->getMessage(), [
                 'tenant_id' => $id,
@@ -1041,11 +1034,15 @@ class TenantsController extends Controller
                 ], 404);
             }
 
-            // SECURITY: Delete logo file with ownership verification
-            $this->fileUploadService->deleteTenantLogo($tenant->logo_url, $tenant->id);
+            $previousLogo = $tenant->logo_url;
 
-            // Update tenant
-            $tenant->update(['logo_url' => null]);
+            DB::transaction(function () use ($tenant): void {
+                $locked = Tenant::query()->whereKey($tenant->id)->lockForUpdate()->firstOrFail();
+                $locked->logo_url = null;
+                $locked->save();
+            });
+
+            $this->fileUploadService->deleteTenantLogo($previousLogo, $tenant->id);
 
             Log::info('Tenant logo deleted', [
                 'tenant_id' => $id,
@@ -1164,7 +1161,7 @@ class TenantsController extends Controller
 
             // Generate full logo URL
             if ($tenant->logo_url) {
-                $tenant->logo_full_url = $this->fileUploadService->getTenantLogoUrl($tenant->logo_url);
+                $tenant->logo_full_url = $this->fileUploadService->getTenantLogoUrl($tenant->logo_url, $tenant->id);
             }
 
             Log::info('Church profile retrieved', [
@@ -1283,7 +1280,7 @@ class TenantsController extends Controller
 
                 // Generate full logo URL
                 if ($tenant->logo_url) {
-                    $tenant->logo_full_url = $this->fileUploadService->getTenantLogoUrl($tenant->logo_url);
+                    $tenant->logo_full_url = $this->fileUploadService->getTenantLogoUrl($tenant->logo_url, $tenant->id);
                 }
 
                 Log::info('Church profile updated', [
@@ -2245,7 +2242,7 @@ class TenantsController extends Controller
     private function decorateTenantForListResponse(Tenant $tenant): Tenant
     {
         if ($tenant->logo_url) {
-            $tenant->logo_full_url = $this->fileUploadService->getTenantLogoUrl($tenant->logo_url);
+            $tenant->logo_full_url = $this->fileUploadService->getTenantLogoUrl($tenant->logo_url, $tenant->id);
         }
 
         $tenant->subscription_status = $this->subscriptionService->resolveStatus($tenant);

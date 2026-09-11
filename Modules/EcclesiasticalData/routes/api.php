@@ -102,13 +102,13 @@ Route::prefix('ecclesiastical')->middleware(['auth:api', EnsureUserIsEkklesia::c
             ->middleware('ecclesiastical.permission:bishops.manage_appointments')
             ->name('ecclesiastical.bishops.appointments.store');
         Route::post('/{id}/upload-photo', [BishopController::class, 'uploadPhoto'])
-            ->middleware('ecclesiastical.permission:bishops.manage_images')
+            ->middleware(['ecclesiastical.permission:bishops.manage_images', 'api.throttle:uploads'])
             ->name('ecclesiastical.bishops.upload-photo');
         Route::post('/{id}/upload-coat-of-arms', [BishopController::class, 'uploadCoatOfArms'])
-            ->middleware('ecclesiastical.permission:bishops.manage_images')
+            ->middleware(['ecclesiastical.permission:bishops.manage_images', 'api.throttle:uploads'])
             ->name('ecclesiastical.bishops.upload-coat-of-arms');
         Route::delete('/{id}/photo', [BishopController::class, 'deletePhoto'])
-            ->middleware('ecclesiastical.permission:bishops.manage_images')
+            ->middleware(['ecclesiastical.permission:bishops.manage_images', 'api.throttle:uploads'])
             ->name('ecclesiastical.bishops.delete-photo');
 
         Route::get('/{id}', [BishopController::class, 'show'])

@@ -77,7 +77,7 @@ class TenantDetailsService
     private function buildIdentity(Tenant $tenant): array
     {
         $logoFullUrl = $tenant->logo_url
-            ? $this->fileUploadService->getTenantLogoUrl($tenant->logo_url)
+            ? $this->fileUploadService->getTenantLogoUrl($tenant->logo_url, $tenant->id)
             : null;
 
         $archdiocese = $tenant->churchProfile?->archdiocese;
@@ -94,7 +94,6 @@ class TenantDetailsService
             'hierarchy_path' => $tenant->hierarchy_path,
             'diocese_name' => $archdiocese?->name,
             'diocese_id' => $archdiocese?->id,
-            'logo_url' => $tenant->logo_url,
             'logo_full_url' => $logoFullUrl,
             'primary_color' => $tenant->primary_color,
             'secondary_color' => $tenant->secondary_color,

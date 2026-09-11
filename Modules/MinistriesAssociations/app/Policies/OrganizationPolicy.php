@@ -3,11 +3,13 @@
 namespace Modules\MinistriesAssociations\Policies;
 
 use Modules\Authentication\Models\User;
-use Modules\Tenants\Support\EffectiveTenant;
 use Modules\MinistriesAssociations\Models\Organization;
+use Modules\Tenants\Policies\Concerns\AuthorizesTenantPermission;
+use Modules\Tenants\Support\EffectiveTenant;
 
 class OrganizationPolicy
 {
+    use AuthorizesTenantPermission;
     public function viewAny(User $user): bool
     {
         return $this->allows($user, 'ministries.view');
@@ -46,12 +48,4 @@ class OrganizationPolicy
         return $this->delete($user, $organization);
     }
 
-    private function allows(User $user, string $permission): bool
-    {
-        if (method_exists($user, 'isSuperAdmin') && $user->isSuperAdmin()) {
-            return true;
-        }
-
-        return $user->hasPermission($permission);
-    }
 }

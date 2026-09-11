@@ -2,10 +2,10 @@
 
 namespace Modules\Tenants\Tests\Feature\ChurchProfile;
 
-use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Modules\Tenants\Models\ChurchProfile;
 use Modules\Tenants\Testing\ChurchProfileCertificationTestCase;
+use Modules\Tenants\Tests\Support\MediaSecurityFixtures;
 use PHPUnit\Framework\Attributes\Test;
 
 class ChurchProfilePatronMediaTest extends ChurchProfileCertificationTestCase
@@ -13,6 +13,7 @@ class ChurchProfilePatronMediaTest extends ChurchProfileCertificationTestCase
     protected function setUp(): void
     {
         parent::setUp();
+        Storage::fake('local');
         Storage::fake('public');
     }
 
@@ -22,40 +23,37 @@ class ChurchProfilePatronMediaTest extends ChurchProfileCertificationTestCase
         $ctx = $this->actingAsTenantWith(['church.settings.edit']);
 
         $response = $this->postJson('/api/church-profile/upload-patron-image', [
-            'image' => UploadedFile::fake()->image('patron.jpg', 400, 400),
+            'image' => MediaSecurityFixtures::validJpeg(200, 200),
         ]);
 
         $response->assertOk()
             ->assertJsonPath('success', true)
-            ->assertJsonPath('data.patron_image_path', fn ($path) => is_string($path)
-                && str_contains($path, 'tenants/'.$ctx['tenant']->id.'/patron/'));
+            ->assertJsonPath('data.patron_image_url', fn ($url) => is_string($url) && $url !== '')
+            ->assertJsonMissingPath('data.patron_image_path');
 
-        $path = $response->json('data.patron_image_path');
-        Storage::disk('public')->assertExists($path);
-
-        $this->assertDatabaseHas('church_profiles', [
-            'tenant_id' => $ctx['tenant']->id,
-            'patron_image_path' => $path,
-        ]);
+        $profile = ChurchProfile::query()->where('tenant_id', $ctx['tenant']->id)->first();
+        $this->assertNotNull($profile?->patron_image_path);
+        $this->assertStringContainsString("tenants/{$ctx['tenant']->id}/patron/", $profile->patron_image_path);
+        Storage::disk('local')->assertExists($profile->patron_image_path);
     }
 
     #[Test]
     public function it_should_replace_existing_patron_image_on_reupload(): void
     {
         $ctx = $this->actingAsTenantWith(['church.settings.edit']);
-        $first = $this->postJson('/api/church-profile/upload-patron-image', [
-            'image' => UploadedFile::fake()->image('first.jpg'),
+        $this->postJson('/api/church-profile/upload-patron-image', [
+            'image' => MediaSecurityFixtures::validJpeg(200, 200),
         ])->assertOk();
-        $firstPath = $first->json('data.patron_image_path');
+        $firstPath = ChurchProfile::query()->where('tenant_id', $ctx['tenant']->id)->value('patron_image_path');
 
-        $second = $this->postJson('/api/church-profile/upload-patron-image', [
-            'image' => UploadedFile::fake()->image('second.jpg'),
+        $this->postJson('/api/church-profile/upload-patron-image', [
+            'image' => MediaSecurityFixtures::validPng(220, 220),
         ])->assertOk();
-        $secondPath = $second->json('data.patron_image_path');
+        $secondPath = ChurchProfile::query()->where('tenant_id', $ctx['tenant']->id)->value('patron_image_path');
 
         $this->assertNotSame($firstPath, $secondPath);
-        Storage::disk('public')->assertMissing($firstPath);
-        Storage::disk('public')->assertExists($secondPath);
+        Storage::disk('local')->assertMissing($firstPath);
+        Storage::disk('local')->assertExists($secondPath);
     }
 
     #[Test]
@@ -64,7 +62,7 @@ class ChurchProfilePatronMediaTest extends ChurchProfileCertificationTestCase
         $this->actingAsTenantWith(['church.settings.edit']);
 
         $this->postJson('/api/church-profile/upload-patron-image', [
-            'image' => UploadedFile::fake()->create('notes.txt', 10, 'text/plain'),
+            'image' => MediaSecurityFixtures::textPlain(),
         ])->assertStatus(422);
 
         $this->postJson('/api/church-profile/upload-patron-image', [])
@@ -76,13 +74,13 @@ class ChurchProfilePatronMediaTest extends ChurchProfileCertificationTestCase
     {
         $ctx = $this->actingAsTenantWith(['church.settings.edit', 'church.settings.delete']);
 
-        $upload = $this->postJson('/api/church-profile/upload-patron-image', [
-            'image' => UploadedFile::fake()->image('patron.jpg'),
+        $this->postJson('/api/church-profile/upload-patron-image', [
+            'image' => MediaSecurityFixtures::validJpeg(200, 200),
         ])->assertOk();
-        $path = $upload->json('data.patron_image_path');
+        $path = ChurchProfile::query()->where('tenant_id', $ctx['tenant']->id)->value('patron_image_path');
 
         $this->deleteJson('/api/church-profile/patron-image')->assertOk();
-        Storage::disk('public')->assertMissing($path);
+        Storage::disk('local')->assertMissing($path);
 
         $this->assertDatabaseHas('church_profiles', [
             'tenant_id' => $ctx['tenant']->id,
@@ -95,17 +93,17 @@ class ChurchProfilePatronMediaTest extends ChurchProfileCertificationTestCase
     {
         $ctx = $this->actingAsTenantWith(['church.settings.edit', 'church.settings.delete']);
         $otherTenant = $this->makeOperationalTenant();
-        $foreignPath = 'tenants/'.$otherTenant->id.'/patron/foreign.jpg';
-        Storage::disk('public')->put($foreignPath, 'foreign');
+        $foreignPath = 'tenants/'.$otherTenant->id.'/patron/foreign.webp';
+        Storage::disk('local')->put($foreignPath, 'foreign');
 
-        ChurchProfile::factory()->create([
+        ChurchProfile::query()->create([
             'tenant_id' => $ctx['tenant']->id,
             'patron_image_path' => $foreignPath,
         ]);
 
         $this->deleteJson('/api/church-profile/patron-image')->assertOk();
 
-        Storage::disk('public')->assertExists($foreignPath);
+        Storage::disk('local')->assertExists($foreignPath);
         $this->assertDatabaseHas('church_profiles', [
             'tenant_id' => $ctx['tenant']->id,
             'patron_image_path' => null,

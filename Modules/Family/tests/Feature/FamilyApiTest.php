@@ -1822,4 +1822,42 @@ class FamilyApiTest extends TestCase
         $this->assertContains($familyEligible->id, $ids);
         $this->assertNotContains($familyMarried->id, $ids);
     }
+
+    #[Test]
+    public function it_lists_members_in_ascending_order_by_display_name_by_default(): void
+    {
+        $family = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+        ]);
+
+        $charlie = FamilyMember::factory()->active()->create([
+            'family_id' => $family->id,
+            'first_name' => 'Charlie',
+            'last_name' => 'Brown',
+        ]);
+
+        $alice = FamilyMember::factory()->active()->create([
+            'family_id' => $family->id,
+            'first_name' => 'Alice',
+            'last_name' => 'Smith',
+        ]);
+
+        $betty = FamilyMember::factory()->active()->create([
+            'family_id' => $family->id,
+            'first_name' => 'Betty',
+            'last_name' => 'Jones',
+        ]);
+
+        $response = $this->getJson('/api/members');
+
+        $response->assertOk();
+
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertSame([$alice->id, $betty->id, $charlie->id], array_values(array_intersect($ids, [
+            $alice->id,
+            $betty->id,
+            $charlie->id,
+        ])));
+    }
 }

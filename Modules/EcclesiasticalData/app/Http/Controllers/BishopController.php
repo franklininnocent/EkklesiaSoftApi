@@ -12,6 +12,7 @@ use Modules\EcclesiasticalData\Http\Requests\UploadBishopImageRequest;
 use Modules\EcclesiasticalData\Http\Resources\BishopResource;
 use Modules\EcclesiasticalData\Models\BishopManagement;
 use Modules\EcclesiasticalData\Services\BishopFileUploadService;
+use Modules\Tenants\Services\Media\ImageMediaException;
 use Modules\EcclesiasticalData\Services\BishopService;
 use Modules\EcclesiasticalData\Services\SuccessionService;
 use Modules\EcclesiasticalData\Support\CanonicalRole;
@@ -251,10 +252,8 @@ class BishopController extends Controller
             $bishop->refresh();
 
             return $this->ecclesiasticalSuccess([
-                'photo_path' => $path,
-                'photo_url' => $bishop->photo_url,
-                'photo_public_url' => $this->fileUploadService->publicUrl($path),
-                'has_photo' => true,
+                'photo_public_url' => $this->fileUploadService->resolvePhotoUrl($bishop->photo_path),
+                'has_photo' => $this->fileUploadService->hasPhoto($bishop->photo_path),
             ], 'Bishop photo uploaded successfully');
         }, 'Failed to upload bishop photo', 422);
     }

@@ -11,6 +11,7 @@ use Modules\MinistriesAssociations\Http\Requests\StoreOrganizationTypeRequest;
 use Modules\MinistriesAssociations\Http\Requests\UpdateOrganizationTypeRequest;
 use Modules\MinistriesAssociations\Http\Requests\UpdateTaxonomyStatusRequest;
 use Modules\MinistriesAssociations\Models\Organization;
+use Modules\MinistriesAssociations\DefaultSeeds\OrganizationTypesDefaultSeedDefinition;
 use Modules\MinistriesAssociations\Models\OrganizationType;
 use Modules\MinistriesAssociations\Services\MinistriesAuditService;
 
@@ -18,8 +19,10 @@ class OrganizationTypeController extends Controller
 {
     use AuthorizesRequests;
 
-    public function __construct(private readonly MinistriesAuditService $auditService)
-    {
+    public function __construct(
+        private readonly MinistriesAuditService $auditService,
+        private readonly OrganizationTypesDefaultSeedDefinition $typesDefaultSeed,
+    ) {
     }
 
     public function index(IndexTaxonomyRequest $request): JsonResponse
@@ -183,40 +186,15 @@ class OrganizationTypeController extends Controller
         $this->authorize('seedDefaults', OrganizationType::class);
 
         $tenantId = $this->tenantId();
-        $displayOrder = 0;
+        $userId = Auth::id() ? (int) Auth::id() : null;
 
-        foreach ($this->defaultTypes() as $defaults) {
-            OrganizationType::updateOrCreate(
-                [
-                    'tenant_id' => $tenantId,
-                    'code' => $defaults['code'],
-                ],
-                [
-                    'name' => $defaults['name'],
-                    'description' => $defaults['description'] ?? null,
-                    'is_system' => true,
-                    'is_active' => true,
-                    'display_order' => $displayOrder,
-                ]
-            );
-
-            $displayOrder++;
-        }
+        $this->typesDefaultSeed->execute($tenantId, $userId);
 
         $types = OrganizationType::query()
             ->forTenant($tenantId)
             ->orderBy('display_order')
             ->orderBy('name')
             ->get();
-
-        $this->auditService->log(
-            $tenantId,
-            'type.defaults_seeded',
-            'organization_type',
-            (string) $tenantId,
-            null,
-            ['count' => $types->count()],
-        );
 
         return response()->json([
             'success' => true,

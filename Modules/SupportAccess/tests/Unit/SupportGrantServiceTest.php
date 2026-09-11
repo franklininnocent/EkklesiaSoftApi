@@ -98,6 +98,42 @@ class SupportGrantServiceTest extends TestCase
         ]);
     }
 
+    #[Test]
+    public function equal_start_and_end_is_rejected(): void
+    {
+        $tenant = Tenant::factory()->create(['active' => 1]);
+        $user = User::factory()->create();
+        $actor = $this->platformActor((int) $user->id);
+        $service = app(SupportGrantService::class);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Grant end time must be after start time.');
+        $service->create($actor, [
+            'tenant_id' => $tenant->id,
+            'allowed_mode' => 'any',
+            'starts_at' => '2026-09-10T10:00',
+            'ends_at' => '2026-09-10T10:00',
+        ]);
+    }
+
+    #[Test]
+    public function datetime_local_format_is_accepted(): void
+    {
+        $tenant = Tenant::factory()->create(['active' => 1]);
+        $user = User::factory()->create();
+        $actor = $this->platformActor((int) $user->id);
+        $service = app(SupportGrantService::class);
+
+        $grant = $service->create($actor, [
+            'tenant_id' => $tenant->id,
+            'allowed_mode' => 'readonly',
+            'starts_at' => now()->subMinute()->format('Y-m-d\TH:i'),
+            'ends_at' => now()->addHour()->format('Y-m-d\TH:i'),
+        ]);
+
+        $this->assertSame(SupportAccessGrant::STATUS_ACTIVE, $grant->status);
+    }
+
     private function platformActor(int $id): Authenticatable
     {
         return new class($id) implements Authenticatable

@@ -23,6 +23,7 @@ class RolesAndPermissionsDatabaseSeeder extends Seeder
             TenantPermissionCatalogSeeder::class,
             SupportAccessPermissionSeeder::class,
             SupportAccessRoleSeeder::class,
+            ApplicationAccessPermissionSeeder::class,
         ]);
 
         if (class_exists(MinistriesAssociationsPermissionSeeder::class)) {
@@ -35,6 +36,10 @@ class RolesAndPermissionsDatabaseSeeder extends Seeder
 
         if (class_exists(PastoralCarePermissionSeeder::class)) {
             $this->call(PastoralCarePermissionSeeder::class);
+        }
+
+        if (class_exists(\Modules\SupportTickets\Database\Seeders\SupportTicketsPermissionSeeder::class)) {
+            $this->call(\Modules\SupportTickets\Database\Seeders\SupportTicketsPermissionSeeder::class);
         }
 
         if (class_exists(\Modules\EcclesiasticalData\Database\Seeders\EcclesiasticalPermissionSeeder::class)) {

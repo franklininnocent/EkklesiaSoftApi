@@ -16,6 +16,9 @@ class AuditPiiRedactorTest extends TestCase
         $redacted = $redactor->redact([
             'password' => 'secret123',
             'access_token' => 'abc',
+            'otp' => '123456',
+            'reset_token' => 'reset-me',
+            'session_id' => 'sess-abc',
             'user_email' => 'priest@example.com',
             'phone' => '+1-555-123-4567',
             'nested' => [
@@ -26,6 +29,9 @@ class AuditPiiRedactorTest extends TestCase
 
         $this->assertSame('[redacted]', $redacted['password']);
         $this->assertSame('[redacted]', $redacted['access_token']);
+        $this->assertSame('[redacted]', $redacted['otp']);
+        $this->assertSame('[redacted]', $redacted['reset_token']);
+        $this->assertSame('[redacted]', $redacted['session_id']);
         $this->assertSame('p***@example.com', $redacted['user_email']);
         $this->assertSame('***4567', $redacted['phone']);
         $this->assertSame('[redacted]', $redacted['nested']['refresh_token']);

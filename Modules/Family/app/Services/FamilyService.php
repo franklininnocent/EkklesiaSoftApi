@@ -15,6 +15,7 @@ use Modules\Family\Events\FamilyMemberStatusChanged;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
 use Modules\Family\Models\Person;
+use Modules\Tenants\Services\Media\ImageMediaException;
 
 class FamilyService
 {
@@ -665,39 +666,47 @@ class FamilyService
                 return null;
             }
 
-            DB::beginTransaction();
+            $tenantIdInt = (int) $tenantId;
+            $previousPath = $family->profile_image_url;
 
-            // Upload the new image
-            $imagePath = $this->fileUploadService->uploadProfileImage(
+            $this->fileUploadService->replace(
                 $file,
-                $tenantId,
-                $family->profile_image_url
+                $tenantIdInt,
+                $previousPath,
+                function (string $storageKey) use ($family, $userId): void {
+                    DB::transaction(function () use ($family, $storageKey, $userId): void {
+                        $locked = Family::query()->whereKey($family->id)->lockForUpdate()->firstOrFail();
+                        $locked->profile_image_url = $storageKey;
+                        $locked->updated_by = $userId;
+                        $locked->save();
+                    });
+                }
             );
-
-            if (! $imagePath) {
-                DB::rollBack();
-                throw new \Exception('Failed to upload profile image');
-            }
-
-            // Update family with new image path
-            $this->familyRepository->update($family, [
-                'profile_image_url' => $imagePath,
-                'updated_by' => $userId,
-            ]);
-
-            DB::commit();
 
             Log::info('Family profile image uploaded', [
                 'family_id' => $id,
                 'tenant_id' => $tenantId,
                 'user_id' => $userId,
-                'image_path' => $imagePath,
             ]);
+
+            try {
+                $this->familyAuditService->log(
+                    $tenantIdInt,
+                    'family.profile_image.uploaded',
+                    'family',
+                    (string) $id,
+                    $previousPath !== null ? ['profile_image_url' => $previousPath] : null,
+                    ['profile_image_url' => '[stored]'],
+                );
+            } catch (\Throwable $e) {
+                Log::warning('Family audit log failed on profile image upload', ['error' => $e->getMessage()]);
+            }
 
             return $this->familyRepository->findById($id, $tenantId);
 
+        } catch (ImageMediaException $e) {
+            throw $e;
         } catch (\Exception $e) {
-            DB::rollBack();
             Log::error('Failed to upload family profile image', [
                 'family_id' => $id,
                 'error' => $e->getMessage(),
@@ -723,22 +732,20 @@ class FamilyService
             }
 
             if (! $family->profile_image_url) {
-                // No image to delete
                 return $family;
             }
 
-            DB::beginTransaction();
+            $tenantIdInt = (int) $tenantId;
+            $previousPath = $family->profile_image_url;
 
-            // Delete the image file
-            $this->fileUploadService->deleteProfileImage($family->profile_image_url, $tenantId);
+            DB::transaction(function () use ($family, $userId): void {
+                $locked = Family::query()->whereKey($family->id)->lockForUpdate()->firstOrFail();
+                $locked->profile_image_url = null;
+                $locked->updated_by = $userId;
+                $locked->save();
+            });
 
-            // Update family to remove image path
-            $this->familyRepository->update($family, [
-                'profile_image_url' => null,
-                'updated_by' => $userId,
-            ]);
-
-            DB::commit();
+            $this->fileUploadService->deletePair($previousPath, $tenantIdInt);
 
             Log::info('Family profile image deleted', [
                 'family_id' => $id,
@@ -746,10 +753,21 @@ class FamilyService
                 'user_id' => $userId,
             ]);
 
+            try {
+                $this->familyAuditService->log(
+                    $tenantIdInt,
+                    'family.profile_image.deleted',
+                    'family',
+                    (string) $id,
+                    ['profile_image_url' => $previousPath],
+                );
+            } catch (\Throwable $e) {
+                Log::warning('Family audit log failed on profile image delete', ['error' => $e->getMessage()]);
+            }
+
             return $this->familyRepository->findById($id, $tenantId);
 
         } catch (\Exception $e) {
-            DB::rollBack();
             Log::error('Failed to delete family profile image', [
                 'family_id' => $id,
                 'error' => $e->getMessage(),
@@ -776,39 +794,47 @@ class FamilyService
                 return null;
             }
 
-            DB::beginTransaction();
+            $tenantIdInt = (int) $tenantId;
+            $previousPath = $family->head_profile_image_url;
 
-            // Upload the new image
-            $imagePath = $this->fileUploadService->uploadProfileImage(
+            $this->fileUploadService->replace(
                 $file,
-                $tenantId,
-                $family->head_profile_image_url
+                $tenantIdInt,
+                $previousPath,
+                function (string $storageKey) use ($family, $userId): void {
+                    DB::transaction(function () use ($family, $storageKey, $userId): void {
+                        $locked = Family::query()->whereKey($family->id)->lockForUpdate()->firstOrFail();
+                        $locked->head_profile_image_url = $storageKey;
+                        $locked->updated_by = $userId;
+                        $locked->save();
+                    });
+                }
             );
-
-            if (! $imagePath) {
-                DB::rollBack();
-                throw new \Exception('Failed to upload head profile image');
-            }
-
-            // Update family with new image path
-            $this->familyRepository->update($family, [
-                'head_profile_image_url' => $imagePath,
-                'updated_by' => $userId,
-            ]);
-
-            DB::commit();
 
             Log::info('Family head profile image uploaded', [
                 'family_id' => $id,
                 'tenant_id' => $tenantId,
                 'user_id' => $userId,
-                'image_path' => $imagePath,
             ]);
+
+            try {
+                $this->familyAuditService->log(
+                    $tenantIdInt,
+                    'family.head_profile_image.uploaded',
+                    'family',
+                    (string) $id,
+                    $previousPath !== null ? ['head_profile_image_url' => $previousPath] : null,
+                    ['head_profile_image_url' => '[stored]'],
+                );
+            } catch (\Throwable $e) {
+                Log::warning('Family audit log failed on head profile image upload', ['error' => $e->getMessage()]);
+            }
 
             return $this->familyRepository->findById($id, $tenantId);
 
+        } catch (ImageMediaException $e) {
+            throw $e;
         } catch (\Exception $e) {
-            DB::rollBack();
             Log::error('Failed to upload family head profile image', [
                 'family_id' => $id,
                 'error' => $e->getMessage(),
@@ -834,22 +860,20 @@ class FamilyService
             }
 
             if (! $family->head_profile_image_url) {
-                // No image to delete
                 return $family;
             }
 
-            DB::beginTransaction();
+            $tenantIdInt = (int) $tenantId;
+            $previousPath = $family->head_profile_image_url;
 
-            // Delete the image file
-            $this->fileUploadService->deleteProfileImage($family->head_profile_image_url, $tenantId);
+            DB::transaction(function () use ($family, $userId): void {
+                $locked = Family::query()->whereKey($family->id)->lockForUpdate()->firstOrFail();
+                $locked->head_profile_image_url = null;
+                $locked->updated_by = $userId;
+                $locked->save();
+            });
 
-            // Update family to remove image path
-            $this->familyRepository->update($family, [
-                'head_profile_image_url' => null,
-                'updated_by' => $userId,
-            ]);
-
-            DB::commit();
+            $this->fileUploadService->deletePair($previousPath, $tenantIdInt);
 
             Log::info('Family head profile image deleted', [
                 'family_id' => $id,
@@ -857,10 +881,21 @@ class FamilyService
                 'user_id' => $userId,
             ]);
 
+            try {
+                $this->familyAuditService->log(
+                    $tenantIdInt,
+                    'family.head_profile_image.deleted',
+                    'family',
+                    (string) $id,
+                    ['head_profile_image_url' => $previousPath],
+                );
+            } catch (\Throwable $e) {
+                Log::warning('Family audit log failed on head profile image delete', ['error' => $e->getMessage()]);
+            }
+
             return $this->familyRepository->findById($id, $tenantId);
 
         } catch (\Exception $e) {
-            DB::rollBack();
             Log::error('Failed to delete family head profile image', [
                 'family_id' => $id,
                 'error' => $e->getMessage(),

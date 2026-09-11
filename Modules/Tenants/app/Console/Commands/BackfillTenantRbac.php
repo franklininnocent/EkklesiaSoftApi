@@ -309,7 +309,11 @@ class BackfillTenantRbac extends Command
     {
         return $permissions
             ->reject(function (Permission $permission) {
-                return $this->isGovernancePermissionName($permission->name);
+                return $this->isGovernancePermissionName($permission->name)
+                    || in_array($permission->name, [
+                        'support.tickets.view_all_tenant',
+                        'support.tickets.cancel',
+                    ], true);
             })
             ->pluck('id')
             ->map(fn ($id) => (int) $id)

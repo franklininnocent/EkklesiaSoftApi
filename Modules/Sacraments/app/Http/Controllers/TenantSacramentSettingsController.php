@@ -9,10 +9,14 @@ use Illuminate\Support\Facades\Log;
 use Modules\Sacraments\Exceptions\SacramentBusinessRuleException;
 use Modules\Sacraments\Http\Requests\UpdateTenantSacramentSettingRequest;
 use Modules\Sacraments\Services\TenantSacramentSettingsService;
+use Modules\Tenants\Http\Concerns\VerifiesParishProductAccess;
+use Modules\Tenants\Services\SupportSessionAuthorizationService;
 use Modules\Tenants\Support\TenantContext;
 
 class TenantSacramentSettingsController extends Controller
 {
+    use VerifiesParishProductAccess;
+
     public function __construct(
         protected TenantSacramentSettingsService $settings
     ) {}
@@ -91,23 +95,11 @@ class TenantSacramentSettingsController extends Controller
 
     private function verifyTenantUser(Request $request): ?JsonResponse
     {
-        $user = $request->user();
-
-        if (app(TenantContext::class)->effectiveTenantId() === null) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthorized. Only tenant users can manage sacrament settings.',
-            ], 403);
-        }
-
-        if ($user && method_exists($user, 'hasEkklesiaRole') && $user->hasEkklesiaRole()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ekklesia users cannot access tenant sacrament settings.',
-            ], 403);
-        }
-
-        return null;
+        return $this->verifyParishProductUser(
+            $request->user(),
+            'Unauthorized. Only tenant users can manage sacrament settings.',
+            'Ekklesia users cannot access tenant sacrament settings without an active Support Center session.',
+        );
     }
 
     private function authorizeSettings(Request $request, bool $manage): ?JsonResponse
@@ -118,6 +110,10 @@ class TenantSacramentSettingsController extends Controller
                 'success' => false,
                 'message' => 'Insufficient permission for this tenant action.',
             ], 403);
+        }
+
+        if (app(SupportSessionAuthorizationService::class)->grantsTenantProductAccess($user)) {
+            return null;
         }
 
         $isAdmin = method_exists($user, 'isTenantAdmin') && $user->isTenantAdmin();

@@ -13,6 +13,9 @@ use Modules\Authentication\Models\Role;
 use Modules\Authentication\Http\Requests\SyncTenantUserRolesRequest;
 use Modules\Authentication\Http\Requests\StoreUserRequest;
 use Modules\Authentication\Http\Requests\UpdateUserRequest;
+use Modules\Authentication\Http\Requests\UploadUserProfileImageRequest;
+use Modules\Authentication\Services\UserProfileImageService;
+use Modules\Tenants\Services\Media\ImageMediaException;
 use Modules\RolesAndPermissions\Services\TenantRoleAssignmentService;
 
 /**
@@ -33,8 +36,10 @@ use Modules\RolesAndPermissions\Services\TenantRoleAssignmentService;
  */
 class UserController extends Controller
 {
-    public function __construct(private TenantRoleAssignmentService $tenantRoleAssignmentService)
-    {
+    public function __construct(
+        private TenantRoleAssignmentService $tenantRoleAssignmentService,
+        private UserProfileImageService $userProfileImageService,
+    ) {
     }
 
     /**
@@ -542,6 +547,15 @@ class UserController extends Controller
                 ], 403);
             }
 
+            if ($user->profile_image_path && $user->tenant_id) {
+                $this->userProfileImageService->deleteProfileImage(
+                    $user->profile_image_path,
+                    (int) $user->tenant_id
+                );
+                $user->profile_image_path = null;
+                $user->save();
+            }
+
             $user->delete(); // Soft delete
 
             DB::commit();
@@ -1040,6 +1054,165 @@ class UserController extends Controller
         }
 
         return null;
+    }
+
+    /**
+     * Upload or replace a user's profile image.
+     */
+    public function uploadProfileImage(UploadUserProfileImageRequest $request, int $id): JsonResponse
+    {
+        try {
+            $authUser = $request->user();
+
+            $canUpdate = $authUser->hasPermission('users.update')
+                || $authUser->isTenantAdmin()
+                || $authUser->isSuperAdmin()
+                || $authUser->isEkklesiaAdmin();
+
+            if (! $canUpdate) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. You do not have permission to update users.',
+                ], 403);
+            }
+
+            if ($authUser->isSuperAdmin() || $authUser->isEkklesiaAdmin()) {
+                $user = User::findOrFail($id);
+            } else {
+                $user = User::where('tenant_id', $authUser->tenant_id)->findOrFail($id);
+            }
+
+            if (! $authUser->canEditUser($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $this->getEditRestrictionReason($authUser, $user)
+                        ?? 'You do not have permission to modify this user account.',
+                ], 403);
+            }
+
+            if (! $user->tenant_id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User is not associated with a tenant.',
+                ], 422);
+            }
+
+            $this->userProfileImageService->replaceProfileImage(
+                $request->file('profile_image'),
+                $user
+            );
+
+            $user->refresh();
+            $user->load(['roles', 'tenant']);
+
+            Log::info('User profile image updated', [
+                'updated_by' => $authUser->id,
+                'user_id' => $user->id,
+                'tenant_id' => $user->tenant_id,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Profile image uploaded successfully.',
+                'data' => $user,
+            ]);
+        } catch (ImageMediaException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->publicMessage(),
+            ], 422);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User not found or does not belong to your tenant.',
+            ], 404);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
+        } catch (\Exception $e) {
+            Log::error('Error uploading user profile image: '.$e->getMessage(), [
+                'user_id' => $id,
+                'exception' => $e,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An error occurred while uploading the profile image.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Remove a user's profile image.
+     */
+    public function deleteProfileImage(Request $request, int $id): JsonResponse
+    {
+        try {
+            $authUser = $request->user();
+
+            $canUpdate = $authUser->hasPermission('users.update')
+                || $authUser->isTenantAdmin()
+                || $authUser->isSuperAdmin()
+                || $authUser->isEkklesiaAdmin();
+
+            if (! $canUpdate) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. You do not have permission to update users.',
+                ], 403);
+            }
+
+            if ($authUser->isSuperAdmin() || $authUser->isEkklesiaAdmin()) {
+                $user = User::findOrFail($id);
+            } else {
+                $user = User::where('tenant_id', $authUser->tenant_id)->findOrFail($id);
+            }
+
+            if (! $authUser->canEditUser($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $this->getEditRestrictionReason($authUser, $user)
+                        ?? 'You do not have permission to modify this user account.',
+                ], 403);
+            }
+
+            if ($user->profile_image_path && $user->tenant_id) {
+                $this->userProfileImageService->deleteProfileImage(
+                    $user->profile_image_path,
+                    (int) $user->tenant_id
+                );
+            }
+
+            $user->profile_image_path = null;
+            $user->save();
+            $user->load(['roles', 'tenant']);
+
+            Log::info('User profile image removed', [
+                'updated_by' => $authUser->id,
+                'user_id' => $user->id,
+                'tenant_id' => $user->tenant_id,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Profile image removed successfully.',
+                'data' => $user,
+            ]);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User not found or does not belong to your tenant.',
+            ], 404);
+        } catch (\Exception $e) {
+            Log::error('Error deleting user profile image: '.$e->getMessage(), [
+                'user_id' => $id,
+                'exception' => $e,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An error occurred while removing the profile image.',
+            ], 500);
+        }
     }
 }
 

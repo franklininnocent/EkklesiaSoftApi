@@ -28,7 +28,7 @@ class StoreBishopRequest extends FormRequest
             'date_of_birth' => ['nullable', 'date', 'before:today'],
             'email' => ['nullable', 'email', 'max:255'],
             'phone' => ['nullable', 'string', 'max:50'],
-            'photo_url' => ['nullable', 'url'],
+            'photo_url' => ['prohibited'],
             'education' => ['nullable', 'string'],
             'biography' => ['nullable', 'string'],
             'status' => ['sometimes', 'in:active,retired,deceased,inactive'],

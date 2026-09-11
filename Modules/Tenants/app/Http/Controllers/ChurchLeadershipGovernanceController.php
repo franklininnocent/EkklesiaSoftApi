@@ -12,8 +12,10 @@ use Modules\Tenants\Http\Requests\AssignLeadershipRequest;
 use Modules\Tenants\Http\Requests\HandoverLeadershipRequest;
 use Modules\Tenants\Http\Requests\TerminateLeadershipRequest;
 use Modules\Tenants\Http\Requests\UpdateLeadershipAssignmentRequest;
+use Modules\Tenants\Http\Requests\UploadLeadershipPhotoRequest;
 use Modules\Tenants\Models\LeadershipAssignment;
 use Modules\Tenants\Services\LeadershipDomainService;
+use Modules\Tenants\Services\Media\ImageMediaException;
 use Modules\Tenants\Support\LeadershipRoleCategory;
 use Modules\Tenants\Support\TenantContext;
 
@@ -201,17 +203,13 @@ class ChurchLeadershipGovernanceController extends Controller
         }
     }
 
-    public function uploadPhoto(Request $request, string $id): JsonResponse
+    public function uploadPhoto(UploadLeadershipPhotoRequest $request, string $id): JsonResponse
     {
         $this->authorize('assign', LeadershipAssignment::class);
 
-        $validated = $request->validate([
-            'image' => ['required', 'image', 'mimes:jpeg,jpg,png,webp', 'max:3072'],
-        ]);
-
         try {
             $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
-            $file = $validated['image'];
+            $file = $request->file('image');
             if (! $file instanceof UploadedFile) {
                 return response()->json([
                     'success' => false,
@@ -226,6 +224,11 @@ class ChurchLeadershipGovernanceController extends Controller
                 'message' => 'Leader photo uploaded successfully.',
                 'data' => $this->leadershipService->presentAssignment($assignment),
             ]);
+        } catch (ImageMediaException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->publicMessage(),
+            ], 422);
         } catch (ChurchLeadershipDomainException $e) {
             return $this->domainError($e);
         }
