@@ -4,6 +4,7 @@ namespace Modules\Donations\Services;
 
 use Illuminate\Support\Collection;
 use Modules\Donations\Models\DonationAuditLog;
+use Modules\Tenants\Support\TenantFacingAuditActor;
 
 class ParishActivityFeedPresenter
 {
@@ -40,7 +41,10 @@ class ParishActivityFeedPresenter
             'title' => $copy['title'],
             'description' => $copy['description'],
             'subject_name' => $subjectName,
-            'actor_name' => $this->resolveActorName($log->actor_user_id, $actorNames),
+            'actor_name' => TenantFacingAuditActor::displayName(
+                $this->resolveActorName($log->actor_user_id, $actorNames),
+                $log->support_session_id
+            ),
             'amount' => $this->resolveAmount($event, $newValues, $oldValues, $metadata),
             'currency' => $newValues['currency'] ?? $newValues['default_currency'] ?? null,
             'action_label' => $action['label'],

@@ -21,6 +21,14 @@ class EnsureSupportPermission
             ], 401);
         }
 
+        if (! $this->isPlatformOperator($user)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Forbidden.',
+                'error' => 'Support Center access is restricted to platform operators.',
+            ], 403);
+        }
+
         if (method_exists($user, 'isSuperAdmin') && $user->isSuperAdmin()) {
             return $next($request);
         }
@@ -41,5 +49,18 @@ class EnsureSupportPermission
         }
 
         return $next($request);
+    }
+
+    private function isPlatformOperator(object $user): bool
+    {
+        if (method_exists($user, 'isSuperAdmin') && $user->isSuperAdmin()) {
+            return true;
+        }
+
+        if (method_exists($user, 'hasEkklesiaRole') && $user->hasEkklesiaRole()) {
+            return true;
+        }
+
+        return method_exists($user, 'hasRole') && $user->hasRole('SupportAdmin');
     }
 }

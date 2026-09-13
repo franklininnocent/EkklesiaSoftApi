@@ -26,8 +26,10 @@ use Modules\Tenants\Models\TenantStatusAudit;
 use Modules\Tenants\Http\Resources\TenantDetailsResource;
 use Modules\Tenants\Services\AddressService;
 use Modules\Tenants\Services\FileUploadService;
+use Modules\Tenants\Services\SupportSessionAuthorizationService;
 use Modules\Tenants\Services\SubscriptionService;
 use Modules\Tenants\Services\TenantDetailsService;
+use Modules\Tenants\Support\TenantContext;
 
 class TenantsController extends Controller
 {
@@ -1124,8 +1126,9 @@ class TenantsController extends Controller
     {
         try {
             $user = auth()->user();
+            $tenantId = app(TenantContext::class)->effectiveTenantId();
 
-            if (! $user || ! $user->tenant_id) {
+            if (! $user || $tenantId === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -1150,7 +1153,7 @@ class TenantsController extends Controller
                 'churchStatistics' => function ($query) {
                     $query->latest()->limit(12); // Last 12 records
                 },
-            ])->find($user->tenant_id);
+            ])->find($tenantId);
 
             if (! $tenant) {
                 return response()->json([
@@ -1167,6 +1170,7 @@ class TenantsController extends Controller
             Log::info('Church profile retrieved', [
                 'tenant_id' => $tenant->id,
                 'user_id' => $user->id,
+                'support_session_id' => app(TenantContext::class)->supportSessionId(),
             ]);
 
             return response()->json([
@@ -1197,27 +1201,23 @@ class TenantsController extends Controller
     {
         try {
             $user = auth()->user();
+            $tenantId = app(TenantContext::class)->effectiveTenantId();
 
-            if (! $user || ! $user->tenant_id) {
+            if (! $user || $tenantId === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
                 ], 404);
             }
 
-            // Check if user has permission to edit church profile.
-            if (
-                ! $user->is_primary_admin &&
-                ! $user->isTenantAdmin() &&
-                ! $user->hasPermission('church.settings.edit')
-            ) {
+            if (! $this->canUpdateChurchProfileShell($user)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Only church administrators can update church profile.',
                 ], 403);
             }
 
-            $tenant = Tenant::find($user->tenant_id);
+            $tenant = Tenant::find($tenantId);
 
             if (! $tenant) {
                 return response()->json([
@@ -1613,14 +1613,15 @@ class TenantsController extends Controller
     {
         try {
             $user = auth()->user();
-            if (! $user || ! $user->tenant_id) {
+            $tenantId = app(TenantContext::class)->effectiveTenantId();
+            if (! $user || $tenantId === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
                 ], 404);
             }
 
-            $tenant = Tenant::find($user->tenant_id);
+            $tenant = Tenant::find($tenantId);
             if (! $tenant) {
                 return response()->json([
                     'success' => false,
@@ -1652,7 +1653,8 @@ class TenantsController extends Controller
     {
         try {
             $user = auth()->user();
-            if (! $user || ! $user->tenant_id) {
+            $tenantId = app(TenantContext::class)->effectiveTenantId();
+            if (! $user || $tenantId === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -1664,6 +1666,7 @@ class TenantsController extends Controller
                 && ! $user->isEkklesiaAdmin()
                 && ! $user->is_primary_admin
                 && ! $user->isTenantAdmin()
+                && ! app(SupportSessionAuthorizationService::class)->grantsTenantProductAccess($user)
                 && method_exists($user, 'hasPermission')
                 && ! $user->hasPermission('subscription.view')
             ) {
@@ -1673,7 +1676,7 @@ class TenantsController extends Controller
                 ], 403);
             }
 
-            $tenant = Tenant::find($user->tenant_id);
+            $tenant = Tenant::find($tenantId);
             if (! $tenant) {
                 return response()->json([
                     'success' => false,
@@ -2363,5 +2366,16 @@ class TenantsController extends Controller
 
         // SuperAdmin and EkklesiaAdmin can manage all tenants
         return $user->isSuperAdmin() || $user->isEkklesiaAdmin();
+    }
+
+    private function canUpdateChurchProfileShell(User $user): bool
+    {
+        if (app(SupportSessionAuthorizationService::class)->grantsTenantProductAccess($user)) {
+            return true;
+        }
+
+        return $user->is_primary_admin
+            || $user->isTenantAdmin()
+            || $user->hasPermission('church.settings.edit');
     }
 }

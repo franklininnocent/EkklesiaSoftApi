@@ -10,6 +10,7 @@ use Modules\BCC\Http\Controllers\Concerns\RespondsToBccDomain;
 use Modules\BCC\Http\Requests\IndexBccAuditLogRequest;
 use Modules\BCC\Models\BccAuditLog;
 use Modules\BCC\Services\BccFamilyMembershipService;
+use Modules\Tenants\Support\TenantFacingAuditActor;
 
 class BccAuditLogController extends Controller
 {
@@ -77,7 +78,7 @@ class BccAuditLogController extends Controller
             'new_values' => $log->new_values,
             'metadata' => $log->metadata,
             'actor_user_id' => $log->actor_user_id,
-            'actor_name' => $log->actor?->name,
+            'actor_name' => TenantFacingAuditActor::displayName($log->actor?->name, $log->support_session_id),
             'created_at' => $log->created_at?->toIso8601String(),
         ])->values();
 

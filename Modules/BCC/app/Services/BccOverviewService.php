@@ -10,6 +10,7 @@ use Modules\BCC\Models\BccFamilyMembership;
 use Modules\BCC\Support\BccAgeBands;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
+use Modules\Tenants\Support\TenantFacingAuditActor;
 
 class BccOverviewService
 {
@@ -193,7 +194,7 @@ class BccOverviewService
                 'id' => $log->id,
                 'event' => $log->event,
                 'target_type' => $log->target_type,
-                'actor_name' => $log->actor?->name,
+                'actor_name' => TenantFacingAuditActor::displayName($log->actor?->name, $log->support_session_id),
                 'created_at' => $log->created_at?->toIso8601String(),
                 'new_values' => $log->new_values,
             ])->values(),

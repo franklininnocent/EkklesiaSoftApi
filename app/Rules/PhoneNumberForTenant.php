@@ -7,6 +7,8 @@ use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Http\Request;
 use libphonenumber\PhoneNumberUtil;
 use libphonenumber\NumberParseException;
+use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Support\TenantContext;
 
 class PhoneNumberForTenant implements ValidationRule
 {
@@ -18,9 +20,8 @@ class PhoneNumberForTenant implements ValidationRule
      * Get the tenant's country ISO2 code from multiple sources.
      * Priority:
      * 1. Override (if provided)
-     * 2. X-Tenant-Country header (sent from frontend)
-     * 3. Tenant's official address country ISO2
-     * 4. Default to 'US'
+     * 2. Effective tenant official address country ISO2 (home tenant or support session)
+     * 3. Default to 'US'
      */
     protected function getTenantCountryCode(?Request $request = null): string
     {
@@ -29,32 +30,20 @@ class PhoneNumberForTenant implements ValidationRule
             return strtoupper($this->overrideCountry);
         }
 
-        // Priority 2: X-Tenant-Country header (sent from frontend)
-        $request = $request ?? request();
-        if ($request && $request->hasHeader('X-Tenant-Country')) {
-            $headerCountry = strtoupper(trim($request->header('X-Tenant-Country')));
-            if (strlen($headerCountry) === 2) {
-                return $headerCountry;
-            }
-        }
-
-        // Priority 3: Get from tenant's official address
-        $user = auth()->user();
-        if ($user && $user->tenant) {
-            $tenant = $user->tenant;
-            // Load the official address
-            $officialAddress = $tenant->officialAddress()->first();
-            
-            if ($officialAddress && $officialAddress->country_id) {
-                // Load the country model via relationship
-                $countryModel = $officialAddress->country()->first();
-                if ($countryModel && isset($countryModel->iso2) && $countryModel->iso2) {
-                    return strtoupper($countryModel->iso2);
+        $tenantId = app(TenantContext::class)->effectiveTenantId();
+        if ($tenantId !== null) {
+            $tenant = Tenant::query()->find($tenantId);
+            if ($tenant) {
+                $officialAddress = $tenant->officialAddress()->first();
+                if ($officialAddress && $officialAddress->country_id) {
+                    $countryModel = $officialAddress->country()->first();
+                    if ($countryModel && isset($countryModel->iso2) && $countryModel->iso2) {
+                        return strtoupper($countryModel->iso2);
+                    }
                 }
             }
         }
 
-        // Priority 4: Default to US
         return 'US';
     }
 

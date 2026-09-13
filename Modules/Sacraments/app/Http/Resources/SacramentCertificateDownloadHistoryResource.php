@@ -5,6 +5,7 @@ namespace Modules\Sacraments\Http\Resources;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Modules\Sacraments\Models\SacramentAuditLog;
+use Modules\Tenants\Support\TenantFacingAuditActor;
 
 /**
  * @mixin SacramentAuditLog
@@ -25,7 +26,7 @@ class SacramentCertificateDownloadHistoryResource extends JsonResource
 
         return [
             'downloaded_at' => optional($this->created_at)?->toIso8601String(),
-            'user_name' => $actor?->name,
+            'user_name' => TenantFacingAuditActor::displayName($actor?->name, $this->support_session_id),
             'role' => $roleName,
             'version' => (int) ($metadata['version'] ?? 0),
             'template_version' => $metadata['template_version'] ?? null,

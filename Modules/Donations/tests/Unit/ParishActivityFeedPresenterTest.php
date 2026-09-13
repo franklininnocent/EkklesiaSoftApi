@@ -75,4 +75,40 @@ class ParishActivityFeedPresenterTest extends TestCase
         $this->assertSame('Festival Collection 2026 was created.', $item['description']);
         $this->assertSame(500.0, $item['amount']);
     }
+
+    public function test_it_masks_actor_name_when_support_session_id_is_present(): void
+    {
+        $log = new DonationAuditLog([
+            'id' => 4,
+            'actor_user_id' => 9,
+            'support_session_id' => '33333333-3333-3333-3333-333333333333',
+            'event' => 'donor.created',
+            'target_type' => 'donor',
+            'target_id' => '019ec173-0997-7083-8db7-a417703a5ad6',
+            'new_values' => ['name' => 'John Mathew'],
+            'created_at' => now(),
+        ]);
+
+        $item = $this->presenter->present($log, [9 => 'Franklin Innocent F']);
+
+        $this->assertSame('Ekklesia Support', $item['actor_name']);
+    }
+
+    public function test_it_keeps_real_actor_name_when_support_session_id_is_null(): void
+    {
+        $log = new DonationAuditLog([
+            'id' => 5,
+            'actor_user_id' => 9,
+            'support_session_id' => null,
+            'event' => 'donor.created',
+            'target_type' => 'donor',
+            'target_id' => '019ec173-0997-7083-8db7-a417703a5ad6',
+            'new_values' => ['name' => 'John Mathew'],
+            'created_at' => now(),
+        ]);
+
+        $item = $this->presenter->present($log, [9 => 'Franklin Innocent F']);
+
+        $this->assertSame('Franklin Innocent F', $item['actor_name']);
+    }
 }

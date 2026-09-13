@@ -17,7 +17,10 @@ class MarkSlaWarningJob extends TenantAwareJob
 
     protected function handleWithTenantContext(): void
     {
-        $ticket = SupportTicket::query()->whereKey($this->ticketId)->first();
+        $ticket = SupportTicket::query()
+            ->where('tenant_id', $this->tenantId)
+            ->whereKey($this->ticketId)
+            ->first();
         if (! $ticket || in_array($ticket->status, [TicketStatus::RESOLVED, TicketStatus::CLOSED, TicketStatus::CANCELLED], true)) {
             return;
         }

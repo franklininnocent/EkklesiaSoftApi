@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Auth;
 use Modules\MinistriesAssociations\Http\Requests\IndexMinistriesAuditLogRequest;
 use Modules\MinistriesAssociations\Models\MinistriesAuditLog;
 use Modules\MinistriesAssociations\Models\Organization;
+use Modules\Tenants\Support\TenantFacingAuditActor;
 
 class MinistriesAuditLogController extends Controller
 {
@@ -138,7 +139,10 @@ class MinistriesAuditLogController extends Controller
             'entity_id' => $log->target_id,
             'organization_id' => $log->organization_id,
             'actor_user_id' => $log->actor_user_id,
-            'actor_name' => $log->actor_user_id ? ($actorNames[$log->actor_user_id] ?? null) : null,
+            'actor_name' => TenantFacingAuditActor::displayName(
+                $log->actor_user_id ? ($actorNames[$log->actor_user_id] ?? null) : null,
+                $log->support_session_id
+            ),
             'old_values' => $log->old_values,
             'new_values' => $log->new_values,
             'metadata' => $log->metadata,

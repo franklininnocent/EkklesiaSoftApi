@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
+use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Support\TenantContext;
 
 class MinistriesModuleController extends Controller
 {
@@ -18,7 +20,17 @@ class MinistriesModuleController extends Controller
         $this->authorize('ministries.viewModuleStatus');
 
         $user = Auth::user();
-        if (! $user || ! $user->tenant) {
+        $tenantId = app(TenantContext::class)->effectiveTenantId();
+        if (! $user || $tenantId === null) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tenant context is required.',
+                'errors' => [],
+            ], 403);
+        }
+
+        $tenant = Tenant::query()->find($tenantId);
+        if (! $tenant) {
             return response()->json([
                 'success' => false,
                 'message' => 'Tenant context is required.',
@@ -29,7 +41,7 @@ class MinistriesModuleController extends Controller
         return response()->json([
             'success' => true,
             'data' => [
-                'enabled' => $user->tenant->supportsMinistriesAssociations(),
+                'enabled' => $tenant->supportsMinistriesAssociations(),
                 'feature_key' => self::FEATURE_KEY,
             ],
         ]);

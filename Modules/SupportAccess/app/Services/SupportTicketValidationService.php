@@ -3,6 +3,7 @@
 namespace Modules\SupportAccess\Services;
 
 use Modules\SupportAccess\Contracts\ExternalHelpdeskTicketAdapter;
+use Modules\SupportTickets\Models\SupportTicket;
 use RuntimeException;
 
 /**
@@ -63,5 +64,22 @@ class SupportTicketValidationService
         }
 
         throw new RuntimeException('Unsupported ticket_validation_mode.');
+    }
+
+    public function assertTenantMatches(?string $ticketRef, int $requestedTenantId): void
+    {
+        $ref = is_string($ticketRef) ? strtoupper(trim($ticketRef)) : '';
+        if ($ref === '' || ! preg_match('/^ES-\d{6}$/', $ref)) {
+            return;
+        }
+
+        $ticket = SupportTicket::query()->byTicketNumber($ref)->first();
+        if (! $ticket) {
+            throw new RuntimeException('Support ticket not found.');
+        }
+
+        if ((int) $ticket->tenant_id !== $requestedTenantId) {
+            throw new RuntimeException('Support ticket does not belong to the selected tenant.');
+        }
     }
 }

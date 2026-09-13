@@ -49,8 +49,9 @@ class DonationCampaignsController extends Controller
     public function store(StoreCampaignRequest $request): JsonResponse
     {
         $user = Auth::user();
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $campaign = $this->campaignService->create(
-            (int) $user->tenant_id,
+            $tenantId,
             (int) $user->id,
             $request->validated()
         );

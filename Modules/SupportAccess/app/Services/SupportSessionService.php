@@ -72,6 +72,7 @@ class SupportSessionService
         }
 
         $this->tickets->assertValid($payload['ticket_ref'] ?? null);
+        $this->tickets->assertTenantMatches($payload['ticket_ref'] ?? null, (int) $payload['tenant_id']);
 
         $ops = $this->settings->getOpsSettings();
         $this->assertRateLimit((int) $actor->getAuthIdentifier(), $ops['start_rate_limit_per_hour']);
