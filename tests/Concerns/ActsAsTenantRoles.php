@@ -52,6 +52,7 @@ trait ActsAsTenantRoles
             'donations.manage',
             'bcc.delete',
             'church.settings.edit',
+            'church.leadership.roles.create',
             'roles.view',
             'roles.create',
             'roles.update',

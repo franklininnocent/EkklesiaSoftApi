@@ -5,6 +5,7 @@ namespace Modules\RolesAndPermissions\Services;
 use Illuminate\Support\Facades\DB;
 use Modules\Authentication\Models\Role;
 use Modules\Authentication\Models\User;
+use Modules\Authentication\Services\PasswordAuthorizationService;
 use Modules\RolesAndPermissions\Models\Permission;
 
 class TenantPermissionService
@@ -18,10 +19,13 @@ class TenantPermissionService
         'roles.assign',
         'users.view',
         'users.update',
+        PasswordAuthorizationService::PERMISSION_CHANGE_SELF,
     ];
 
-    public function __construct(private PermissionAuditService $auditService)
-    {
+    public function __construct(
+        private PermissionAuditService $auditService,
+        private PasswordAuthorizationService $passwordAuthorization,
+    ) {
     }
 
     public function syncRolePermissions(User $actor, Role $role, array $permissionIds): int
@@ -44,6 +48,10 @@ class TenantPermissionService
 
             if (!is_null($permission->tenant_id) && $permission->tenant_id !== $actor->tenant_id) {
                 throw new \RuntimeException("Permission '{$permission->name}' does not belong to your tenant.", 422);
+            }
+
+            if (!$this->passwordAuthorization->canGrantPasswordPermission($actor, $role, $permission->name)) {
+                throw new \RuntimeException("Permission escalation blocked. You cannot assign '{$permission->name}'.", 403);
             }
         }
 
@@ -71,6 +79,17 @@ class TenantPermissionService
         });
 
         return count($permissionIds);
+    }
+
+    public function assertPasswordPermissionRemovable(User $actor, Permission $permission, Role $role): void
+    {
+        if ($this->passwordAuthorization->isSystemRequiredPermission($permission->name)) {
+            throw new \RuntimeException('Change Own Password is a required system security capability and cannot be removed.', 422);
+        }
+
+        if (!$this->passwordAuthorization->canGrantPasswordPermission($actor, $role, $permission->name)) {
+            throw new \RuntimeException("Permission escalation blocked. You cannot modify '{$permission->name}'.", 403);
+        }
     }
 
     private function assertTenantOwnedRole(User $actor, Role $role): void

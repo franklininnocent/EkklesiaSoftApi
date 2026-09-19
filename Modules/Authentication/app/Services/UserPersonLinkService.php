@@ -26,13 +26,13 @@ class UserPersonLinkService
             ->forTenant($tenantId)
             ->active()
             ->whereNotIn('person_id', $linkedPersonIds)
-            ->whereHas('role', fn ($roleQuery) => $roleQuery->where('category', LeadershipRoleCategory::PARISH_CLERGY))
+            ->whereHas('role', fn ($roleQuery) => LeadershipRoleCategory::applyParishClergyRoleFilter($roleQuery))
             ->with(['person' => fn ($q) => $q->withTrashed(), 'role'])
             ->orderByDesc('start_date');
 
         if ($search !== null && trim($search) !== '') {
             $term = trim($search);
-            $pattern = '%'.$term.'%';
+            $pattern = '%'.preg_replace('/\s+/', '%', $term).'%';
             $query->whereHas('person', function ($personQuery) use ($pattern, $tenantId): void {
                 $personQuery->where('tenant_id', $tenantId)
                     ->where(function ($nameQuery) use ($pattern): void {
@@ -44,7 +44,29 @@ class UserPersonLinkService
             });
         }
 
-        return $query->limit($limit)->get()->map(fn (LeadershipAssignment $assignment) => $this->presentLinkableClergy($assignment));
+        $baseCount = (clone $query)->count();
+        $results = $query->limit($limit)->get()->map(fn (LeadershipAssignment $assignment) => $this->presentLinkableClergy($assignment));
+
+        // #region agent log
+        file_put_contents('/var/www/html/EkklesiaSoft/.cursor/debug-92acf4.log', json_encode([
+            'sessionId' => '92acf4',
+            'runId' => 'pre-fix',
+            'hypothesisId' => 'H2',
+            'location' => 'UserPersonLinkService.php:listLinkableClergy',
+            'message' => 'linkable clergy query stats',
+            'data' => [
+                'tenantId' => $tenantId,
+                'search' => $search,
+                'linkedPersonCount' => $linkedPersonIds->count(),
+                'matchingAssignmentCount' => $baseCount,
+                'returnedCount' => $results->count(),
+                'sampleNames' => $results->take(3)->pluck('person_name')->values()->all(),
+            ],
+            'timestamp' => (int) round(microtime(true) * 1000),
+        ])."\n", FILE_APPEND);
+        // #endregion
+
+        return $results;
     }
 
     public function resolvePersonLink(int $tenantId, ?string $personId, ?int $ignoreUserId = null): ?Person
@@ -92,7 +114,7 @@ class UserPersonLinkService
             ->forTenant($tenantId)
             ->where('person_id', $personId)
             ->active()
-            ->whereHas('role', fn ($roleQuery) => $roleQuery->where('category', LeadershipRoleCategory::PARISH_CLERGY))
+            ->whereHas('role', fn ($roleQuery) => LeadershipRoleCategory::applyParishClergyRoleFilter($roleQuery))
             ->exists();
 
         if (! $hasAssignment) {

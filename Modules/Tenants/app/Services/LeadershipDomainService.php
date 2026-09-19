@@ -5,8 +5,10 @@ namespace Modules\Tenants\Services;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Modules\EcclesiasticalData\Services\Leadership\EcclesiasticalLeadershipService;
 use Modules\Family\app\Services\PersonService;
 use Modules\Family\Models\Person;
@@ -18,6 +20,7 @@ use Modules\Tenants\Models\LeadershipRole;
 use Modules\Tenants\Support\LeadershipAssignmentStatus;
 use Modules\Tenants\Support\LeadershipExitReason;
 use Modules\Tenants\Support\LeadershipRoleCategory;
+use Modules\Tenants\Support\LeadershipRoleNameNormalizer;
 
 class LeadershipDomainService
 {
@@ -496,6 +499,157 @@ class LeadershipDomainService
         }
 
         return $query->get();
+    }
+
+    public function createTenantRole(int $tenantId, string $title, ?string $category = null): LeadershipRole
+    {
+        $canonicalTitle = LeadershipRoleNameNormalizer::canonicalize($title);
+        if ($canonicalTitle === '') {
+            throw new ChurchLeadershipDomainException('Role title is required.');
+        }
+
+        $resolvedCategory = $category !== null && LeadershipRoleCategory::isValid($category)
+            ? $category
+            : LeadershipRoleCategory::guessFromTitle($canonicalTitle);
+
+        $normalizedTitle = LeadershipRoleNameNormalizer::normalize($canonicalTitle);
+
+        return DB::transaction(function () use ($tenantId, $canonicalTitle, $normalizedTitle, $resolvedCategory) {
+            if (DB::connection()->getDriverName() === 'pgsql') {
+                DB::select(
+                    'SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))',
+                    ['leadership_role', $tenantId.'|'.$normalizedTitle]
+                );
+            }
+
+            $existing = $this->findRoleByNormalizedTitle($tenantId, $normalizedTitle);
+            if ($existing !== null) {
+                throw ChurchLeadershipDomainException::roleAlreadyExists();
+            }
+
+            $profile = $this->requireChurchProfile($tenantId);
+            $userId = Auth::id();
+
+            try {
+                $role = new LeadershipRole([
+                    'id' => (string) Str::uuid(),
+                    'title' => $canonicalTitle,
+                    'normalized_title' => $normalizedTitle,
+                    'category' => $resolvedCategory,
+                    'hierarchical_level' => LeadershipRoleCategory::hierarchicalLevel($resolvedCategory),
+                    'allows_concurrent' => true,
+                    'is_canonical_mandate' => false,
+                    'is_active' => true,
+                    'created_by' => $userId,
+                    'updated_by' => $userId,
+                ]);
+                $role->forceFill(['tenant_id' => $tenantId])->save();
+            } catch (UniqueConstraintViolationException) {
+                throw ChurchLeadershipDomainException::roleAlreadyExists();
+            }
+
+            $this->auditService->log(
+                $tenantId,
+                'leadership.role.created',
+                'leadership_role',
+                $role->id,
+                null,
+                [
+                    'title' => $role->title,
+                    'category' => $role->category,
+                    'scope' => 'tenant',
+                    'normalized_title' => $role->normalized_title,
+                ],
+                $profile->id,
+            );
+
+            return $role;
+        });
+    }
+
+    public function updateTenantRole(int $tenantId, string $roleId, string $category): LeadershipRole
+    {
+        if (! LeadershipRoleCategory::isValid($category)) {
+            throw new ChurchLeadershipDomainException('Invalid leadership role category.');
+        }
+
+        $role = LeadershipRole::query()
+            ->where('tenant_id', $tenantId)
+            ->whereKey($roleId)
+            ->first();
+
+        if ($role === null) {
+            throw ChurchLeadershipDomainException::notFound('Custom leadership role not found.');
+        }
+
+        return DB::transaction(function () use ($tenantId, $role, $category) {
+            $profile = $this->requireChurchProfile($tenantId);
+            $before = [
+                'category' => $role->category,
+                'hierarchical_level' => $role->hierarchical_level,
+            ];
+
+            $role->fill([
+                'category' => $category,
+                'hierarchical_level' => LeadershipRoleCategory::hierarchicalLevel($category),
+                'updated_by' => Auth::id(),
+            ]);
+            $role->save();
+
+            $this->auditService->log(
+                $tenantId,
+                'leadership.role.updated',
+                'leadership_role',
+                $role->id,
+                $before,
+                [
+                    'category' => $role->category,
+                    'hierarchical_level' => $role->hierarchical_level,
+                ],
+                $profile->id,
+            );
+
+            return $role->fresh();
+        });
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function presentRole(LeadershipRole $role): array
+    {
+        $isSystem = $role->tenant_id === null;
+
+        return [
+            'id' => $role->id,
+            'title' => $role->title,
+            'category' => $role->category,
+            'category_label' => LeadershipRoleCategory::label($role->category),
+            'hierarchical_level' => $role->hierarchical_level,
+            'allows_concurrent' => $role->allows_concurrent,
+            'is_canonical_mandate' => $role->is_canonical_mandate,
+            'is_global' => $isSystem,
+            'is_system_defined' => $isSystem,
+            'scope' => $isSystem ? 'system' : 'tenant',
+            'is_active' => $role->is_active,
+        ];
+    }
+
+    private function findRoleByNormalizedTitle(int $tenantId, string $normalizedTitle): ?LeadershipRole
+    {
+        $systemRole = LeadershipRole::query()
+            ->whereNull('tenant_id')
+            ->where('normalized_title', $normalizedTitle)
+            ->first();
+
+        if ($systemRole !== null) {
+            return $systemRole;
+        }
+
+        return LeadershipRole::query()
+            ->where('tenant_id', $tenantId)
+            ->where('normalized_title', $normalizedTitle)
+            ->first();
     }
 
     public function requireChurchProfile(int $tenantId): ChurchProfile

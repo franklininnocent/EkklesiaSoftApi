@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\Factory;
 use Modules\Tenants\Models\LeadershipRole;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Support\LeadershipRoleCategory;
+use Modules\Tenants\Support\LeadershipRoleNameNormalizer;
 
 class LeadershipRoleFactory extends Factory
 {
@@ -13,9 +14,12 @@ class LeadershipRoleFactory extends Factory
 
     public function definition(): array
     {
+        $title = $this->faker->unique()->jobTitle();
+
         return [
             'tenant_id' => null,
-            'title' => $this->faker->jobTitle(),
+            'title' => $title,
+            'normalized_title' => LeadershipRoleNameNormalizer::normalize($title),
             'category' => LeadershipRoleCategory::OTHER,
             'hierarchical_level' => 4,
             'allows_concurrent' => false,
@@ -40,6 +44,7 @@ class LeadershipRoleFactory extends Factory
     {
         return $this->state(fn () => [
             'title' => 'Pastor',
+            'normalized_title' => LeadershipRoleNameNormalizer::normalize('Pastor'),
             'category' => LeadershipRoleCategory::PARISH_CLERGY,
             'hierarchical_level' => 2,
             'allows_concurrent' => false,

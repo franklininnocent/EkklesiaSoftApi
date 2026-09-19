@@ -4,6 +4,7 @@ namespace Modules\Tenants\Services;
 
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Modules\Authentication\Models\User;
 use Modules\EcclesiasticalData\Services\DioceseLeadershipQueryService;
 use Modules\Family\app\Services\FamilyService;
 use Modules\Tenants\Models\Tenant;
@@ -32,8 +33,8 @@ class TenantDetailsService
             ->with([
                 'creator:id,name,email',
                 'updater:id,name,email',
-                'primaryContact:id,name,email,contact_number,user_type,active',
-                'secondaryContact:id,name,email,contact_number,user_type,active',
+                'primaryContact:id,tenant_id,name,email,contact_number,user_type,active',
+                'secondaryContact:id,tenant_id,name,email,contact_number,user_type,active',
                 'addresses',
                 'parentTenant:id,name,slug,tenant_tier',
                 'churchProfile.denomination:id,name',
@@ -92,6 +93,8 @@ class TenantDetailsService
             'parent_tenant_id' => $tenant->parent_tenant_id,
             'parent_tenant_name' => $tenant->parentTenant?->name,
             'hierarchy_path' => $tenant->hierarchy_path,
+            'denomination_id' => $tenant->churchProfile?->denomination_id,
+            'denomination_name' => $tenant->churchProfile?->denomination?->name,
             'diocese_name' => $archdiocese?->name,
             'diocese_id' => $archdiocese?->id,
             'logo_full_url' => $logoFullUrl,
@@ -127,7 +130,7 @@ class TenantDetailsService
     private function buildContact(Tenant $tenant): array
     {
         $profile = $tenant->churchProfile;
-        $primary = $tenant->primaryContact;
+        $primary = $this->resolvePrimaryContactUser($tenant);
         $officialAddress = $tenant->addresses
             ->first(fn ($addr) => $addr->address_type === 'official' && (int) $addr->active === 1)
             ?? $tenant->addresses->first(fn ($addr) => (int) $addr->active === 1);
@@ -145,8 +148,8 @@ class TenantDetailsService
                 'email' => $tenant->secondaryContact->email,
                 'phone' => $tenant->secondaryContact->contact_number,
             ] : null,
-            'email' => $profile?->email,
-            'phone' => $profile?->phone,
+            'email' => $profile?->email ?? $primary?->email,
+            'phone' => $profile?->phone ?? $primary?->contact_number,
             'website' => $profile?->website,
             'address' => $officialAddress ? [
                 'line1' => $officialAddress->line1,
@@ -166,11 +169,7 @@ class TenantDetailsService
      */
     private function buildAdministration(Tenant $tenant, array $userActivity): array
     {
-        $primaryAdmin = \Modules\Authentication\Models\User::query()
-            ->where('tenant_id', $tenant->id)
-            ->where('is_primary_admin', true)
-            ->where('active', 1)
-            ->first(['id', 'name', 'email']);
+        $primaryAdmin = $this->resolvePrimaryAdminUser($tenant);
 
         return [
             'primary_admin' => $primaryAdmin ? [
@@ -185,6 +184,30 @@ class TenantDetailsService
             'max_users' => $tenant->max_users,
             'role_distribution' => $userActivity['role_distribution'] ?? [],
         ];
+    }
+
+    /**
+     * Resolve the primary contact person, falling back to the active primary admin.
+     */
+    private function resolvePrimaryContactUser(Tenant $tenant): ?User
+    {
+        if ($tenant->primaryContact) {
+            return $tenant->primaryContact;
+        }
+
+        return $this->resolvePrimaryAdminUser($tenant);
+    }
+
+    /**
+     * Resolve the active primary administrator for the tenant.
+     */
+    private function resolvePrimaryAdminUser(Tenant $tenant): ?User
+    {
+        return User::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('is_primary_admin', true)
+            ->where('active', 1)
+            ->first(['id', 'name', 'email', 'contact_number']);
     }
 
     /**

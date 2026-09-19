@@ -37,7 +37,7 @@ class UpdateTenantRoleRequest extends FormRequest
                     ->ignore($roleId),
             ],
             'description' => ['nullable', 'string'],
-            'level' => ['sometimes', 'required', 'integer', 'min:1', 'max:10'],
+            'level' => ['sometimes', 'required', 'integer', 'min:2', 'max:10'],
             'active' => ['nullable', 'boolean'],
         ];
     }

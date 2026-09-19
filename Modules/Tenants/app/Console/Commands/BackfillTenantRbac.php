@@ -330,6 +330,8 @@ class BackfillTenantRbac extends Command
             'users.create',
             'users.update',
             'users.delete',
+            'users.password.reset_subordinates',
+            'tenant.admin_password.reset',
             'church.settings.',
             'settings.',
             'security.',

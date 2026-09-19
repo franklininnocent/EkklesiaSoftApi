@@ -50,6 +50,7 @@ class Role extends Model
 
     const ROLE_TYPE_PLATFORM = 'platform';
     const ROLE_TYPE_TENANT = 'tenant';
+    const ROLE_TYPE_SUPPORT = 'support';
     const TENANT_ADMINISTRATOR = 'Administrator';
     const CLASSIFICATION_PROTECTED_SYSTEM = 'protected_system';
     const CLASSIFICATION_DEFAULT_TEMPLATE = 'default_template';
@@ -62,6 +63,7 @@ class Role extends Model
     const LEVEL_EKKLESIA_ADMIN = 2;
     const LEVEL_EKKLESIA_MANAGER = 3;
     const LEVEL_EKKLESIA_USER = 4;
+    const LEVEL_SUPPORT_ADMIN = 5;
 
     /**
      * Role name constants
@@ -70,6 +72,7 @@ class Role extends Model
     const EKKLESIA_ADMIN = 'EkklesiaAdmin';
     const EKKLESIA_MANAGER = 'EkklesiaManager';
     const EKKLESIA_USER = 'EkklesiaUser';
+    const SUPPORT_ADMIN = 'SupportAdmin';
 
     /**
      * Get the users for the role.
@@ -241,6 +244,46 @@ class Role extends Model
     public function isTenantRole(): bool
     {
         return $this->role_type === self::ROLE_TYPE_TENANT;
+    }
+
+    /**
+     * Check if role is a support-ops role (below platform owner ladder).
+     */
+    public function isSupportRole(): bool
+    {
+        return $this->role_type === self::ROLE_TYPE_SUPPORT;
+    }
+
+    /**
+     * Whether a tenant administrator may assign this role within their parish.
+     */
+    public function isAssignableByTenantAdmin(int $tenantId): bool
+    {
+        return $this->isTenantRole()
+            && $this->tenant_id === $tenantId
+            && $this->active === 1
+            && $this->deleted_at === null;
+    }
+
+    /**
+     * @param  list<int|string>  $roleIds
+     */
+    public static function hasNonTenantAssignableRoles(array $roleIds, int $tenantId): bool
+    {
+        if ($roleIds === []) {
+            return false;
+        }
+
+        $uniqueIds = array_values(array_unique($roleIds));
+        $validCount = self::query()
+            ->whereIn('id', $uniqueIds)
+            ->where('tenant_id', $tenantId)
+            ->where('role_type', self::ROLE_TYPE_TENANT)
+            ->where('active', 1)
+            ->whereNull('deleted_at')
+            ->count();
+
+        return $validCount !== count($uniqueIds);
     }
 
     /**

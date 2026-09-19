@@ -52,6 +52,8 @@
             "Modules\\PastoralCare\\": "Modules/PastoralCare/app/",
             "Modules\\PastoralCare\\Database\\Factories\\": "Modules/PastoralCare/database/factories/",
             "Modules\\PastoralCare\\Database\\Seeders\\": "Modules/PastoralCare/database/seeders/",
+            "Modules\\Notifications\\": "Modules/Notifications/app/",
+            "Modules\\Notifications\\Database\\Seeders\\": "Modules/Notifications/database/seeders/",
             "Modules\\SupportTickets\\": "Modules/SupportTickets/app/",
             "Modules\\SupportTickets\\Database\\Factories\\": "Modules/SupportTickets/database/factories/",
             "Modules\\SupportTickets\\Database\\Seeders\\": "Modules/SupportTickets/database/seeders/",

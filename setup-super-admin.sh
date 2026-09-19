@@ -38,13 +38,7 @@ fi
 
 echo ""
 echo "🔑 Step 3: Ensuring Passport password grant client exists..."
-CLIENT_COUNT=$(php artisan tinker --execute="echo \\Illuminate\\Support\\Facades\\DB::table('oauth_clients')->count();")
-if [ "$CLIENT_COUNT" = "0" ]; then
-    php artisan passport:client --password --name="EkklesiaSoft Password Grant Client" --no-interaction
-    echo "✅ Passport password client created!"
-else
-    echo "✅ Passport client already present ($CLIENT_COUNT)."
-fi
+php artisan db:seed --class="Database\\Seeders\\OAuthClientSeeder"
 
 echo ""
 echo "🧹 Step 4: Clearing cache..."

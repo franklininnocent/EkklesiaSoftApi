@@ -9,11 +9,14 @@ use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Modules\Tenants\Exceptions\ChurchLeadershipDomainException;
 use Modules\Tenants\Http\Requests\AssignLeadershipRequest;
+use Modules\Tenants\Http\Requests\StoreLeadershipRoleRequest;
+use Modules\Tenants\Http\Requests\UpdateLeadershipRoleRequest;
 use Modules\Tenants\Http\Requests\HandoverLeadershipRequest;
 use Modules\Tenants\Http\Requests\TerminateLeadershipRequest;
 use Modules\Tenants\Http\Requests\UpdateLeadershipAssignmentRequest;
 use Modules\Tenants\Http\Requests\UploadLeadershipPhotoRequest;
 use Modules\Tenants\Models\LeadershipAssignment;
+use Modules\Tenants\Models\LeadershipRole;
 use Modules\Tenants\Services\LeadershipDomainService;
 use Modules\Tenants\Services\Media\ImageMediaException;
 use Modules\Tenants\Support\LeadershipRoleCategory;
@@ -83,17 +86,60 @@ class ChurchLeadershipGovernanceController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $roles->map(fn ($role) => [
-                'id' => $role->id,
-                'title' => $role->title,
-                'category' => $role->category,
-                'category_label' => LeadershipRoleCategory::label($role->category),
-                'hierarchical_level' => $role->hierarchical_level,
-                'allows_concurrent' => $role->allows_concurrent,
-                'is_canonical_mandate' => $role->is_canonical_mandate,
-                'is_global' => $role->tenant_id === null,
-            ])->values(),
+            'data' => $roles->map(fn ($role) => $this->leadershipService->presentRole($role))->values(),
         ]);
+    }
+
+    public function storeRole(StoreLeadershipRoleRequest $request): JsonResponse
+    {
+        $this->authorize('create', LeadershipRole::class);
+
+        try {
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+            $validated = $request->validated();
+            $role = $this->leadershipService->createTenantRole(
+                $tenantId,
+                (string) $validated['title'],
+                isset($validated['category']) ? (string) $validated['category'] : null,
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Custom leadership role created successfully.',
+                'data' => $this->leadershipService->presentRole($role),
+            ], 201);
+        } catch (ChurchLeadershipDomainException $e) {
+            return $this->domainError($e);
+        }
+    }
+
+    public function updateRole(UpdateLeadershipRoleRequest $request, string $id): JsonResponse
+    {
+        try {
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+
+            $role = LeadershipRole::query()->whereKey($id)->first();
+
+            if ($role === null) {
+                throw ChurchLeadershipDomainException::notFound('Custom leadership role not found.');
+            }
+
+            $this->authorize('update', $role);
+
+            $updated = $this->leadershipService->updateTenantRole(
+                $tenantId,
+                $id,
+                (string) $request->validated()['category'],
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Custom leadership role updated successfully.',
+                'data' => $this->leadershipService->presentRole($updated),
+            ]);
+        } catch (ChurchLeadershipDomainException $e) {
+            return $this->domainError($e);
+        }
     }
 
     public function assign(AssignLeadershipRequest $request): JsonResponse
@@ -236,10 +282,16 @@ class ChurchLeadershipGovernanceController extends Controller
 
     private function domainError(ChurchLeadershipDomainException $e): JsonResponse
     {
-        return response()->json([
+        $payload = [
             'success' => false,
             'message' => $e->getMessage(),
             'errors' => $e->errors,
-        ], $e->httpStatus);
+        ];
+
+        if ($e->errorCode !== null) {
+            $payload['code'] = $e->errorCode;
+        }
+
+        return response()->json($payload, $e->httpStatus);
     }
 }

@@ -330,4 +330,58 @@ class TenantDetailsApiTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.church.primary_pastor.name', 'Fr. John Pastor');
     }
+
+    #[Test]
+    public function contact_falls_back_to_primary_admin_when_no_typed_primary_contact(): void
+    {
+        $this->asSuperAdmin();
+        $tenant = $this->makeOperationalTenant();
+
+        User::factory()->create([
+            'tenant_id' => $tenant->id,
+            'name' => 'Parish Administrator',
+            'email' => 'admin@sacred-heart.test',
+            'contact_number' => '+91-9876543210',
+            'user_type' => User::USER_TYPE_SECONDARY_CONTACT,
+            'is_primary_admin' => true,
+            'active' => 1,
+        ]);
+
+        $this->getJson('/api/tenant/'.$tenant->id.'/details')
+            ->assertOk()
+            ->assertJsonPath('data.contact.primary_contact.name', 'Parish Administrator')
+            ->assertJsonPath('data.contact.email', 'admin@sacred-heart.test')
+            ->assertJsonPath('data.contact.phone', '+91-9876543210');
+    }
+
+    #[Test]
+    public function church_profile_contact_fields_take_precedence_over_user_fields(): void
+    {
+        $this->asSuperAdmin();
+        $tenant = $this->makeOperationalTenant();
+
+        User::factory()->create([
+            'tenant_id' => $tenant->id,
+            'name' => 'Parish Administrator',
+            'email' => 'admin@sacred-heart.test',
+            'contact_number' => '+91-9876543210',
+            'user_type' => User::USER_TYPE_SECONDARY_CONTACT,
+            'is_primary_admin' => true,
+            'active' => 1,
+        ]);
+
+        ChurchProfile::query()->create([
+            'tenant_id' => $tenant->id,
+            'email' => 'office@sacred-heart.test',
+            'phone' => '+91-9000000001',
+            'website' => 'https://sacred-heart.test',
+        ]);
+
+        $this->getJson('/api/tenant/'.$tenant->id.'/details')
+            ->assertOk()
+            ->assertJsonPath('data.contact.primary_contact.name', 'Parish Administrator')
+            ->assertJsonPath('data.contact.email', 'office@sacred-heart.test')
+            ->assertJsonPath('data.contact.phone', '+91-9000000001')
+            ->assertJsonPath('data.contact.website', 'https://sacred-heart.test');
+    }
 }

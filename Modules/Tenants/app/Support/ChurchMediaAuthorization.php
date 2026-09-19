@@ -27,15 +27,8 @@ final class ChurchMediaAuthorization
 
     public static function canViewPopeMedia(?User $viewer): bool
     {
-        if ($viewer === null) {
-            return false;
-        }
-
-        if ($viewer->isSuperAdmin() || $viewer->isEkklesiaAdmin()) {
-            return true;
-        }
-
-        return $viewer->hasPermission('pope.manage_pope_details')
-            || $viewer->hasPermission('manage_pope_details');
+        // Pope details are global ecclesiastical data shown on every church profile.
+        // Any authenticated user may receive a signed display URL; manage/upload stays RBAC-gated.
+        return $viewer !== null;
     }
 }

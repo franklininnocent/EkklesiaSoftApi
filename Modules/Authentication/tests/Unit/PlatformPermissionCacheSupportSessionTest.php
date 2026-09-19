@@ -22,13 +22,13 @@ class PlatformPermissionCacheSupportSessionTest extends TestCase
     {
         $homeTenant = \Modules\Tenants\Models\Tenant::factory()->create();
         $role = Role::create([
-            'name' => 'SupportAdmin',
+            'name' => Role::SUPPORT_ADMIN,
             'description' => 'Support operator',
-            'level' => Role::LEVEL_EKKLESIA_MANAGER,
+            'level' => Role::LEVEL_SUPPORT_ADMIN,
             'active' => 1,
             'tenant_id' => null,
             'is_custom' => false,
-            'role_type' => Role::ROLE_TYPE_PLATFORM,
+            'role_type' => Role::ROLE_TYPE_SUPPORT,
         ]);
 
         $permission = Permission::create([

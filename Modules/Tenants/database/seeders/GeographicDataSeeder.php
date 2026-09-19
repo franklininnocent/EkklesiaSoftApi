@@ -3,6 +3,7 @@
 namespace Modules\Tenants\Database\Seeders;
 
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 
@@ -23,6 +24,8 @@ class GeographicDataSeeder extends Seeder
         
         // Seed states
         $this->seedStates();
+
+        Cache::forget('countries:active');
         
         $this->command->info('✅ Geographic data seeding completed successfully!');
     }
@@ -82,18 +85,16 @@ class GeographicDataSeeder extends Seeder
                 'updated_at' => now(),
             ];
             
-            // Insert in batches for better performance
             if (count($insertData) >= $batchSize) {
-                DB::table('countries')->insert($insertData);
+                $this->upsertCountries($insertData);
                 $insertData = [];
             }
             
             $progressBar->advance();
         }
         
-        // Insert remaining records
-        if (!empty($insertData)) {
-            DB::table('countries')->insert($insertData);
+        if ($insertData !== []) {
+            $this->upsertCountries($insertData);
         }
         
         $progressBar->finish();
@@ -147,18 +148,16 @@ class GeographicDataSeeder extends Seeder
                 'updated_at' => now(),
             ];
             
-            // Insert in batches for better performance
             if (count($insertData) >= $batchSize) {
-                DB::table('states')->insert($insertData);
+                $this->upsertStates($insertData);
                 $insertData = [];
             }
             
             $progressBar->advance();
         }
         
-        // Insert remaining records
-        if (!empty($insertData)) {
-            DB::table('states')->insert($insertData);
+        if ($insertData !== []) {
+            $this->upsertStates($insertData);
         }
         
         $progressBar->finish();
@@ -166,6 +165,67 @@ class GeographicDataSeeder extends Seeder
         
         $count = DB::table('states')->count();
         $this->command->info("✅ Successfully seeded {$count} states/provinces");
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     */
+    private function upsertCountries(array $rows): void
+    {
+        if ($rows === []) {
+            return;
+        }
+
+        DB::table('countries')->upsert(
+            $rows,
+            ['id'],
+            [
+                'name',
+                'iso3',
+                'iso2',
+                'numeric_code',
+                'phone_code',
+                'capital',
+                'currency',
+                'currency_name',
+                'currency_symbol',
+                'tld',
+                'native',
+                'latitude',
+                'longitude',
+                'region',
+                'subregion',
+                'emoji',
+                'emoji_u',
+                'active',
+                'updated_at',
+            ]
+        );
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     */
+    private function upsertStates(array $rows): void
+    {
+        if ($rows === []) {
+            return;
+        }
+
+        DB::table('states')->upsert(
+            $rows,
+            ['id'],
+            [
+                'country_id',
+                'name',
+                'state_code',
+                'type',
+                'latitude',
+                'longitude',
+                'active',
+                'updated_at',
+            ]
+        );
     }
 }
 

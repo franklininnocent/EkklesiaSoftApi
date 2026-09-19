@@ -13,6 +13,7 @@ use Modules\EcclesiasticalData\Services\BishopFileUploadService;
 use Modules\Tenants\Models\ChurchProfile;
 use Modules\Tenants\Http\Requests\UploadPatronImageRequest;
 use Modules\Tenants\Services\ChurchMediaImageService;
+use Modules\Tenants\Services\ChurchStatusMetricsService;
 use Modules\Tenants\Services\Media\ImageMediaException;
 
 /**
@@ -25,6 +26,7 @@ class ChurchProfileController extends Controller
 {
     public function __construct(
         private readonly ChurchMediaImageService $churchMediaImageService,
+        private readonly ChurchStatusMetricsService $churchStatusMetricsService,
     ) {}
     /**
      * Get the church profile for the authenticated tenant user.
@@ -72,6 +74,43 @@ class ChurchProfileController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error fetching church profile',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
+        }
+    }
+
+    /**
+     * Authoritative Church Status metrics for the profile overview graph.
+     *
+     * @route GET /api/church-profile/status-metrics
+     */
+    public function statusMetrics(): JsonResponse
+    {
+        try {
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId();
+
+            if ($tenantId === null) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User is not associated with a tenant/church',
+                ], 404);
+            }
+
+            $metrics = $this->churchStatusMetricsService->build((int) $tenantId);
+
+            return response()->json([
+                'success' => true,
+                'data' => $metrics,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error fetching church status metrics: '.$e->getMessage(), [
+                'user_id' => auth()->id(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error fetching church status metrics',
                 'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
             ], 500);
         }

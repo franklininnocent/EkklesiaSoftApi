@@ -13,10 +13,12 @@ use Modules\RolesAndPermissions\Http\Requests\StoreTenantRoleRequest;
 use Modules\RolesAndPermissions\Http\Requests\UpdateTenantRoleRequest;
 use Modules\RolesAndPermissions\Services\PermissionAuditService;
 use Modules\RolesAndPermissions\Services\TenantRoleService;
+use Modules\RolesAndPermissions\Traits\EnforcesTenantIsolation;
 use Illuminate\Support\Facades\Log;
 
 class RolesAndPermissionsController extends Controller
 {
+    use EnforcesTenantIsolation;
     protected PermissionAuditService $auditService;
     protected TenantRoleService $tenantRoleService;
 
@@ -41,59 +43,9 @@ class RolesAndPermissionsController extends Controller
 
             $query = Role::query();
 
-            // Apply role-based filtering
-            // CRITICAL SECURITY: Enforce strict tenant isolation
-            if ($user->isSuperAdmin()) {
-                // SuperAdmin sees ALL roles (global + all tenants)
-                // No filter needed - full system access
-                Log::debug('Roles query: SuperAdmin - viewing all roles', [
-                    'user_id' => $user->id,
-                    'user_email' => $user->email,
-                ]);
-            } else if ($user->isEkklesiaAdmin() || $user->isEkklesiaManager()) {
-                // SECURITY FIX: EkklesiaAdmin/Manager should only see:
-                // 1. Global system roles (tenant_id = null)
-                // 2. Roles from their own tenant (if they have tenant_id)
-                // NOT all tenant roles across all tenants
-                if ($user->tenant_id) {
-                    $query->where(function ($q) use ($user) {
-                        $q->whereNull('tenant_id') // Global system roles
-                          ->orWhere('tenant_id', $user->tenant_id); // Only their tenant's roles
-                    });
-                } else {
-                    // EkklesiaAdmin/Manager without tenant can only see global roles
-                    $query->whereNull('tenant_id');
-                }
-                
-                Log::debug('Roles query: Ekklesia Admin/Manager - viewing global + own tenant roles only', [
-                    'user_id' => $user->id,
-                    'user_email' => $user->email,
-                    'tenant_id' => $user->tenant_id,
-                ]);
-            } else if ($user->tenant_id) {
-                // TENANT ADMINISTRATORS AND USERS - STRICT ISOLATION
-                // Can ONLY see roles belonging to their specific tenant
-                // CANNOT see global roles or other tenants' roles
-                $query->where('tenant_id', $user->tenant_id);
-                
-                Log::info('Roles query: Tenant user - strict isolation applied', [
-                    'user_id' => $user->id,
-                    'user_email' => $user->email,
-                    'tenant_id' => $user->tenant_id,
-                    'role_name' => $user->role->name ?? 'Unknown',
-                ]);
-            } else {
-                // Users without tenant (shouldn't exist in normal operation)
-                // Deny access for security
-                Log::warning('Roles query: User without tenant attempted access', [
-                    'user_id' => $user->id,
-                    'user_email' => $user->email,
-                ]);
-                
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Access denied: Invalid user tenant association',
-                ], 403);
+            $scopeDenied = $this->applyRoleListScope($query, $user);
+            if ($scopeDenied !== null) {
+                return $scopeDenied;
             }
 
             // Apply additional filters

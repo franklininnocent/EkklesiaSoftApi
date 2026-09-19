@@ -39,7 +39,7 @@ class SupportAccessRoleSeeder extends Seeder
         }
 
         $roles = Role::query()
-            ->whereIn('name', ['SuperAdmin', 'EkklesiaAdmin'])
+            ->whereIn('name', [Role::SUPER_ADMIN, Role::EKKLESIA_ADMIN])
             ->get();
 
         foreach ($roles as $role) {
@@ -47,14 +47,16 @@ class SupportAccessRoleSeeder extends Seeder
         }
 
         $supportAdmin = Role::query()->updateOrCreate(
-            ['name' => 'SupportAdmin'],
             [
-                'description' => 'Platform support operator — enter tenants, audit, and manage sessions',
-                'level' => Role::LEVEL_EKKLESIA_MANAGER,
-                'active' => 1,
+                'name' => Role::SUPPORT_ADMIN,
                 'tenant_id' => null,
+            ],
+            [
+                'description' => 'Support operator — enter tenants, audit, and manage sessions (below platform owner roles)',
+                'level' => Role::LEVEL_SUPPORT_ADMIN,
+                'active' => 1,
                 'is_custom' => 0,
-                'role_type' => Role::ROLE_TYPE_PLATFORM,
+                'role_type' => Role::ROLE_TYPE_SUPPORT,
                 'role_classification' => Role::CLASSIFICATION_PROTECTED_SYSTEM,
             ]
         );

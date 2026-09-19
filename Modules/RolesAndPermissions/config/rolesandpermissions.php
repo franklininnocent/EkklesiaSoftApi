@@ -46,6 +46,23 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Support Operations Roles
+    |--------------------------------------------------------------------------
+    |
+    | Below the platform owner ladder (levels 1–4). Not role_type=platform.
+    |
+    */
+    'support_roles' => [
+        'SupportAdmin' => [
+            'level' => 5,
+            'role_type' => 'support',
+            'description' => 'Support Center operator with least-privilege support permissions',
+            'protected' => true,
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Custom Role Settings
     |--------------------------------------------------------------------------
     |

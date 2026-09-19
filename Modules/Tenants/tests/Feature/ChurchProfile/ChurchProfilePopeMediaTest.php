@@ -6,11 +6,11 @@ use Illuminate\Support\Facades\Storage;
 use Laravel\Passport\Passport;
 use Modules\EcclesiasticalData\Tests\Support\CreatesEkklesiaTestUser;
 use Modules\Tenants\Models\PopeDetails;
+use Modules\Tenants\Testing\ChurchProfileCertificationTestCase;
 use Modules\Tenants\Tests\Support\MediaSecurityFixtures;
 use PHPUnit\Framework\Attributes\Test;
-use Tests\TestCase;
 
-class ChurchProfilePopeMediaTest extends TestCase
+class ChurchProfilePopeMediaTest extends ChurchProfileCertificationTestCase
 {
     use CreatesEkklesiaTestUser;
 
@@ -51,6 +51,25 @@ class ChurchProfilePopeMediaTest extends TestCase
 
         $this->postJson('/api/church-profile/pope/upload-image', [])
             ->assertStatus(422);
+    }
+
+    #[Test]
+    public function parish_user_receives_pope_image_url_on_show(): void
+    {
+        Passport::actingAs($this->createEkklesiaAdmin());
+
+        $this->postJson('/api/church-profile/pope/upload-image', [
+            'image' => MediaSecurityFixtures::validJpeg(200, 200),
+        ])->assertOk();
+
+        $this->actingAsTenantWith(['church.settings.view']);
+
+        $response = $this->getJson('/api/church-profile/pope')->assertOk();
+        $url = $response->json('data.pope_image_url');
+
+        $this->assertIsString($url);
+        $this->assertNotSame('', $url);
+        $this->assertStringContainsString('/api/tenant/media/serve', $url);
     }
 
     #[Test]

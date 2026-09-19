@@ -132,6 +132,8 @@ class PastoralCareService
             'assigned_at' => now(),
         ]);
 
+        $this->notifyAssignee($tenantId, $actor, $request, $assignee->id);
+
         return $this->findForTenant($tenantId, $request->id);
     }
 
@@ -294,6 +296,35 @@ class PastoralCareService
         $text = preg_replace('/\s+/u', ' ', $text) ?? $text;
 
         return Str::limit($text, $max, '');
+    }
+
+    private function notifyAssignee(int $tenantId, User $actor, PastoralCareRequest $request, int $assigneeId): void
+    {
+        if (! class_exists(\Modules\Notifications\Contracts\NotificationPublisherContract::class)) {
+            return;
+        }
+
+        try {
+            app(\Modules\Notifications\Contracts\NotificationPublisherContract::class)->publish(
+                new \Modules\Notifications\Support\NotificationIntent(
+                    definitionCode: 'pastoral.visit.assigned',
+                    actor: $actor,
+                    subjectType: 'pastoral_care_request',
+                    subjectId: $request->id,
+                    tenantId: $tenantId,
+                    scope: \Modules\Notifications\Support\InboxScope::Tenant,
+                    occurrenceId: $request->id.'-assign-'.$assigneeId,
+                    data: [
+                        'family_name' => $request->family?->family_name ?? 'a family',
+                        'assignee_user_id' => $assigneeId,
+                        'deep_link_route' => '/families/'.$request->family_id,
+                    ],
+                    explicitRecipientIds: [$assigneeId],
+                )
+            );
+        } catch (\Throwable) {
+            // notification must not block assignment
+        }
     }
 
     private function dueLabel(PastoralCareRequest $request): string

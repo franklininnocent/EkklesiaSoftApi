@@ -3,6 +3,7 @@
 namespace Modules\Tenants\Support;
 
 use Modules\Authentication\Models\User;
+use Modules\Tenants\Services\SupportSessionAuthorizationService;
 
 final class TenantLogoAuthorization
 {
@@ -12,7 +13,11 @@ final class TenantLogoAuthorization
             return false;
         }
 
-        if ($viewer->isSuperAdmin() || $viewer->isEkklesiaAdmin()) {
+        if ($viewer->isSuperAdmin() || $viewer->isEkklesiaAdmin() || $viewer->hasEkklesiaRole()) {
+            return true;
+        }
+
+        if (app(SupportSessionAuthorizationService::class)->grantsTenantProductAccess($viewer)) {
             return true;
         }
 

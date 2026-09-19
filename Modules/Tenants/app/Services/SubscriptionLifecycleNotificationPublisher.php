@@ -55,6 +55,49 @@ class SubscriptionLifecycleNotificationPublisher
             'operation' => $operation,
             'recipient_count' => count($recipients),
         ]);
+
+        $this->publishInApp($tenant, $operation);
+    }
+
+    private function publishInApp(Tenant $tenant, string $operation): void
+    {
+        if (! class_exists(\Modules\Notifications\Contracts\NotificationPublisherContract::class)) {
+            return;
+        }
+
+        try {
+            $labels = [
+                'entered_expiring' => 'Ending soon',
+                'entered_grace' => 'Grace period',
+                'entered_expired' => 'Read-only',
+                'subscription_extended' => 'Renewed',
+                'plan_changed' => 'Plan changed',
+                'subscription_reactivated' => 'Reactivated',
+            ];
+
+            app(\Modules\Notifications\Contracts\NotificationPublisherContract::class)->publish(
+                new \Modules\Notifications\Support\NotificationIntent(
+                    definitionCode: 'tenants.subscription.lifecycle',
+                    actor: null,
+                    subjectType: 'subscription',
+                    subjectId: (string) $tenant->id,
+                    tenantId: (int) $tenant->id,
+                    scope: \Modules\Notifications\Support\InboxScope::Tenant,
+                    occurrenceId: $operation.'-'.now()->timestamp,
+                    data: [
+                        'operation_label' => $labels[$operation] ?? 'Updated',
+                        'deep_link_route' => '/settings/my-subscription',
+                    ],
+                    collapseKey: 'subscription.'.$tenant->id.'.'.$operation,
+                )
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Subscription in-app notification failed', [
+                'tenant_id' => $tenant->id,
+                'operation' => $operation,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**

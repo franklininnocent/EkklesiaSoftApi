@@ -51,11 +51,11 @@ final class CaseInsensitiveSearch
         $driver = $query->getConnection()->getDriverName();
 
         if ($driver === 'pgsql') {
-            $sql = "CONCAT(first_name, ' ', COALESCE(middle_name, ''), ' ', last_name) ILIKE ?";
+            $sql = "REGEXP_REPLACE(TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(middle_name, ''), ' ', COALESCE(last_name, ''))), '\\s+', ' ', 'g') ILIKE ?";
         } elseif ($driver === 'sqlite') {
-            $sql = "(first_name || ' ' || COALESCE(middle_name, '') || ' ' || last_name) LIKE ? COLLATE NOCASE";
+            $sql = "TRIM(REPLACE(REPLACE(REPLACE(first_name || ' ' || COALESCE(middle_name, '') || ' ' || last_name, '  ', ' '), '  ', ' '), '  ', ' ')) LIKE ? COLLATE NOCASE";
         } else {
-            $sql = "LOWER(CONCAT(first_name, ' ', COALESCE(middle_name, ''), ' ', last_name)) LIKE LOWER(?)";
+            $sql = "LOWER(REGEXP_REPLACE(TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(middle_name, ''), ' ', COALESCE(last_name, ''))), '\\\\s+', ' ')) LIKE LOWER(?)";
         }
 
         return $boolean === 'or'

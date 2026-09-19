@@ -4,6 +4,8 @@ namespace Modules\RolesAndPermissions\Services;
 
 use Modules\Authentication\Models\Role;
 use Modules\Authentication\Models\User;
+use Modules\Authentication\Services\PasswordAuthorizationService;
+use Modules\RolesAndPermissions\Models\Permission;
 
 class TenantRoleService
 {
@@ -32,6 +34,15 @@ class TenantRoleService
             'role_classification' => Role::CLASSIFICATION_CUSTOM,
             'active' => $payload['active'] ?? 1,
         ]);
+
+        $changeSelf = Permission::query()
+            ->where('name', PasswordAuthorizationService::PERMISSION_CHANGE_SELF)
+            ->where('active', 1)
+            ->first();
+
+        if ($changeSelf) {
+            $role->givePermissionTo($changeSelf);
+        }
 
         $this->auditService->logRoleCreated($role, $actor);
 

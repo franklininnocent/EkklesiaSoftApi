@@ -23,8 +23,9 @@ class CountryFactory extends Factory
     {
         return [
             'name' => $this->faker->unique()->country(),
-            'code' => strtoupper($this->faker->unique()->lexify('??')),
-            'phone_code' => '+' . $this->faker->numberBetween(1, 999),
+            'iso2' => strtoupper($this->faker->unique()->lexify('??')),
+            'iso3' => strtoupper($this->faker->unique()->lexify('???')),
+            'phone_code' => '+'.$this->faker->numberBetween(1, 999),
             'active' => true,
         ];
     }

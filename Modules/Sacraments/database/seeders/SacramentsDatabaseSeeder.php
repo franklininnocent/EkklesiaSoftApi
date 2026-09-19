@@ -11,6 +11,8 @@ class SacramentsDatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // $this->call([]);
+        $this->call([
+            \Modules\Sacraments\database\seeders\SacramentTypesSeeder::class,
+        ]);
     }
 }

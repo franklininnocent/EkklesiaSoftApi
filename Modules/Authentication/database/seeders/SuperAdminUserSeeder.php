@@ -2,13 +2,17 @@
 
 namespace Modules\Authentication\Database\Seeders;
 
+use Carbon\Carbon;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Carbon\Carbon;
+use Modules\Authentication\Models\Role;
+use Modules\Authentication\Models\User;
 
 class SuperAdminUserSeeder extends Seeder
 {
+    private const OWNER_EMAIL = 'franklininnocent.fs@gmail.com';
+
     /**
      * Run the database seeds.
      *
@@ -18,45 +22,55 @@ class SuperAdminUserSeeder extends Seeder
     {
         $now = Carbon::now();
 
-        // Get SuperAdmin role ID
-        $superAdminRoleId = DB::table('roles')->where('name', 'SuperAdmin')->value('id');
-
-        if (!$superAdminRoleId) {
-            $this->command->error('❌ [Authentication Module] SuperAdmin role not found! Please run RolesTableSeeder first.');
-            return;
-        }
-
-        // Check if Super Admin user already exists
-        $existingUser = DB::table('users')
-            ->where('email', 'franklininnocent.fs@gmail.com')
+        $superAdminRole = Role::query()
+            ->where('name', Role::SUPER_ADMIN)
+            ->whereNull('tenant_id')
             ->first();
 
-        if ($existingUser) {
-            $this->command->warn('⚠️  [Authentication Module] Super Admin user already exists!');
+        if (! $superAdminRole) {
+            $this->command->error('❌ [Authentication Module] SuperAdmin role not found! Please run RolesTableSeeder first.');
+
             return;
         }
 
-        // Create Super Admin user
+        $existingUser = User::query()->where('email', self::OWNER_EMAIL)->first();
+
+        if ($existingUser) {
+            $existingUser->forceFill([
+                'role_id' => $superAdminRole->id,
+                'tenant_id' => null,
+                'active' => 1,
+                'updated_at' => $now,
+            ])->save();
+
+            $existingUser->syncRoles([$superAdminRole->id]);
+
+            $this->command->warn('⚠️  [Authentication Module] Super Admin user already exists — role linkage refreshed.');
+
+            return;
+        }
+
         $userId = DB::table('users')->insertGetId([
             'name' => 'Franklin Innocent F',
-            'email' => 'franklininnocent.fs@gmail.com',
+            'email' => self::OWNER_EMAIL,
             'email_verified_at' => $now,
             'password' => Hash::make('Secrete*999'),
-            'role_id' => $superAdminRoleId,
-            'tenant_id' => null, // Super Admin is not tied to any tenant
+            'role_id' => $superAdminRole->id,
+            'tenant_id' => null,
             'active' => 1,
             'deleted_at' => null,
             'created_at' => $now,
             'updated_at' => $now,
         ]);
 
+        User::query()->find($userId)?->syncRoles([$superAdminRole->id]);
+
         $this->command->info('✅ [Authentication Module] Super Admin user created successfully!');
-        $this->command->info('   📧 Email: franklininnocent.fs@gmail.com');
+        $this->command->info('   📧 Email: '.self::OWNER_EMAIL);
         $this->command->info('   🔑 Password: Secrete*999');
         $this->command->info('   👤 Role: SuperAdmin');
-        $this->command->info('   🆔 User ID: ' . $userId);
+        $this->command->info('   🆔 User ID: '.$userId);
         $this->command->line('');
         $this->command->info('🎉 You can now login with these credentials!');
     }
 }
-

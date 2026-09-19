@@ -37,7 +37,8 @@ class MinistriesAssociationsDefaultSeeder extends Seeder
             return $summary;
         }
 
-        return DB::transaction(function () use ($tenantId, $userId, $summary) {
+        return OrganizationCategory::runWithoutTenantScope(function () use ($tenantId, $userId, $summary) {
+            return DB::transaction(function () use ($tenantId, $userId, $summary) {
             $categories = [];
             foreach ($this->defaultCategories() as $index => $defaults) {
                 [$category, $created] = $this->findOrCreateCategory($tenantId, $defaults, $index, $userId);
@@ -71,6 +72,7 @@ class MinistriesAssociationsDefaultSeeder extends Seeder
             }
 
             return $summary;
+            });
         });
     }
 

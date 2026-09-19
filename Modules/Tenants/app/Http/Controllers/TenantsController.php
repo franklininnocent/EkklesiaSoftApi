@@ -16,11 +16,13 @@ use Modules\MinistriesAssociations\Database\Seeders\MinistriesAssociationsDefaul
 use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Sacraments\Services\TenantSacramentSettingsService;
 use Modules\Tenants\Http\Requests\StoreTenantRequest;
+use Modules\Tenants\Http\Requests\UpdateTenantRequest;
 use Modules\Tenants\Http\Requests\UploadTenantLogoRequest;
 use Modules\Tenants\Services\Media\ImageMediaException;
 use Modules\Tenants\Models\SubscriptionDurationOption;
 use Modules\Tenants\Models\SubscriptionPlan;
 use Modules\Tenants\Models\SubscriptionSettings;
+use Modules\Tenants\Models\ChurchProfile;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Models\TenantStatusAudit;
 use Modules\Tenants\Http\Resources\TenantDetailsResource;
@@ -289,12 +291,21 @@ class TenantsController extends Controller
 
             // SECURITY: Handle logo upload AFTER tenant creation with tenant-specific path
             if ($request->hasFile('tenant_logo')) {
-                $result = $this->fileUploadService->storeTenantLogo(
-                    $request->file('tenant_logo'),
-                    $tenant->id,
-                );
-                $tenant->logo_url = $result->storageKey;
-                $tenant->save();
+                try {
+                    $result = $this->fileUploadService->storeTenantLogo(
+                        $request->file('tenant_logo'),
+                        $tenant->id,
+                    );
+                    $tenant->logo_url = $result->storageKey;
+                    $tenant->save();
+                } catch (ImageMediaException $e) {
+                    DB::rollBack();
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => $e->publicMessage(),
+                    ], 422);
+                }
             }
 
             // Step 1.5: Create tenant official address (stored as 'official' type)
@@ -305,6 +316,14 @@ class TenantsController extends Controller
                     'official',  // Mark as tenant's official address
                     true  // Set as default
                 );
+            }
+
+            // Step 1.6: Seed church profile diocese when provided at creation time
+            if ($request->filled('archdiocese_id')) {
+                ChurchProfile::create([
+                    'tenant_id' => $tenant->id,
+                    'archdiocese_id' => (int) $request->archdiocese_id,
+                ]);
             }
 
             // Step 2: Create Administrator role for the tenant
@@ -400,12 +419,16 @@ class TenantsController extends Controller
                 'name' => $request->primary_user_name,
                 'email' => $request->primary_user_email,
                 'contact_number' => $request->primary_contact_number,
-                'user_type' => User::USER_TYPE_PRIMARY_CONTACT,  // 1 = primary_contact
-                'is_primary_admin' => true,  // Mark as primary admin - cannot be deleted/deactivated by tenant users
-                'role_id' => $adminRole->id,  // Assign Administrator role
-                'password' => Hash::make('TempPassword123!'), // Temporary password
+                'user_type' => User::USER_TYPE_PRIMARY_CONTACT,
+                'is_primary_admin' => true,
+                'role_id' => $adminRole->id,
+                'password' => Hash::make($request->primary_user_password),
                 'active' => 1,
             ]);
+            $primaryUser->forceFill([
+                'force_password_change' => true,
+                'password_changed_at' => now(),
+            ])->save();
 
             // Keep legacy single-role field and new multi-role pivot in sync.
             $primaryUser->roles()->syncWithoutDetaching([$adminRole->id]);
@@ -434,10 +457,14 @@ class TenantsController extends Controller
                     'name' => $request->secondary_user_name,
                     'email' => $request->secondary_user_email,
                     'contact_number' => $request->secondary_contact_number,
-                    'user_type' => User::USER_TYPE_SECONDARY_CONTACT,  // 2 = secondary_contact
-                    'password' => Hash::make('TempPassword123!'), // Temporary password
+                    'user_type' => User::USER_TYPE_SECONDARY_CONTACT,
+                    'password' => Hash::make('TempPassword123!'),
                     'active' => 1,
                 ]);
+                $secondaryUser->forceFill([
+                    'force_password_change' => true,
+                    'password_changed_at' => now(),
+                ])->save();
 
                 // Step 6: Create secondary contact address (if provided)
                 if ($request->secondary_user_address && is_array($request->secondary_user_address)) {
@@ -567,6 +594,8 @@ class TenantsController extends Controller
             'users.create',
             'users.update',
             'users.delete',
+            'users.password.reset_subordinates',
+            'tenant.admin_password.reset',
             'church.settings.',
             'settings.',
             'security.',
@@ -638,6 +667,27 @@ class TenantsController extends Controller
 
             if (! empty($tenantUpdateData)) {
                 $tenant->update($tenantUpdateData);
+            }
+
+            // Step 1.4: Update church profile fields when provided
+            $churchProfileUpdates = [];
+            if ($request->exists('denomination_id')) {
+                $denominationId = $request->input('denomination_id');
+                $churchProfileUpdates['denomination_id'] = $denominationId ? (int) $denominationId : null;
+            }
+            if ($request->exists('archdiocese_id')) {
+                $archdioceseId = $request->input('archdiocese_id');
+                $churchProfileUpdates['archdiocese_id'] = $archdioceseId ? (int) $archdioceseId : null;
+            }
+            if ($request->exists('website')) {
+                $website = trim((string) $request->input('website'));
+                $churchProfileUpdates['website'] = $website !== '' ? $website : null;
+            }
+            if ($churchProfileUpdates !== []) {
+                ChurchProfile::updateOrCreate(
+                    ['tenant_id' => $tenant->id],
+                    $churchProfileUpdates
+                );
             }
 
             // Step 1.5: Update tenant official address
@@ -733,10 +783,14 @@ class TenantsController extends Controller
                         'name' => $request->secondary_user_name,
                         'email' => $request->secondary_user_email,
                         'contact_number' => $request->secondary_contact_number,
-                        'user_type' => User::USER_TYPE_SECONDARY_CONTACT,  // 2 = secondary_contact
+                        'user_type' => User::USER_TYPE_SECONDARY_CONTACT,
                         'password' => Hash::make('TempPassword123!'),
                         'active' => 1,
                     ]);
+                    $secondaryUser->forceFill([
+                        'force_password_change' => true,
+                        'password_changed_at' => now(),
+                    ])->save();
 
                     if ($request->has('secondary_user_address') && is_array($request->secondary_user_address)) {
                         $this->addressService->create(
@@ -774,6 +828,13 @@ class TenantsController extends Controller
                 'message' => 'Tenant updated successfully',
                 'data' => $tenant,
             ]);
+        } catch (ImageMediaException $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => $e->publicMessage(),
+            ], 422);
         } catch (\Exception $e) {
             DB::rollBack();
 

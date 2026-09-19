@@ -15,6 +15,9 @@ use Modules\Authentication\Http\Requests\StoreUserRequest;
 use Modules\Authentication\Http\Requests\UpdateUserRequest;
 use Modules\Authentication\Http\Requests\UploadUserProfileImageRequest;
 use Modules\Authentication\Services\UserProfileImageService;
+use Modules\Authentication\Services\UserPersonLinkService;
+use Modules\Authentication\Services\PasswordAuthorizationService;
+use Modules\Authentication\Services\PasswordManagementService;
 use Modules\Tenants\Services\Media\ImageMediaException;
 use Modules\RolesAndPermissions\Services\TenantRoleAssignmentService;
 
@@ -39,6 +42,9 @@ class UserController extends Controller
     public function __construct(
         private TenantRoleAssignmentService $tenantRoleAssignmentService,
         private UserProfileImageService $userProfileImageService,
+        private UserPersonLinkService $userPersonLinkService,
+        private PasswordAuthorizationService $passwordAuthorization,
+        private PasswordManagementService $passwordManagement,
     ) {
     }
 
@@ -126,6 +132,7 @@ class UserController extends Controller
                 $usersWithAuth = $users->map(function ($targetUser) use ($user) {
                     $userData = $targetUser->toArray();
                     $userData['can_edit'] = $user->canEditUser($targetUser);
+                    $userData['can_reset_password'] = $this->passwordAuthorization->canResetPassword($user, $targetUser);
                     $userData['is_self'] = $user->id === $targetUser->id;
                     return $userData;
                 });
@@ -145,6 +152,7 @@ class UserController extends Controller
             $usersWithAuth = collect($users->items())->map(function ($targetUser) use ($user) {
                 $userData = $targetUser->toArray();
                 $userData['can_edit'] = $user->canEditUser($targetUser);
+                $userData['can_reset_password'] = $this->passwordAuthorization->canResetPassword($user, $targetUser);
                 $userData['is_self'] = $user->id === $targetUser->id;
                 return $userData;
             });
@@ -220,6 +228,7 @@ class UserController extends Controller
                     'user' => $user,
                     'all_permissions' => $allPermissions,
                     'can_edit' => $canEdit,
+                    'can_reset_password' => $this->passwordAuthorization->canResetPassword($authUser, $user),
                     'is_self' => $isSelf,
                     'edit_restriction_reason' => !$canEdit ? $this->getEditRestrictionReason($authUser, $user) : null,
                 ],
@@ -290,17 +299,16 @@ class UserController extends Controller
                 ], 403);
             }
 
-            // Validate that roles belong to the same tenant
-            $roleIds = $request->input('role_ids', []);
-            $invalidRoles = Role::whereIn('id', $roleIds)
-                ->where(function ($query) use ($authUser) {
-                    $query->where('tenant_id', '!=', $authUser->tenant_id)
-                        ->whereNotNull('tenant_id')
-                        ->orWhere('role_type', Role::ROLE_TYPE_PLATFORM);
-                })
-                ->exists();
+            $linkedPerson = null;
+            if ($request->filled('person_id')) {
+                $linkedPerson = $this->userPersonLinkService->resolvePersonLink(
+                    (int) $authUser->tenant_id,
+                    (string) $request->input('person_id')
+                );
+            }
 
-            if ($invalidRoles) {
+            $roleIds = $request->input('role_ids', []);
+            if ($authUser->tenant_id && Role::hasNonTenantAssignableRoles($roleIds, (int) $authUser->tenant_id)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'One or more selected roles do not belong to your tenant.',
@@ -308,23 +316,30 @@ class UserController extends Controller
             }
 
             // Create the user
-            $user = User::create([
+            $user = new User([
                 'name' => $request->input('name'),
                 'email' => $request->input('email'),
-                'password' => Hash::make($request->input('password')),
                 'contact_number' => $request->input('contact_number'),
-                'tenant_id' => $authUser->tenant_id, // Enforce tenant isolation
+                'tenant_id' => $authUser->tenant_id,
                 'user_type' => $request->input('user_type', User::USER_TYPE_PRIMARY_CONTACT),
                 'active' => $request->input('active', 1),
             ]);
+
+            $this->passwordManagement->setInitialPassword($user, (string) $request->input('password'), true);
+            $user->save();
+            $this->passwordManagement->recordPasswordHistory($user);
 
             // Assign roles
             if (!empty($roleIds)) {
                 $user->syncRoles($roleIds);
             }
 
+            if ($linkedPerson !== null) {
+                $this->userPersonLinkService->attach($user, $linkedPerson);
+            }
+
             // Load relationships for response
-            $user->load(['roles', 'tenant']);
+            $user->load(['roles', 'tenant', 'person']);
 
             DB::commit();
 
@@ -341,6 +356,9 @@ class UserController extends Controller
                 'data' => $user,
             ], 201);
 
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            DB::rollBack();
+            throw $e;
         } catch (\Exception $e) {
             DB::rollBack();
             
@@ -365,8 +383,6 @@ class UserController extends Controller
      */
     public function update(UpdateUserRequest $request, int $id): JsonResponse
     {
-        DB::beginTransaction();
-        
         try {
             $authUser = $request->user();
             
@@ -419,16 +435,28 @@ class UserController extends Controller
                 ], 403);
             }
 
+            $linkedPerson = null;
+            $shouldDetachPerson = false;
+            if ($request->has('person_id')) {
+                $personId = $request->input('person_id');
+                if ($personId === null || $personId === '') {
+                    $shouldDetachPerson = true;
+                } else {
+                    $linkedPerson = $this->userPersonLinkService->resolvePersonLink(
+                        (int) $authUser->tenant_id,
+                        (string) $personId,
+                        $user->id
+                    );
+                }
+            }
+
+            DB::beginTransaction();
+
             // Update basic info
             $user->name = $request->input('name', $user->name);
             $user->email = $request->input('email', $user->email);
             $user->contact_number = $request->input('contact_number', $user->contact_number);
             $user->active = $request->input('active', $user->active);
-
-            // Update password if provided
-            if ($request->filled('password')) {
-                $user->password = Hash::make($request->input('password'));
-            }
 
             $user->save();
 
@@ -436,15 +464,7 @@ class UserController extends Controller
             if ($request->has('role_ids')) {
                 $roleIds = $request->input('role_ids', []);
                 
-                // Validate that roles belong to the same tenant
-                $invalidRoles = Role::whereIn('id', $roleIds)
-                    ->where(function ($query) use ($authUser) {
-                        $query->where('tenant_id', '!=', $authUser->tenant_id)
-                            ->whereNotNull('tenant_id');
-                    })
-                    ->exists();
-
-                if ($invalidRoles) {
+                if ($authUser->tenant_id && Role::hasNonTenantAssignableRoles($roleIds, (int) $authUser->tenant_id)) {
                     DB::rollBack();
                     return response()->json([
                         'success' => false,
@@ -455,8 +475,14 @@ class UserController extends Controller
                 $user->syncRoles($roleIds);
             }
 
+            if ($shouldDetachPerson) {
+                $this->userPersonLinkService->detach($user);
+            } elseif ($linkedPerson !== null) {
+                $this->userPersonLinkService->attach($user, $linkedPerson);
+            }
+
             // Load relationships for response
-            $user->load(['roles', 'tenant']);
+            $user->load(['roles', 'tenant', 'person']);
 
             DB::commit();
 
@@ -472,6 +498,9 @@ class UserController extends Controller
                 'data' => $user,
             ]);
 
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            DB::rollBack();
+            throw $e;
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             DB::rollBack();
             return response()->json([
@@ -942,6 +971,74 @@ class UserController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'An error occurred while updating the user status.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Search active parish clergy leaders available for login linking.
+     */
+    public function linkableClergy(Request $request): JsonResponse
+    {
+        try {
+            $authUser = $request->user();
+
+            $canSearch = $authUser->hasPermission('users.create')
+                || $authUser->hasPermission('users.update')
+                || $authUser->isTenantAdmin()
+                || $authUser->isSuperAdmin()
+                || $authUser->isEkklesiaAdmin();
+
+            if (! $canSearch) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. You do not have permission to search parish leaders.',
+                ], 403);
+            }
+
+            if (! $authUser->tenant_id) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [],
+                ]);
+            }
+
+            $search = $request->input('search');
+            $results = $this->userPersonLinkService->listLinkableClergy(
+                (int) $authUser->tenant_id,
+                is_string($search) ? $search : null
+            );
+
+            // #region agent log
+            file_put_contents('/var/www/html/EkklesiaSoft/.cursor/debug-92acf4.log', json_encode([
+                'sessionId' => '92acf4',
+                'runId' => 'pre-fix',
+                'hypothesisId' => 'H1',
+                'location' => 'UserController.php:linkableClergy',
+                'message' => 'linkable clergy controller result',
+                'data' => [
+                    'tenantId' => (int) $authUser->tenant_id,
+                    'search' => is_string($search) ? $search : null,
+                    'canSearch' => $canSearch,
+                    'resultCount' => $results->count(),
+                ],
+                'timestamp' => (int) round(microtime(true) * 1000),
+            ])."\n", FILE_APPEND);
+            // #endregion
+
+            return response()->json([
+                'success' => true,
+                'data' => $results->values(),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error fetching linkable clergy: '.$e->getMessage(), [
+                'user_id' => $request->user()->id ?? null,
+                'exception' => $e,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An error occurred while searching parish leaders.',
             ], 500);
         }
     }

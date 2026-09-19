@@ -16,7 +16,9 @@ class TenantFactory extends Factory
             'name' => $this->faker->company() . ' Church',
             'slogan' => $this->faker->optional()->sentence(),
             'slug' => $this->faker->unique()->slug(),
-            'domain' => $this->faker->optional()->domainName(),
+            'domain' => $this->faker->boolean(80)
+                ? $this->faker->unique()->slug().'-'.$this->faker->uuid().'.test'
+                : null,
             'plan' => $this->faker->randomElement(['free', 'basic', 'premium', 'enterprise']),
             'max_users' => $this->faker->numberBetween(10, 500),
             'max_storage_mb' => $this->faker->numberBetween(100, 10000),

@@ -67,6 +67,7 @@ class ThrottleTenantApiRequests
             'api/auth/login',
             'api/auth/register',
             'api/auth/refresh',
+            'api/auth/password/recovery/*',
         );
     }
 

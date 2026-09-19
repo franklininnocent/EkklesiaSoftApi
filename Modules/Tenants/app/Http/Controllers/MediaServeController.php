@@ -13,6 +13,7 @@ use Modules\Tenants\Services\Media\ImageMediaStorageResolver;
 use Modules\Tenants\Services\Media\ImageMediaToken;
 use Modules\Tenants\Support\TenantContext;
 use Modules\Tenants\Support\TenantScopedPublicStorage;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class MediaServeController
@@ -21,7 +22,7 @@ class MediaServeController
         private readonly ImageMediaStorageResolver $storageResolver = new ImageMediaStorageResolver,
     ) {}
 
-    public function serve(Request $request): StreamedResponse|JsonResponse
+    public function serve(Request $request): BinaryFileResponse|StreamedResponse|JsonResponse
     {
         try {
             $rawToken = $request->query('token');
@@ -43,7 +44,7 @@ class MediaServeController
                 return $this->deny('Unauthorized file access.', 403);
             }
 
-            if ($denied = $this->denyCrossTenantAccess($displayKey, $tenantId)) {
+            if ($denied = $this->denyCrossTenantAccess($request, $displayKey, $tenantId)) {
                 return $denied;
             }
 
@@ -70,18 +71,7 @@ class MediaServeController
                 'user_id' => Auth::id(),
             ]);
 
-            return response()->stream(function () use ($disk, $path): void {
-                $stream = $disk->readStream($path);
-                if ($stream === false) {
-                    return;
-                }
-
-                while (! feof($stream)) {
-                    echo (string) fread($stream, 65536);
-                }
-
-                fclose($stream);
-            }, 200, [
+            $headers = [
                 'Content-Type' => 'image/webp',
                 'Content-Disposition' => 'inline; filename="photo.webp"',
                 'Cache-Control' => 'private, max-age='.(int) config('tenants.media.cache_max_age_seconds', 300).', stale-while-revalidate=60',
@@ -89,7 +79,9 @@ class MediaServeController
                 'Referrer-Policy' => 'no-referrer',
                 'X-Content-Type-Options' => 'nosniff',
                 'X-Frame-Options' => 'DENY',
-            ]);
+            ];
+
+            return $disk->response($path, 'photo.webp', $headers);
         } catch (ImageMediaException $e) {
             return $this->deny($e->publicMessage(), 403);
         } catch (\Throwable $e) {
@@ -102,9 +94,16 @@ class MediaServeController
         }
     }
 
-    private function denyCrossTenantAccess(string $displayKey, int $tokenTenantId): ?JsonResponse
+    private function denyCrossTenantAccess(Request $request, string $displayKey, int $tokenTenantId): ?JsonResponse
     {
         if (str_starts_with($displayKey, 'platform/')) {
+            return null;
+        }
+
+        // Signed URLs are capability tokens; authorization is enforced when the URL is issued.
+        // <img> requests cannot send bearer tokens, and authenticated platform users may lack
+        // an effective tenant context while browsing cross-tenant admin screens.
+        if ($request->hasValidSignature()) {
             return null;
         }
 

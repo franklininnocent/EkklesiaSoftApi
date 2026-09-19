@@ -16,6 +16,7 @@ use Modules\Authentication\Http\Requests\UploadSelfProfileImageRequest;
 use Modules\Authentication\Services\UserProfileImageService;
 use Modules\Tenants\Services\Media\ImageMediaException;
 use Modules\Tenants\Models\Country;
+use Modules\Authentication\Support\PasswordPolicy;
 use Modules\Tenants\Support\TenantContext;
 
 class AuthenticationController extends Controller
@@ -34,7 +35,7 @@ class AuthenticationController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users,email',
-            'password' => 'required|string|min:8|confirmed',
+            'password' => PasswordPolicy::validationRules(true),
             'role_id' => 'nullable|exists:roles,id',
             'tenant_id' => 'nullable|integer',
         ]);
@@ -130,6 +131,7 @@ class AuthenticationController extends Controller
                 'user_id' => $user->id,
                 'role_id' => $user->role_id,
                 'token_type' => 'Bearer',
+                'force_password_change' => (bool) ($user->force_password_change ?? false),
                 'message' => 'Login successful',
             ]);
         } catch (\Exception $e) {
@@ -286,6 +288,8 @@ class AuthenticationController extends Controller
             'role_name' => $user->role ? $user->role->name : null, // Legacy
             'role_level' => $user->role ? $user->role->level : null, // Legacy
             'active' => $user->active,
+            'force_password_change' => (bool) ($user->force_password_change ?? false),
+            'password_changed_at' => $user->password_changed_at,
             'created_at' => $user->created_at,
             'updated_at' => $user->updated_at,
             'is_super_admin' => $user->isSuperAdmin(),
@@ -308,6 +312,25 @@ class AuthenticationController extends Controller
                 ] : null,
             ]) : null,
         ];
+
+        // #region agent log
+        $debugLog = '/var/www/html/EkklesiaSoft/.cursor/debug-b84b28.log';
+        @file_put_contents($debugLog, json_encode([
+            'sessionId' => 'b84b28',
+            'location' => 'AuthenticationController.php:getUser',
+            'message' => 'get-user response flags',
+            'data' => [
+                'userId' => $user->id,
+                'is_super_admin' => $userData['is_super_admin'],
+                'is_primary_admin' => $userData['is_primary_admin'],
+                'role_name' => $userData['role_name'],
+                'tenant_id' => $userData['tenant_id'],
+            ],
+            'timestamp' => (int) round(microtime(true) * 1000),
+            'hypothesisId' => 'H1-H2',
+            'runId' => 'post-fix',
+        ]).PHP_EOL, FILE_APPEND);
+        // #endregion
 
         return response()->json([
             'success' => true,

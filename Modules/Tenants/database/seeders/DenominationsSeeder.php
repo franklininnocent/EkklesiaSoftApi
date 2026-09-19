@@ -198,12 +198,25 @@ class DenominationsSeeder extends Seeder
 
         $now = Carbon::now();
 
-        foreach ($denominations as &$denomination) {
-            $denomination['created_at'] = $now;
-            $denomination['updated_at'] = $now;
-        }
+        foreach ($denominations as $denomination) {
+            $payload = [
+                'name' => $denomination['name'],
+                'description' => $denomination['description'],
+                'active' => $denomination['active'],
+                'display_order' => $denomination['display_order'],
+                'updated_at' => $now,
+            ];
 
-        DB::table('denominations')->insert($denominations);
+            $exists = DB::table('denominations')->where('code', $denomination['code'])->exists();
+            if (! $exists) {
+                $payload['created_at'] = $now;
+            }
+
+            DB::table('denominations')->updateOrInsert(
+                ['code' => $denomination['code']],
+                $payload
+            );
+        }
 
         $this->command->info('Denominations seeded successfully!');
     }

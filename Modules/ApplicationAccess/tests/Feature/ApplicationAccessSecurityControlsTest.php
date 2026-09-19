@@ -217,7 +217,7 @@ class ApplicationAccessSecurityControlsTest extends TestCase
             'owner_id' => null,
             'name' => 'Test Password Client',
             'secret' => null,
-            'provider' => 'users',
+            'provider' => 'module_users',
             'redirect_uris' => json_encode([]),
             'grant_types' => json_encode(['password']),
             'revoked' => false,

@@ -15,6 +15,7 @@ class TenantPermissionCatalogSeeder extends Seeder
             ['name' => 'church.settings.create', 'display_name' => 'Create Church Settings', 'description' => 'Create church settings', 'module' => 'ChurchSettings', 'category' => 'settings'],
             ['name' => 'church.settings.edit', 'display_name' => 'Edit Church Settings', 'description' => 'Edit church settings', 'module' => 'ChurchSettings', 'category' => 'settings'],
             ['name' => 'church.settings.delete', 'display_name' => 'Delete Church Settings', 'description' => 'Delete church settings', 'module' => 'ChurchSettings', 'category' => 'settings'],
+            ['name' => 'church.leadership.roles.create', 'display_name' => 'Create Custom Leadership Roles', 'description' => 'Create tenant-specific leadership role titles for parish assignments', 'module' => 'ChurchSettings', 'category' => 'settings'],
 
             // Members
             ['name' => 'members.view', 'display_name' => 'View Members', 'description' => 'View members', 'module' => 'Members', 'category' => 'members'],

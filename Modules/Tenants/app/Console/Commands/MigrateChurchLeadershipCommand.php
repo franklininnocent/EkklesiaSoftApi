@@ -13,6 +13,7 @@ use Modules\Tenants\Models\LeadershipAssignment;
 use Modules\Tenants\Models\LeadershipRole;
 use Modules\Tenants\Support\LeadershipAssignmentStatus;
 use Modules\Tenants\Support\LeadershipRoleCategory;
+use Modules\Tenants\Support\LeadershipRoleNameNormalizer;
 
 class MigrateChurchLeadershipCommand extends Command
 {
@@ -137,16 +138,19 @@ class MigrateChurchLeadershipCommand extends Command
             ]);
         }
 
-        return LeadershipRole::query()->create([
+        $role = new LeadershipRole([
             'id' => (string) Str::uuid(),
-            'tenant_id' => $tenantId,
             'title' => $title,
-            'category' => $this->guessCategory($title),
+            'normalized_title' => LeadershipRoleNameNormalizer::normalize($title),
+            'category' => LeadershipRoleCategory::guessFromTitle($title),
             'hierarchical_level' => 4,
             'allows_concurrent' => false,
             'is_canonical_mandate' => false,
             'is_active' => true,
         ]);
+        $role->forceFill(['tenant_id' => $tenantId])->save();
+
+        return $role;
     }
 
     private function resolvePerson(ChurchLeadership $legacy, PersonMatchService $matcher, bool $dryRun): ?Person
@@ -186,29 +190,6 @@ class MigrateChurchLeadershipCommand extends Command
             'phone' => $legacy->phone,
             'status' => 'active',
         ]);
-    }
-
-    private function guessCategory(string $title): string
-    {
-        $lower = strtolower($title);
-
-        if (str_contains($lower, 'pastor') || str_contains($lower, 'priest') || str_contains($lower, 'deacon') || str_contains($lower, 'vicar')) {
-            return LeadershipRoleCategory::PARISH_CLERGY;
-        }
-
-        if (str_contains($lower, 'council') || str_contains($lower, 'chair')) {
-            return LeadershipRoleCategory::PARISH_COUNCIL;
-        }
-
-        if (str_contains($lower, 'bishop') || str_contains($lower, 'archbishop')) {
-            return LeadershipRoleCategory::CANONICAL_DIOCESAN;
-        }
-
-        if (str_contains($lower, 'choir') || str_contains($lower, 'youth') || str_contains($lower, 'ministry')) {
-            return LeadershipRoleCategory::MINISTRY_PIOUS;
-        }
-
-        return LeadershipRoleCategory::OTHER;
     }
 
     private function backfillSacramentParticipants(): void

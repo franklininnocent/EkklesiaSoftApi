@@ -17,7 +17,9 @@ use Modules\SupportTickets\Policies\SupportTicketPolicy;
 use Modules\Sacraments\Models\Sacrament;
 use Modules\Sacraments\Policies\SacramentPolicy;
 use Modules\Tenants\Models\LeadershipAssignment;
+use Modules\Tenants\Models\LeadershipRole;
 use Modules\Tenants\Policies\LeadershipAssignmentPolicy;
+use Modules\Tenants\Policies\LeadershipRolePolicy;
 
 class EventServiceProvider extends ServiceProvider
 {
@@ -38,6 +40,7 @@ class EventServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Gate::policy(LeadershipAssignment::class, LeadershipAssignmentPolicy::class);
+        Gate::policy(LeadershipRole::class, LeadershipRolePolicy::class);
         Gate::policy(Family::class, FamilyPolicy::class);
         Gate::policy(Person::class, PersonPolicy::class);
         Gate::policy(Sacrament::class, SacramentPolicy::class);

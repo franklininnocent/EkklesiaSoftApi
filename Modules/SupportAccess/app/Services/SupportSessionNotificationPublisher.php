@@ -74,6 +74,39 @@ class SupportSessionNotificationPublisher
             'request_id' => $request->id,
             'tenant_id' => $request->tenant_id,
         ]);
+
+        $this->publishEmergencyInApp($request);
+    }
+
+    private function publishEmergencyInApp(SupportAccessRequest $request): void
+    {
+        if (! class_exists(\Modules\Notifications\Contracts\NotificationPublisherContract::class)) {
+            return;
+        }
+
+        try {
+            app(\Modules\Notifications\Contracts\NotificationPublisherContract::class)->publish(
+                new \Modules\Notifications\Support\NotificationIntent(
+                    definitionCode: 'support.emergency_approval.pending',
+                    actor: $request->requester,
+                    subjectType: 'support_access_request',
+                    subjectId: (string) $request->id,
+                    tenantId: null,
+                    scope: \Modules\Notifications\Support\InboxScope::Platform,
+                    occurrenceId: (string) $request->id,
+                    data: [
+                        'tenant_name' => $request->tenant?->name ?? 'Parish',
+                        'deep_link_route' => '/support-center',
+                    ],
+                    actionStatus: 'required',
+                )
+            );
+        } catch (Throwable $e) {
+            Log::warning('Support emergency in-app notification failed', [
+                'request_id' => $request->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**

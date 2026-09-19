@@ -133,6 +133,9 @@ return [
             'api/admin/application-access*',
             'api/auth/refresh',
             'api/auth/logout',
+            'api/auth/password/change',
+            'api/auth/password-recovery-requests*',
+            'api/users/*/password/reset',
             'api/tenant/subscription-access',
             'api/tenant/my-subscription',
             'api/tenant/support/*',
@@ -284,6 +287,14 @@ return [
                     'max_attempts' => (int) env('TENANT_API_RATE_LIMIT_AUTH', 10),
                     'decay_seconds' => (int) env('TENANT_API_RATE_LIMIT_AUTH_DECAY_SECONDS', 60),
                 ],
+                'password' => [
+                    'max_attempts' => (int) env('TENANT_API_RATE_LIMIT_PASSWORD', 10),
+                    'decay_seconds' => (int) env('TENANT_API_RATE_LIMIT_PASSWORD_DECAY_SECONDS', 60),
+                ],
+                'password_recovery' => [
+                    'max_attempts' => (int) env('TENANT_API_RATE_LIMIT_PASSWORD_RECOVERY', 8),
+                    'decay_seconds' => (int) env('TENANT_API_RATE_LIMIT_PASSWORD_RECOVERY_DECAY_SECONDS', 60),
+                ],
                 'uploads' => [
                     'max_attempts' => (int) env('TENANT_API_RATE_LIMIT_UPLOADS', 20),
                     'decay_seconds' => (int) env('TENANT_API_RATE_LIMIT_UPLOADS_DECAY_SECONDS', 60),
@@ -299,6 +310,10 @@ return [
                 'application_access_stream' => [
                     'max_attempts' => (int) env('APPLICATION_ACCESS_STREAM_RATE_LIMIT', 10),
                     'decay_seconds' => (int) env('APPLICATION_ACCESS_STREAM_RATE_LIMIT_DECAY_SECONDS', 60),
+                ],
+                'notifications' => [
+                    'max_attempts' => (int) env('NOTIFICATIONS_API_RATE_LIMIT', 120),
+                    'decay_seconds' => (int) env('NOTIFICATIONS_API_RATE_LIMIT_DECAY_SECONDS', 60),
                 ],
             ],
         ],

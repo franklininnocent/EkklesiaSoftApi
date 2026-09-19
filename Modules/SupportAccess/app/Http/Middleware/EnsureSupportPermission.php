@@ -61,6 +61,6 @@ class EnsureSupportPermission
             return true;
         }
 
-        return method_exists($user, 'hasRole') && $user->hasRole('SupportAdmin');
+        return method_exists($user, 'hasRole') && $user->hasRole(\Modules\Authentication\Models\Role::SUPPORT_ADMIN);
     }
 }

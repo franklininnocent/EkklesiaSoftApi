@@ -11,5 +11,6 @@
     "SupportAccess": true,
     "PastoralCare": true,
     "SupportTickets": true,
-    "ApplicationAccess": true
+    "ApplicationAccess": true,
+    "Notifications": true
 }

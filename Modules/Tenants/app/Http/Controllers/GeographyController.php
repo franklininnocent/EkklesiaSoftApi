@@ -28,12 +28,19 @@ class GeographyController extends Controller
     public function getCountries(): JsonResponse
     {
         try {
-            // Cache countries for 24 hours (they rarely change)
-            $countries = Cache::remember('countries:active', 86400, function () {
-                return Country::active()
-                    ->ordered()
-                    ->get(['id', 'name', 'iso2', 'iso3', 'phone_code', 'emoji']);
-            });
+            $countries = Cache::get('countries:active');
+
+            if ($countries === null) {
+                $countries = $this->queryActiveCountries();
+                if ($countries->isNotEmpty()) {
+                    Cache::put('countries:active', $countries, 86400);
+                }
+            } elseif ($countries->isEmpty() && Country::active()->exists()) {
+                // Self-heal stale empty cache from before geographic data was seeded.
+                Cache::forget('countries:active');
+                $countries = $this->queryActiveCountries();
+                Cache::put('countries:active', $countries, 86400);
+            }
 
             return response()->json([
                 'success' => true,
@@ -205,6 +212,13 @@ class GeographyController extends Controller
      * 
      * @return JsonResponse
      */
+    private function queryActiveCountries()
+    {
+        return Country::active()
+            ->ordered()
+            ->get(['id', 'name', 'iso2', 'iso3', 'phone_code', 'emoji']);
+    }
+
     public function clearCache(): JsonResponse
     {
         try {

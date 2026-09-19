@@ -15,6 +15,34 @@ use Modules\Tenants\Models\Bishop;
 class IndianBishopsSeeder extends Seeder
 {
     /**
+     * CSV diocese keys mapped to canonical archdiocese names from ComprehensiveArchdiocesesSeeder.
+     *
+     * @var array<string, string>
+     */
+    private const DIOCESE_ALIASES = [
+        'madras-mylapore' => 'Archdiocese of Madras and Mylapore',
+        'pondicherry-cuddalore' => 'Archdiocese of Pondicherry and Cuddalore',
+        'thoothukudi' => 'Diocese of Tuticorin',
+        'tuticorin' => 'Diocese of Tuticorin',
+        'tiruchirapalli' => 'Diocese of Trichy',
+        'tiruchirappalli' => 'Diocese of Trichy',
+        'trichy' => 'Diocese of Trichy',
+        'ooty' => 'Diocese of Ootacamund',
+    ];
+
+    /**
+     * Legacy stub names created by earlier seeder versions before alias resolution existed.
+     *
+     * @var list<string>
+     */
+    private const LEGACY_STUB_DIOCESE_NAMES = [
+        'Madras-Mylapore',
+        'Pondicherry-Cuddalore',
+        'Thoothukudi',
+        'Tiruchirapalli',
+    ];
+
+    /**
      * Run the database seeds.
      */
     public function run(): void
@@ -73,21 +101,18 @@ class IndianBishopsSeeder extends Seeder
                 }
 
                 try {
-                    // Find or create diocese
-                    if (!isset($diocesesCache[$data['diocese_name']])) {
-                        $diocese = Archdiocese::where('name', 'LIKE', '%' . trim($data['diocese_name']) . '%')->first();
-                        
-                        if (!$diocese) {
-                            // Create diocese if not exists
-                            $this->command->warn("Diocese not found: {$data['diocese_name']}. Creating...");
-                            $diocese = Archdiocese::create([
-                                'name' => trim($data['diocese_name']),
-                                'country_id' => $india->id,
-                                'active' => true,
-                            ]);
+                    $dioceseName = trim($data['diocese_name']);
+
+                    if (! isset($diocesesCache[$dioceseName])) {
+                        $diocese = $this->resolveArchdiocese($dioceseName, (int) $india->id);
+
+                        if (! $diocese) {
+                            $this->command->warn("Diocese not found: {$dioceseName}. Skipping row.");
+                            $skippedCount++;
+                            continue;
                         }
-                        
-                        $diocesesCache[$data['diocese_name']] = $diocese->id;
+
+                        $diocesesCache[$dioceseName] = $diocese->id;
                     }
 
                     // Find ecclesiastical title
@@ -125,6 +150,10 @@ class IndianBishopsSeeder extends Seeder
                     $familyName = trim($data['last_name']);
                     $fullName = trim($givenName . ' ' . $familyName);
 
+                    $statusFlags = $this->resolveStatusFlags(
+                        ! empty($data['status']) ? (string) $data['status'] : 'active'
+                    );
+
                     // Prepare bishop data using correct column names
                     $bishopData = [
                         'archdiocese_id' => $diocesesCache[$data['diocese_name']],
@@ -142,28 +171,45 @@ class IndianBishopsSeeder extends Seeder
                         'appointed_date' => !empty($data['date_of_appointment']) ? $data['date_of_appointment'] : null,
                         'email' => !empty($data['email']) ? trim($data['email']) : null,
                         'phone' => !empty($data['phone']) ? trim($data['phone']) : null,
-                        'status' => !empty($data['status']) ? strtolower(trim($data['status'])) : 'active',
+                        'status' => $statusFlags['status'],
                         'biography' => !empty($data['notes']) ? trim($data['notes']) : null,
-                        'is_current' => true,
-                        'active' => true,
+                        'is_current' => $statusFlags['is_current'],
+                        'active' => $statusFlags['active'],
                     ];
 
-                    // Check if bishop already exists
-                    $existing = Bishop::where('given_name', $bishopData['given_name'])
+                    // Match by person identity so re-runs can correct archdiocese links.
+                    $matches = Bishop::query()
+                        ->where('given_name', $bishopData['given_name'])
                         ->where('family_name', $bishopData['family_name'])
-                        ->where('archdiocese_id', $bishopData['archdiocese_id'])
-                        ->first();
+                        ->where('nationality_country_id', $india->id)
+                        ->orderBy('id')
+                        ->get();
+
+                    $existing = $matches->first();
 
                     if ($existing) {
-                        // Update existing record
                         $existing->update($bishopData);
+                        $bishop = $existing->fresh();
+
+                        if ($matches->count() > 1) {
+                            Bishop::query()
+                                ->whereIn('id', $matches->skip(1)->pluck('id'))
+                                ->delete();
+                        }
+
                         $updatedCount++;
                         $this->command->info("✓ Updated: {$bishopData['full_name']} - {$data['diocese_name']}");
                     } else {
-                        // Create new record
-                        Bishop::create($bishopData);
+                        $bishop = Bishop::create($bishopData);
                         $importedCount++;
                         $this->command->info("✓ Imported: {$bishopData['full_name']} - {$data['diocese_name']}");
+                    }
+
+                    if ($bishopData['is_current']) {
+                        $this->demoteOtherCurrentOrdinaries(
+                            (int) $bishopData['archdiocese_id'],
+                            (int) $bishop->id
+                        );
                     }
 
                 } catch (\Exception $e) {
@@ -177,6 +223,8 @@ class IndianBishopsSeeder extends Seeder
 
             fclose($handle);
 
+            $removedStubDioceses = $this->cleanupOrphanStubDioceses((int) $india->id);
+
             DB::commit();
 
             // Summary
@@ -188,6 +236,9 @@ class IndianBishopsSeeder extends Seeder
             $this->command->info("🔄 Bishops Updated: {$updatedCount}");
             $this->command->info("⏭️  Rows Skipped: {$skippedCount}");
             $this->command->info("❌ Errors: " . count($errors));
+            if ($removedStubDioceses > 0) {
+                $this->command->info("🧹 Orphan stub dioceses removed: {$removedStubDioceses}");
+            }
             $this->command->info('═══════════════════════════════════════');
 
             if (!empty($errors)) {
@@ -204,6 +255,124 @@ class IndianBishopsSeeder extends Seeder
             $this->command->error('Fatal error during import: ' . $e->getMessage());
             $this->command->error($e->getTraceAsString());
         }
+    }
+
+    private function resolveArchdiocese(string $csvDioceseName, int $countryId): ?Archdiocese
+    {
+        $key = $this->normalizeDioceseKey($csvDioceseName);
+
+        if (isset(self::DIOCESE_ALIASES[$key])) {
+            $diocese = Archdiocese::query()
+                ->where('country_id', $countryId)
+                ->where('name', self::DIOCESE_ALIASES[$key])
+                ->first();
+
+            if ($diocese) {
+                return $diocese;
+            }
+        }
+
+        $searchTerms = array_unique(array_filter([
+            $csvDioceseName,
+            "Diocese of {$csvDioceseName}",
+            "Archdiocese of {$csvDioceseName}",
+            str_contains($csvDioceseName, '-')
+                ? 'Archdiocese of '.str_replace('-', ' and ', $csvDioceseName)
+                : null,
+            str_contains($csvDioceseName, '-')
+                ? 'Diocese of '.str_replace('-', ' and ', $csvDioceseName)
+                : null,
+        ]));
+
+        foreach ($searchTerms as $term) {
+            $diocese = Archdiocese::query()
+                ->where('country_id', $countryId)
+                ->where(function ($query) use ($term) {
+                    $query->where('name', 'ILIKE', $term)
+                        ->orWhere('name', 'ILIKE', "%{$term}%")
+                        ->orWhere('headquarters_city', 'ILIKE', $term);
+                })
+                ->first();
+
+            if ($diocese) {
+                return $diocese;
+            }
+        }
+
+        $tokens = array_values(array_filter(
+            preg_split('/[\s\-]+/', strtolower($csvDioceseName)) ?: [],
+            static fn (string $token): bool => strlen($token) > 2
+        ));
+
+        if ($tokens !== []) {
+            $query = Archdiocese::query()->where('country_id', $countryId);
+
+            foreach ($tokens as $token) {
+                $query->where('name', 'ILIKE', "%{$token}%");
+            }
+
+            $diocese = $query->first();
+
+            if ($diocese) {
+                return $diocese;
+            }
+        }
+
+        return null;
+    }
+
+    private function normalizeDioceseKey(string $name): string
+    {
+        return strtolower(preg_replace('/[\s\-]+/', '-', trim($name)) ?? trim($name));
+    }
+
+    private function cleanupOrphanStubDioceses(int $countryId): int
+    {
+        return Archdiocese::query()
+            ->where('country_id', $countryId)
+            ->whereIn('name', self::LEGACY_STUB_DIOCESE_NAMES)
+            ->whereDoesntHave('bishops')
+            ->delete();
+    }
+
+    /**
+     * @return array{status: string, is_current: bool, active: int}
+     */
+    private function resolveStatusFlags(string $status): array
+    {
+        $status = strtolower(trim($status));
+
+        return match ($status) {
+            'active' => [
+                'status' => 'active',
+                'is_current' => true,
+                'active' => 1,
+            ],
+            'retired', 'emeritus' => [
+                'status' => $status === 'emeritus' ? 'emeritus' : 'retired',
+                'is_current' => false,
+                'active' => 1,
+            ],
+            'deceased' => [
+                'status' => 'deceased',
+                'is_current' => false,
+                'active' => 0,
+            ],
+            default => [
+                'status' => 'active',
+                'is_current' => true,
+                'active' => 1,
+            ],
+        };
+    }
+
+    private function demoteOtherCurrentOrdinaries(int $archdioceseId, int $bishopId): void
+    {
+        Bishop::query()
+            ->where('archdiocese_id', $archdioceseId)
+            ->where('is_current', true)
+            ->where('id', '!=', $bishopId)
+            ->update(['is_current' => false]);
     }
 }
 

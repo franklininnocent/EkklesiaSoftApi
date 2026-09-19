@@ -33,7 +33,7 @@ class StoreTenantRoleRequest extends FormRequest
                 Rule::unique('roles', 'name')->where(fn ($query) => $query->where('tenant_id', $tenantId)),
             ],
             'description' => ['nullable', 'string'],
-            'level' => ['required', 'integer', 'min:1', 'max:10'],
+            'level' => ['required', 'integer', 'min:2', 'max:10'],
             'active' => ['nullable', 'boolean'],
         ];
     }

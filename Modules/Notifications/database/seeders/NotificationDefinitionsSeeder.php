@@ -1,0 +1,162 @@
+<?php
+
+namespace Modules\Notifications\Database\Seeders;
+
+use Illuminate\Database\Seeder;
+use Modules\Notifications\Models\NotificationDefinition;
+
+class NotificationDefinitionsSeeder extends Seeder
+{
+    public function run(): void
+    {
+        $definitions = [
+            [
+                'code' => 'auth.password_recovery.requested',
+                'event_type' => 'password_recovery.requested',
+                'category' => 'system',
+                'module' => 'Authentication',
+                'title_template' => 'Password recovery needs approval',
+                'body_template' => '{requester_name} requested a password reset.',
+                'channels' => ['in_app' => true, 'email' => true, 'push' => false],
+                'priority' => 'high',
+                'mandatory' => true,
+                'notify_actor' => false,
+                'recipient_strategy' => 'permission:password.recovery.requests.process',
+                'collapse_mode' => 'none',
+            ],
+            [
+                'code' => 'auth.password_recovery.approved',
+                'event_type' => 'password_recovery.approved',
+                'category' => 'system',
+                'module' => 'Authentication',
+                'title_template' => 'Password recovery approved',
+                'body_template' => 'Your password recovery request was approved. Check your email for next steps.',
+                'channels' => ['in_app' => true, 'email' => false, 'push' => false],
+                'priority' => 'high',
+                'mandatory' => true,
+                'notify_actor' => true,
+                'recipient_strategy' => 'explicit',
+                'collapse_mode' => 'none',
+            ],
+            [
+                'code' => 'donations.refund.requested',
+                'event_type' => 'refund.requested',
+                'category' => 'operations',
+                'module' => 'Donations',
+                'title_template' => 'Refund approval needed',
+                'body_template' => 'A refund of {amount} for {family_name} needs your approval.',
+                'channels' => ['in_app' => true, 'email' => true, 'push' => false],
+                'priority' => 'high',
+                'mandatory' => true,
+                'notify_actor' => false,
+                'recipient_strategy' => 'permission:donations.approvals',
+                'collapse_mode' => 'replace_unread',
+            ],
+            [
+                'code' => 'donations.refund.decided',
+                'event_type' => 'refund.decided',
+                'category' => 'operations',
+                'module' => 'Donations',
+                'title_template' => 'Refund {decision}',
+                'body_template' => 'Your refund request for {family_name} was {decision}.',
+                'channels' => ['in_app' => true, 'email' => false, 'push' => false],
+                'priority' => 'normal',
+                'mandatory' => false,
+                'notify_actor' => true,
+                'recipient_strategy' => 'explicit',
+                'collapse_mode' => 'none',
+            ],
+            [
+                'code' => 'support.emergency_approval.pending',
+                'event_type' => 'support.emergency_approval.pending',
+                'category' => 'system',
+                'module' => 'SupportAccess',
+                'title_template' => 'Emergency support access pending',
+                'body_template' => '{tenant_name} needs emergency support approval.',
+                'channels' => ['in_app' => true, 'email' => true, 'push' => false],
+                'priority' => 'high',
+                'mandatory' => true,
+                'notify_actor' => false,
+                'recipient_strategy' => 'permission:support.sessions.approve',
+                'collapse_mode' => 'none',
+            ],
+            [
+                'code' => 'support.ticket.sla_warning',
+                'event_type' => 'ticket.sla_warning',
+                'category' => 'operations',
+                'module' => 'SupportTickets',
+                'title_template' => 'Support ticket SLA warning',
+                'body_template' => 'Ticket {ticket_ref} is approaching its SLA deadline.',
+                'channels' => ['in_app' => true, 'email' => true, 'push' => false],
+                'priority' => 'high',
+                'mandatory' => true,
+                'notify_actor' => false,
+                'recipient_strategy' => 'explicit',
+                'collapse_mode' => 'none',
+            ],
+            [
+                'code' => 'support.ticket.sla_breach',
+                'event_type' => 'ticket.sla_breach',
+                'category' => 'operations',
+                'module' => 'SupportTickets',
+                'title_template' => 'Support ticket SLA breached',
+                'body_template' => 'Ticket {ticket_ref} has breached its SLA.',
+                'channels' => ['in_app' => true, 'email' => true, 'push' => false],
+                'priority' => 'high',
+                'mandatory' => true,
+                'notify_actor' => false,
+                'recipient_strategy' => 'explicit',
+                'collapse_mode' => 'none',
+            ],
+            [
+                'code' => 'tenants.subscription.lifecycle',
+                'event_type' => 'subscription.lifecycle',
+                'category' => 'operations',
+                'module' => 'Tenants',
+                'title_template' => 'Subscription update: {operation_label}',
+                'body_template' => 'Your church subscription status changed to {operation_label}. Review your subscription settings.',
+                'channels' => ['in_app' => true, 'email' => false, 'push' => false],
+                'priority' => 'high',
+                'mandatory' => true,
+                'notify_actor' => false,
+                'recipient_strategy' => 'primary_admins',
+                'collapse_mode' => 'replace_unread',
+            ],
+            [
+                'code' => 'application.security.threat',
+                'event_type' => 'security.threat',
+                'category' => 'system',
+                'module' => 'ApplicationAccess',
+                'title_template' => 'Security alert: {signal_type}',
+                'body_template' => 'A security event was detected. Review Application Access for details.',
+                'channels' => ['in_app' => true, 'email' => true, 'push' => false],
+                'priority' => 'high',
+                'mandatory' => true,
+                'notify_actor' => false,
+                'recipient_strategy' => 'permission:application_access.view',
+                'collapse_mode' => 'none',
+            ],
+            [
+                'code' => 'pastoral.visit.assigned',
+                'event_type' => 'pastoral.visit.assigned',
+                'category' => 'church',
+                'module' => 'PastoralCare',
+                'title_template' => 'Pastoral visit assigned to you',
+                'body_template' => 'You were assigned a pastoral visit for {family_name}.',
+                'channels' => ['in_app' => true, 'email' => true, 'push' => false],
+                'priority' => 'normal',
+                'mandatory' => false,
+                'notify_actor' => true,
+                'recipient_strategy' => 'assignee',
+                'collapse_mode' => 'none',
+            ],
+        ];
+
+        foreach ($definitions as $row) {
+            NotificationDefinition::query()->updateOrCreate(
+                ['code' => $row['code']],
+                array_merge($row, ['active' => true, 'allows_delete' => true])
+            );
+        }
+    }
+}

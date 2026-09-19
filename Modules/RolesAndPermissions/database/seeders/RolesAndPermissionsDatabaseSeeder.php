@@ -49,6 +49,10 @@ class RolesAndPermissionsDatabaseSeeder extends Seeder
             ]);
         }
 
+        if (class_exists(\Modules\Tenants\Database\Seeders\ChurchLeadershipPermissionSeeder::class)) {
+            $this->call(\Modules\Tenants\Database\Seeders\ChurchLeadershipPermissionSeeder::class);
+        }
+
         $this->command->line('');
         $this->command->info('✅ RolesAndPermissions Module seeded successfully!');
     }

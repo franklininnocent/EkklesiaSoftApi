@@ -146,6 +146,7 @@ Route::middleware('auth:api')->group(function () {
     // Church Profile Management
     Route::prefix('church-profile')->group(function () {
         Route::get('/', [ChurchProfileController::class, 'show']);
+        Route::get('/status-metrics', [ChurchProfileController::class, 'statusMetrics']);
         Route::put('/', [ChurchProfileController::class, 'update'])->middleware('tenant.permission:church.settings.edit');
         
         // Patron Image Management (tenant-specific)
@@ -170,6 +171,9 @@ Route::middleware('auth:api')->group(function () {
             Route::get('/current', [ChurchLeadershipGovernanceController::class, 'current']);
             Route::get('/history', [ChurchLeadershipGovernanceController::class, 'history']);
             Route::get('/roles', [ChurchLeadershipGovernanceController::class, 'roles']);
+            Route::post('/roles', [ChurchLeadershipGovernanceController::class, 'storeRole']);
+            Route::put('/roles/{id}', [ChurchLeadershipGovernanceController::class, 'updateRole'])
+                ->whereUuid('id');
             Route::post('/assign', [ChurchLeadershipGovernanceController::class, 'assign']);
             Route::post('/handover', [ChurchLeadershipGovernanceController::class, 'handover']);
             Route::put('/assignments/{id}', [ChurchLeadershipGovernanceController::class, 'update'])

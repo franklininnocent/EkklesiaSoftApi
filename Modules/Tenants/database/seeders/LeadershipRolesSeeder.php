@@ -6,6 +6,7 @@ use Illuminate\Database\Seeder;
 use Illuminate\Support\Str;
 use Modules\Tenants\Models\LeadershipRole;
 use Modules\Tenants\Support\LeadershipRoleCategory;
+use Modules\Tenants\Support\LeadershipRoleNameNormalizer;
 
 class LeadershipRolesSeeder extends Seeder
 {
@@ -36,13 +37,16 @@ class LeadershipRolesSeeder extends Seeder
     public function run(): void
     {
         foreach (self::globalRoles() as $role) {
+            $normalizedTitle = LeadershipRoleNameNormalizer::normalize($role['title']);
+
             LeadershipRole::query()->firstOrCreate(
                 [
                     'tenant_id' => null,
-                    'title' => $role['title'],
+                    'normalized_title' => $normalizedTitle,
                 ],
                 [
                     'id' => (string) Str::uuid(),
+                    'title' => $role['title'],
                     'category' => $role['category'],
                     'hierarchical_level' => $role['hierarchical_level'],
                     'allows_concurrent' => $role['allows_concurrent'],

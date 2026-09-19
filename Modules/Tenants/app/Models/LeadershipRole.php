@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Modules\Tenants\Database\Factories\LeadershipRoleFactory;
+use Modules\Tenants\Support\LeadershipRoleNameNormalizer;
 
 class LeadershipRole extends Model
 {
@@ -16,13 +17,15 @@ class LeadershipRole extends Model
     protected $table = 'leadership_roles';
 
     protected $fillable = [
-        'tenant_id',
         'title',
+        'normalized_title',
         'category',
         'hierarchical_level',
         'allows_concurrent',
         'is_canonical_mandate',
         'is_active',
+        'created_by',
+        'updated_by',
     ];
 
     protected $casts = [
@@ -35,6 +38,15 @@ class LeadershipRole extends Model
     protected static function newFactory(): LeadershipRoleFactory
     {
         return LeadershipRoleFactory::new();
+    }
+
+    protected static function booted(): void
+    {
+        static::saving(function (LeadershipRole $role): void {
+            if ($role->title !== null && $role->title !== '') {
+                $role->normalized_title = LeadershipRoleNameNormalizer::normalize((string) $role->title);
+            }
+        });
     }
 
     public function tenant(): BelongsTo

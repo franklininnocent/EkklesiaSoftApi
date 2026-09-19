@@ -14,26 +14,33 @@ use Modules\RolesAndPermissions\Services\PermissionAuditService;
 use Modules\RolesAndPermissions\Services\TenantPermissionCrudService;
 use Modules\RolesAndPermissions\Services\TenantPermissionCatalogService;
 use Modules\RolesAndPermissions\Services\TenantPermissionService;
+use Modules\RolesAndPermissions\Traits\EnforcesTenantIsolation;
+use Modules\Authentication\Services\PasswordAuthorizationService;
 use Illuminate\Support\Facades\Log;
 
 class PermissionsController extends Controller
 {
+    use EnforcesTenantIsolation;
+
     protected PermissionAuditService $auditService;
     protected TenantPermissionCatalogService $tenantPermissionCatalogService;
     protected TenantPermissionService $tenantPermissionService;
     protected TenantPermissionCrudService $tenantPermissionCrudService;
+    protected PasswordAuthorizationService $passwordAuthorization;
 
     public function __construct(
         PermissionAuditService $auditService,
         TenantPermissionService $tenantPermissionService,
         TenantPermissionCatalogService $tenantPermissionCatalogService,
-        TenantPermissionCrudService $tenantPermissionCrudService
+        TenantPermissionCrudService $tenantPermissionCrudService,
+        PasswordAuthorizationService $passwordAuthorization,
     )
     {
         $this->auditService = $auditService;
         $this->tenantPermissionService = $tenantPermissionService;
         $this->tenantPermissionCatalogService = $tenantPermissionCatalogService;
         $this->tenantPermissionCrudService = $tenantPermissionCrudService;
+        $this->passwordAuthorization = $passwordAuthorization;
     }
 
     /**
@@ -51,70 +58,9 @@ class PermissionsController extends Controller
             // List only — tenant custom permission creation belongs on POST /permissions (store).
             $query = Permission::query();
 
-            // Apply role-based filtering
-            // CRITICAL SECURITY: Enforce strict tenant isolation for permissions
-            if ($user->isSuperAdmin()) {
-                // SuperAdmin sees ALL permissions (system + all custom from all tenants)
-                // No filter needed - full system access
-                Log::debug('Permissions query: SuperAdmin - viewing all permissions', [
-                    'user_id' => $user->id,
-                    'user_email' => $user->email,
-                ]);
-            } else if ($user->isEkklesiaAdmin() || $user->isEkklesiaManager()) {
-                // System-level Ekklesia roles see all permissions EXCEPT "Tenants" and "Pope" modules
-                // CRITICAL SECURITY: "Tenants" and "Pope" modules are SuperAdmin only
-                $query->where(function ($q) {
-                    $q->where('module', '!=', 'Tenants')
-                      ->where('module', '!=', 'Pope')
-                      ->where('scope', '!=', Permission::SCOPE_PLATFORM);
-                });
-                
-                Log::debug('Permissions query: Ekklesia Admin/Manager - viewing all permissions (Tenants and Pope modules excluded)', [
-                    'user_id' => $user->id,
-                    'user_email' => $user->email,
-                ]);
-            } else if ($user->tenant_id) {
-                // TENANT ADMINISTRATORS AND USERS - STRICT ISOLATION
-                // Can see:
-                // 1. System permissions (for assigning to roles) - tenant_id = null AND is_custom = false
-                //    EXCEPT "Tenants" and "Pope" module permissions (SuperAdmin only)
-                // 2. Their own tenant's custom permissions ONLY
-                // Cannot see other tenants' custom permissions
-                $query->where(function ($q) use ($user) {
-                    $q->where(function ($subQ) {
-                        // System permissions (available to all tenants)
-                        // CRITICAL SECURITY: Exclude "Tenants" and "Pope" modules - SuperAdmin only
-                        $subQ->whereNull('tenant_id')
-                             ->where('is_custom', false)
-                             ->whereIn('scope', [Permission::SCOPE_TENANT, Permission::SCOPE_BOTH])
-                             ->where('module', '!=', 'Tenants')
-                             ->where('module', '!=', 'Pope');
-                    })
-                    ->orWhere(function ($subQ) use ($user) {
-                        // Their tenant's custom permissions ONLY
-                        $subQ->where('tenant_id', $user->tenant_id)
-                             ->where('is_custom', true);
-                    });
-                });
-                
-                Log::info('Permissions query: Tenant user - strict isolation applied (Tenants and Pope modules excluded)', [
-                    'user_id' => $user->id,
-                    'user_email' => $user->email,
-                    'tenant_id' => $user->tenant_id,
-                    'role_name' => $user->role->name ?? 'Unknown',
-                ]);
-            } else {
-                // Users without tenant (shouldn't exist in normal operation)
-                // Deny access for security
-                Log::warning('Permissions query: User without tenant attempted access', [
-                    'user_id' => $user->id,
-                    'user_email' => $user->email,
-                ]);
-                
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Access denied: Invalid user tenant association',
-                ], 403);
+            $scopeDenied = $this->applyPermissionListScope($query, $user);
+            if ($scopeDenied !== null) {
+                return $scopeDenied;
             }
 
             // Apply filters
@@ -568,6 +514,11 @@ class PermissionsController extends Controller
                 ], 403);
             }
 
+            $passwordError = $this->validatePlatformPasswordRoleMutation($currentUser, $role, $permission, true);
+            if ($passwordError !== null) {
+                return $passwordError;
+            }
+
             // SECURITY: Validate tenant isolation - permission and role must belong to same tenant
             // System permissions (tenant_id = null) can be assigned to any role
             // Tenant-specific permissions can only be assigned to roles from the same tenant
@@ -680,6 +631,11 @@ class PermissionsController extends Controller
                 ], 403);
             }
 
+            $passwordError = $this->validatePlatformPasswordRoleMutation($currentUser, $role, $permission, false);
+            if ($passwordError !== null) {
+                return $passwordError;
+            }
+
             $permission->removeFromRole($role);
 
             // AUDIT: Log permission removal from role
@@ -779,6 +735,13 @@ class PermissionsController extends Controller
                         'message' => "Permission escalation blocked. You cannot assign '{$permission->name}'.",
                     ], 403);
                 }
+            }
+
+            if (! $this->passwordAuthorization->canGrantPasswordPermissionToUser($currentUser, $user, $permission->name)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Permission escalation blocked. You cannot assign '{$permission->name}'.",
+                ], 403);
             }
 
             // SECURITY: Validate tenant isolation - permission and user must belong to same tenant
@@ -1191,59 +1154,12 @@ class PermissionsController extends Controller
     {
         $user = auth()->user();
 
-        // SuperAdmin can view all permissions
-        if ($user->isSuperAdmin()) {
+        if ($this->canViewPermissionRecord($permission, $user)) {
             return true;
         }
 
-        // System-level Ekklesia roles can view all permissions EXCEPT "Tenants" and "Pope" modules
-        // CRITICAL SECURITY: "Tenants" and "Pope" modules are SuperAdmin only
-        if ($user->isEkklesiaAdmin() || $user->isEkklesiaManager()) {
-            if ($permission->module === 'Tenants' || $permission->module === 'Pope') {
-                Log::warning('Ekklesia Admin/Manager attempted to view restricted module permission (SuperAdmin only)', [
-                    'user_id' => $user->id,
-                    'user_email' => $user->email,
-                    'permission_id' => $permission->id,
-                    'permission_name' => $permission->name,
-                    'permission_module' => $permission->module,
-                ]);
-                return false;
-            }
-            return true;
-        }
-
-        // CRITICAL SECURITY: Tenant users can view:
-        // 1. System permissions (tenant_id = null AND is_custom = false)
-        //    EXCEPT "Tenants" and "Pope" module permissions (SuperAdmin only)
-        // 2. Their own tenant's custom permissions ONLY
-        if ($user->tenant_id) {
-            // System permission (available to all tenants)
-            // BUT exclude "Tenants" and "Pope" modules - SuperAdmin only
-            if (is_null($permission->tenant_id) && !$permission->is_custom) {
-                if ($permission->scope === Permission::SCOPE_PLATFORM) {
-                    return false;
-                }
-                if ($permission->module === 'Tenants' || $permission->module === 'Pope') {
-                    Log::warning('Tenant user attempted to view restricted module permission (SuperAdmin only)', [
-                        'user_id' => $user->id,
-                        'user_email' => $user->email,
-                        'user_tenant_id' => $user->tenant_id,
-                        'permission_id' => $permission->id,
-                        'permission_name' => $permission->name,
-                        'permission_module' => $permission->module,
-                    ]);
-                    return false;
-                }
-                return true;
-            }
-            
-            // Their tenant's custom permission
-            if ($permission->tenant_id === $user->tenant_id && $permission->is_custom) {
-                return true;
-            }
-            
-            // Log unauthorized access attempts
-            Log::warning('Tenant user attempted to view unauthorized permission', [
+        if ($user && ! $user->isSuperAdmin()) {
+            Log::warning('User attempted to view unauthorized permission', [
                 'user_id' => $user->id,
                 'user_email' => $user->email,
                 'user_tenant_id' => $user->tenant_id,
@@ -1257,13 +1173,40 @@ class PermissionsController extends Controller
             return false;
         }
 
-        // Users without tenant are denied
-        Log::warning('User without tenant attempted to view permission', [
-            'user_id' => $user->id,
-            'permission_id' => $permission->id,
-        ]);
-        
         return false;
+    }
+
+    private function validatePlatformPasswordRoleMutation(User $actor, Role $role, Permission $permission, bool $assigning): ?JsonResponse
+    {
+        if ($this->passwordAuthorization->isSystemRequiredPermission($permission->name) && ! $assigning) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Change Own Password is a required system security capability and cannot be removed.',
+            ], 422);
+        }
+
+        if ($actor->isSuperAdmin()) {
+            return null;
+        }
+
+        if (! $this->passwordAuthorization->canGrantPasswordPermission($actor, $role, $permission->name)) {
+            return response()->json([
+                'success' => false,
+                'message' => "Permission escalation blocked. You cannot modify '{$permission->name}'.",
+            ], 403);
+        }
+
+        if (! $actor->hasPermission($permission->name) && in_array($permission->name, [
+            PasswordAuthorizationService::PERMISSION_RESET_SUBORDINATES,
+            PasswordAuthorizationService::PERMISSION_TENANT_ADMIN_RESET,
+        ], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => "Permission escalation blocked. You cannot modify '{$permission->name}'.",
+            ], 403);
+        }
+
+        return null;
     }
 }
 

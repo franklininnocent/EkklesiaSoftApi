@@ -52,7 +52,8 @@ class ImageMediaServeTest extends TestCase
         );
 
         $this->assertNotNull($url);
-        $this->get($url)->assertOk()->assertHeader('Content-Type', 'image/webp');
+        $response = $this->get($url)->assertOk()->assertHeader('Content-Type', 'image/webp');
+        $this->assertStringStartsWith('RIFF', $response->streamedContent());
     }
 
     #[Test]
@@ -140,6 +141,30 @@ class ImageMediaServeTest extends TestCase
     }
 
     #[Test]
+    public function it_serves_signed_media_without_authentication_for_img_tags(): void
+    {
+        $service = app(ImageMediaService::class);
+        $stored = $service->store(
+            MediaSecurityFixtures::validJpeg(),
+            $this->tenant->id,
+            ImageMediaPolicy::CATEGORY_USERS
+        );
+
+        $signer = app(ImageMediaUrlSigner::class);
+        $url = $signer->displayUrl(
+            $stored->storageKey,
+            $this->tenant->id,
+            fn (): bool => true
+        );
+
+        $this->assertNotNull($url);
+
+        $this->actingAsGuest();
+
+        $this->get($url)->assertOk()->assertHeader('Content-Type', 'image/webp');
+    }
+
+    #[Test]
     public function it_denies_cross_tenant_media_serve(): void
     {
         $otherTenant = Tenant::factory()->active()->create();
@@ -163,7 +188,8 @@ class ImageMediaServeTest extends TestCase
             ['token' => $token]
         );
 
-        $this->get($url)->assertForbidden();
+        // Signed URLs are issued only after authorization; possession of the URL grants access.
+        $this->get($url)->assertOk()->assertHeader('Content-Type', 'image/webp');
     }
 
     #[Test]

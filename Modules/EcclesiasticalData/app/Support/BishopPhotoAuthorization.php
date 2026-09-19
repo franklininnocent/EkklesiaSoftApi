@@ -16,6 +16,16 @@ final class BishopPhotoAuthorization
             return true;
         }
 
-        return $viewer->hasPermission('bishops.view');
+        if ($viewer->isTenantAdmin() || ($viewer->is_primary_admin ?? false)) {
+            return true;
+        }
+
+        foreach (['bishops.view', 'bishops.view_own_requests', 'bishops.submit_update_request', 'church.settings.view'] as $permission) {
+            if ($viewer->hasPermission($permission)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

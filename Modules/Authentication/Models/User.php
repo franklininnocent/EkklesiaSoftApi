@@ -106,6 +106,8 @@ class User extends Authenticatable
         'user_type' => 'integer',
         'is_primary_admin' => 'boolean',
         'deleted_at' => 'datetime',
+        'password_changed_at' => 'datetime',
+        'force_password_change' => 'boolean',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
@@ -516,12 +518,7 @@ class User extends Authenticatable
                 throw new \RuntimeException("Cannot assign deleted role: {$role->name}");
             }
 
-            // SECURITY: Role must be global (tenant_id = null) OR belong to user's tenant
-            if (! is_null($role->tenant_id) && $role->tenant_id !== $this->tenant_id) {
-                throw new \RuntimeException(
-                    "Cannot assign role from different tenant. Role tenant_id: {$role->tenant_id}, User tenant_id: {$this->tenant_id}"
-                );
-            }
+            $this->assertRoleAssignableToUser($role);
 
             return $role->id;
         });
@@ -533,6 +530,28 @@ class User extends Authenticatable
         $this->clearRequestPermissionCache();
 
         return $this;
+    }
+
+    /**
+     * @throws \RuntimeException
+     */
+    private function assertRoleAssignableToUser(Role $role): void
+    {
+        if ($this->tenant_id !== null) {
+            if (! $role->isTenantRole() || $role->tenant_id !== $this->tenant_id) {
+                throw new \RuntimeException(
+                    "Cannot assign role {$role->name} to a parish user. Only tenant roles for this parish are allowed."
+                );
+            }
+
+            return;
+        }
+
+        if ($role->tenant_id !== null) {
+            throw new \RuntimeException(
+                "Cannot assign parish role {$role->name} to a platform user."
+            );
+        }
     }
 
     /**
@@ -600,15 +619,8 @@ class User extends Authenticatable
             ->whereNull('deleted_at')
             ->get();
 
-        // SECURITY: Validate tenant isolation for all roles
-        if (! $this->isSuperAdmin()) {
-            foreach ($roles as $role) {
-                if (! is_null($role->tenant_id) && $role->tenant_id !== $this->tenant_id) {
-                    throw new \RuntimeException(
-                        "Cannot assign role from different tenant. Role: {$role->name} (tenant_id: {$role->tenant_id}), User tenant_id: {$this->tenant_id}"
-                    );
-                }
-            }
+        foreach ($roles as $role) {
+            $this->assertRoleAssignableToUser($role);
         }
 
         $this->roles()->sync($roleIds);
@@ -703,7 +715,7 @@ class User extends Authenticatable
         $isPlatformSupportOperator = $this->isEkklesiaAdmin()
             || $this->isEkklesiaManager()
             || $this->isEkklesiaUser()
-            || $this->hasRole('SupportAdmin');
+            || $this->hasRole(Role::SUPPORT_ADMIN);
 
         if (! $isPlatformSupportOperator) {
             return false;

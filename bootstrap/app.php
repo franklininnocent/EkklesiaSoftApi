@@ -31,6 +31,7 @@ use Modules\Tenants\Http\Middleware\EnsureSubscriptionAccessMode;
 use Modules\Tenants\Http\Middleware\LogPlatformSecurityEvents;
 use Modules\Tenants\Http\Middleware\ResolveTenantContext;
 use Modules\Tenants\Http\Middleware\ThrottleTenantApiRequests;
+use Modules\Authentication\Http\Middleware\EnsureForcedPasswordChange;
 use Symfony\Component\HttpFoundation\Response;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -82,6 +83,7 @@ return Application::configure(basePath: dirname(__DIR__))
             PassportAuthenticate::class,
             EnforceApplicationIpBlocks::class,
             ResolveTenantContext::class,
+            EnsureForcedPasswordChange::class,
             EnforceApiPaginationLimits::class,
             ThrottleTenantApiRequests::class,
             ApplyTenantRlsTransaction::class,

@@ -187,6 +187,8 @@ class DonationLedgerService
                 ['payment_id' => $payment->id, 'approval_id' => $approval->id]
             );
 
+            $this->notifyRefundRequested($tenantId, $userId, $approval, $payment, $requested);
+
             return $refund->load(['approval', 'payment']);
         });
     }
@@ -553,6 +555,44 @@ class DonationLedgerService
 
         if ($exists) {
             throw new \RuntimeException('This payment reference is already recorded for this church.');
+        }
+    }
+
+    private function notifyRefundRequested(
+        int $tenantId,
+        int $userId,
+        DonationApproval $approval,
+        DonationPayment $payment,
+        string $amount,
+    ): void {
+        if (! class_exists(\Modules\Notifications\Contracts\NotificationPublisherContract::class)) {
+            return;
+        }
+
+        try {
+            $actor = \Modules\Authentication\Models\User::query()->find($userId);
+            $payment->loadMissing('family');
+
+            app(\Modules\Notifications\Contracts\NotificationPublisherContract::class)->publish(
+                new \Modules\Notifications\Support\NotificationIntent(
+                    definitionCode: 'donations.refund.requested',
+                    actor: $actor,
+                    subjectType: 'donation_approval',
+                    subjectId: (string) $approval->id,
+                    tenantId: $tenantId,
+                    scope: \Modules\Notifications\Support\InboxScope::Tenant,
+                    occurrenceId: (string) $approval->id,
+                    data: [
+                        'amount' => $amount,
+                        'family_name' => $payment->family?->family_name ?? 'a family',
+                        'deep_link_route' => '/donations/approvals',
+                    ],
+                    actionStatus: 'required',
+                    collapseKey: 'donation.refund.'.$approval->id,
+                )
+            );
+        } catch (\Throwable) {
+            // notification must not block refund request
         }
     }
 }
