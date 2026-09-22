@@ -361,15 +361,33 @@ class Tenant extends Model
     }
 
     /**
+     * Stored tenant features, falling back to the subscription plan when unset.
+     *
+     * @return list<string>
+     */
+    public function effectiveFeatures(): array
+    {
+        $features = $this->features;
+        if (is_array($features) && count($features) > 0) {
+            return array_values($features);
+        }
+
+        $plan = SubscriptionPlan::query()->where('key', $this->plan)->first();
+        if ($plan && is_array($plan->features) && count($plan->features) > 0) {
+            return array_values($plan->features);
+        }
+
+        $configFeatures = config("tenants.plans.{$this->plan}.features");
+
+        return is_array($configFeatures) ? array_values($configFeatures) : [];
+    }
+
+    /**
      * Check if tenant has a specific feature enabled.
      */
     public function hasFeature(string $feature): bool
     {
-        if (is_null($this->features) || !is_array($this->features) || count($this->features) === 0) {
-            return false;
-        }
-
-        return in_array($feature, $this->features, true);
+        return in_array($feature, $this->effectiveFeatures(), true);
     }
 
     /**
@@ -392,7 +410,7 @@ class Tenant extends Model
      */
     public function supportsMinistriesAssociations(): bool
     {
-        return $this->hasFeature('ministries_associations');
+        return in_array('ministries_associations', $this->effectiveFeatures(), true);
     }
 
     /**

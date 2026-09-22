@@ -507,6 +507,20 @@ class TenantMinistriesLifecycleApiTest extends TestCase
             ->assertJsonPath('success', true);
     }
 
+    #[Test]
+    public function categories_index_succeeds_when_tenant_features_empty_but_plan_includes_ministries(): void
+    {
+        $this->tenant->update([
+            'plan' => 'free',
+            'features' => [],
+        ]);
+        $this->authenticateAdmin();
+
+        $this->getJson('/api/tenant/ministries/categories?is_active=1&per_page=100')
+            ->assertOk()
+            ->assertJsonPath('success', true);
+    }
+
     /**
      * @param  array<string, mixed>  $overrides
      */

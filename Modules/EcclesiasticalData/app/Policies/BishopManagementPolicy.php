@@ -5,6 +5,7 @@ namespace Modules\EcclesiasticalData\Policies;
 use Modules\Authentication\Models\User;
 use Modules\EcclesiasticalData\Models\BishopManagement;
 use Modules\EcclesiasticalData\Policies\Concerns\AuthorizesEcclesiasticalPermission;
+use Modules\Tenants\Support\AuditLogViewerAuthorization;
 
 class BishopManagementPolicy
 {
@@ -47,6 +48,6 @@ class BishopManagementPolicy
 
     public function viewAudit(User $user, BishopManagement $bishop): bool
     {
-        return $this->allowsPlatform($user, 'bishops.view_audit');
+        return AuditLogViewerAuthorization::canViewPlatformCompleteAudit($user);
     }
 }

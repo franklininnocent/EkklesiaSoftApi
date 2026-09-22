@@ -218,7 +218,7 @@ class TenantsController extends Controller
                 ], 403);
             }
 
-            $snapshot = $this->tenantDetailsService->build($id);
+            $snapshot = $this->tenantDetailsService->build($id, auth()->user());
 
             return response()->json([
                 'success' => true,
@@ -270,6 +270,13 @@ class TenantsController extends Controller
                 $trialEndsAt = now()->addDays($trialDays);
             }
 
+            $features = $request->features;
+            if (! is_array($features) || count($features) === 0) {
+                $planModel = SubscriptionPlan::query()->where('key', $plan)->first();
+                $features = $planModel?->features
+                    ?? (array) (config("tenants.plans.{$plan}.features") ?? []);
+            }
+
             $tenantData = [
                 'name' => $request->tenant_name,
                 'slogan' => $request->slogan,
@@ -283,7 +290,7 @@ class TenantsController extends Controller
                 'primary_color' => $request->primary_color ?? '#3B82F6',
                 'secondary_color' => $request->secondary_color ?? '#10B981',
                 'settings' => $request->settings ?? [],
-                'features' => $request->features ?? [],
+                'features' => $features,
             ];
 
             // Create tenant first (needed for tenant ID in file path)
@@ -1621,10 +1628,11 @@ class TenantsController extends Controller
     public function subscriptionAudits(Request $request, $id): JsonResponse
     {
         try {
-            if (! $this->canManageTenants()) {
+            $user = auth()->user();
+            if (! $user || ! $user->isSuperAdmin()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Unauthorized. Only SuperAdmin and EkklesiaAdmin can view subscription audits.',
+                    'message' => 'Unauthorized. Only SuperAdmin can view subscription audits.',
                 ], 403);
             }
 

@@ -166,6 +166,30 @@ class UserClergyLinkApiTest extends TestCase
     }
 
     #[Test]
+    public function get_user_returns_leadership_photo_when_user_has_no_profile_image(): void
+    {
+        $person = $this->makeClergyPerson('Alex', 'Priest');
+        $assignment = $this->assignClergy($person);
+        $assignment->update([
+            'photo_url' => "tenants/{$this->tenant->id}/leadership/test-leader.webp",
+        ]);
+
+        $clergyUser = User::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'person_id' => $person->id,
+            'email' => 'alex.priest@parish.test',
+            'active' => 1,
+        ]);
+        $clergyUser->roles()->attach($this->staffRole->id);
+
+        Passport::actingAs($clergyUser);
+
+        $this->getJson('/api/auth/get-user')
+            ->assertOk()
+            ->assertJsonPath('data.profile_image_full_url', fn ($url) => is_string($url) && $url !== '');
+    }
+
+    #[Test]
     public function store_user_rejects_person_already_linked_to_another_login(): void
     {
         $this->authenticateAdmin();

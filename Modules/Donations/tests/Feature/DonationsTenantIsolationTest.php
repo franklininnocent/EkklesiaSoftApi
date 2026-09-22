@@ -46,6 +46,27 @@ class DonationsTenantIsolationTest extends DonationsCertificationTestCase
     }
 
     #[Test]
+    public function operations_dashboard_never_includes_other_tenant_collections(): void
+    {
+        $a = $this->actingAsTenantWith(['donations.view', 'donations.collect']);
+        $seedA = $this->seedDue($a['tenant']->id);
+        $this->postJson('/api/tenant/donations/payments', $this->paymentPayload($seedA['family'], '50.00'))
+            ->assertCreated();
+
+        $b = $this->makeTenantUser(['donations.view', 'donations.collect']);
+        Passport::actingAs($b['user']);
+        $seedB = $this->seedDue($b['tenant']->id);
+        $this->postJson('/api/tenant/donations/payments', $this->paymentPayload($seedB['family'], '500.00'))
+            ->assertCreated();
+
+        Passport::actingAs($a['user']);
+
+        $response = $this->getJson('/api/tenant/donations/dashboard/operations');
+        $response->assertOk();
+        $this->assertSame(50.0, (float) $response->json('data.financial.totals.current_month_collected'));
+    }
+
+    #[Test]
     public function client_cannot_mass_assign_tenant_or_payment_status(): void
     {
         $ctx = $this->actingAsTenantWith(['donations.view', 'donations.collect']);

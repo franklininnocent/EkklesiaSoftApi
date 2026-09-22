@@ -20,16 +20,22 @@ class OperationsDashboardService
     {
         $summary = $this->dashboardService->getSummary($tenantId);
         $persona = $this->personaService->resolve($user, $summary['tenant_context'] ?? null);
+        $trend = $summary['collection_trend'] ?? [];
+        $periodCollections = $summary['period_collections'] ?? [];
 
         return [
             'persona' => $persona,
+            'tenant_context' => $summary['tenant_context'] ?? null,
+            'period' => $periodCollections['period'] ?? null,
+            'collection_trend' => array_values(array_slice($trend, -6)),
+            'collections_by_method_this_month' => $periodCollections['collections_by_method_this_month'] ?? [],
             'financial' => [
                 'health' => $summary['financial_health'] ?? null,
                 'totals' => [
                     'collected' => (float) ($summary['totals']['collected'] ?? 0),
                     'pending_dues' => (float) ($summary['totals']['pending_dues'] ?? 0),
-                    'current_month_collected' => (float) ($summary['period_collections']['current_month_collected'] ?? 0),
-                    'annual_collected' => (float) ($summary['period_collections']['annual_collected'] ?? 0),
+                    'current_month_collected' => (float) ($periodCollections['current_month_collected'] ?? 0),
+                    'annual_collected' => (float) ($periodCollections['annual_collected'] ?? 0),
                 ],
                 'families' => $summary['families'] ?? [],
                 'attention_summary' => $summary['attention_summary'] ?? ['count' => 0, 'total_overdue_amount' => 0],

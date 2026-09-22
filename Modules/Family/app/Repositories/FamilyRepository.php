@@ -141,7 +141,11 @@ class FamilyRepository
                 'country',
                 'state',
                 'members' => function ($query) {
-                    $query->orderBy('relationship_to_head');
+                    $query->with([
+                        'person:id,date_of_birth,gender,father_name,mother_name,father_person_id,mother_person_id',
+                        'person.father:id,first_name,middle_name,last_name,deleted_at',
+                        'person.mother:id,first_name,middle_name,last_name,deleted_at',
+                    ])->orderBy('relationship_to_head');
                 },
                 'creator:id,name',
                 'updater:id,name',
@@ -225,15 +229,17 @@ class FamilyRepository
     {
         $totalFamilies = Family::where('tenant_id', $tenantId)->count();
         $activeFamilies = Family::where('tenant_id', $tenantId)->where('status', 'active')->count();
-        $totalMembers = FamilyMember::whereHas('family', function ($q) use ($tenantId) {
-            $q->where('tenant_id', $tenantId);
-        })->count();
-        $activeMembers = FamilyMember::whereHas('family', function ($q) use ($tenantId) {
-            $q->where('tenant_id', $tenantId);
-        })->where('status', 'active')->count();
+        $totalMembers = $this->membersForTenant($tenantId)->count();
+        $activeMembers = $this->membersForTenant($tenantId)->where('status', 'active')->count();
 
         $familiesWithBCC = Family::where('tenant_id', $tenantId)->whereNotNull('bcc_id')->count();
         $familiesWithoutBCC = Family::where('tenant_id', $tenantId)->whereNull('bcc_id')->count();
+
+        $monthStart = now()->startOfMonth();
+        $monthEnd = now()->endOfMonth();
+        $membersCreatedThisMonth = $this->membersForTenant($tenantId)
+            ->whereBetween('created_at', [$monthStart, $monthEnd])
+            ->count();
 
         // Parish Zone removed; keep key for compatibility but empty list
         $familiesByZone = collect();
@@ -244,6 +250,7 @@ class FamilyRepository
             'inactive_families' => $totalFamilies - $activeFamilies,
             'total_members' => $totalMembers,
             'active_members' => $activeMembers,
+            'members_created_this_month' => $membersCreatedThisMonth,
             'families_with_bcc' => $familiesWithBCC,
             'families_without_bcc' => $familiesWithoutBCC,
             'families_by_zone' => $familiesByZone,
@@ -337,7 +344,11 @@ class FamilyRepository
     public function getFamilyMembers(string $familyId): Collection
     {
         return FamilyMember::where('family_id', $familyId)
-            ->with('person:id,date_of_birth,gender,father_name,mother_name')
+            ->with([
+                'person:id,date_of_birth,gender,father_name,mother_name,father_person_id,mother_person_id',
+                'person.father:id,first_name,middle_name,last_name,deleted_at',
+                'person.mother:id,first_name,middle_name,last_name,deleted_at',
+            ])
             ->orderBy('relationship_to_head')
             ->orderBy('date_of_birth')
             ->get();
@@ -383,12 +394,10 @@ class FamilyRepository
      */
     public function getAllMembers(string $tenantId, array $filters = [], int $perPage = 10, int $page = 1): LengthAwarePaginator
     {
-        $query = FamilyMember::whereHas('family', function ($q) use ($tenantId) {
-            $q->where('tenant_id', $tenantId);
-        })
+        $query = $this->membersForTenant($tenantId, ! empty($filters['bcc_id']) ? (string) $filters['bcc_id'] : null)
             ->with(['family' => function ($q) {
                 $q->with(['bcc:id,name,bcc_code']);
-            }, 'person:id,date_of_birth,gender,father_name,mother_name']);
+            }, 'person:id,date_of_birth,gender,father_name,mother_name,father_person_id,mother_person_id', 'person.father:id,first_name,middle_name,last_name,deleted_at', 'person.mother:id,first_name,middle_name,last_name,deleted_at']);
 
         // Apply search filter
         if (! empty($filters['search'])) {
@@ -405,13 +414,6 @@ class FamilyRepository
         // Apply status filter
         if (! empty($filters['status'])) {
             $query->where('status', $filters['status']);
-        }
-
-        // Apply BCC filter
-        if (! empty($filters['bcc_id'])) {
-            $query->whereHas('family', function ($q) use ($filters) {
-                $q->where('bcc_id', $filters['bcc_id']);
-            });
         }
 
         // Apply relationship filter (to identify family heads)
@@ -472,6 +474,28 @@ class FamilyRepository
 
         // Use paginate with explicit page number
         return $query->paginate($perPage, ['*'], 'page', $page);
+    }
+
+    /**
+     * Members in this tenant whose family still exists.
+     * Uses family_members.tenant_id (NOT NULL) and excludes soft-deleted families.
+     *
+     * @return Builder<FamilyMember>
+     */
+    private function membersForTenant(string $tenantId, ?string $bccId = null): Builder
+    {
+        return FamilyMember::query()
+            ->where('family_members.tenant_id', $tenantId)
+            ->whereIn('family_members.family_id', function ($query) use ($tenantId, $bccId): void {
+                $query->select('id')
+                    ->from('families')
+                    ->where('tenant_id', $tenantId)
+                    ->whereNull('deleted_at');
+
+                if ($bccId !== null && $bccId !== '') {
+                    $query->where('bcc_id', $bccId);
+                }
+            });
     }
 
     /**

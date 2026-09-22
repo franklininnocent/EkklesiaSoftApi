@@ -8,7 +8,7 @@ final class UserProfileImageAuthorization
 {
     public static function canView(User $subject, ?User $viewer): bool
     {
-        if ($subject->profile_image_path === null || $subject->profile_image_path === '' || ! $subject->tenant_id) {
+        if (! $subject->tenant_id || $subject->displayProfileImageStorageKey() === null) {
             return false;
         }
 

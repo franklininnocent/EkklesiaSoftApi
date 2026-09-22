@@ -17,6 +17,7 @@ use Modules\Family\app\Http\Requests\RelocateBccRequest;
 use Modules\Family\app\Http\Requests\SplitFamilyMemberRequest;
 use Modules\Family\app\Http\Requests\StoreFamilyMemberRequest;
 use Modules\Family\app\Http\Requests\StoreFamilyRequest;
+use Modules\Family\app\Http\Requests\UpdateFamilyRequest;
 use Modules\Family\app\Http\Requests\UpdateFamilyMemberRequest;
 use Modules\Family\app\Http\Requests\UploadFamilyHeadProfileImageRequest;
 use Modules\Family\app\Http\Requests\UploadFamilyProfileImageRequest;
@@ -26,6 +27,7 @@ use Modules\Family\app\Services\FamilyService;
 use Modules\Family\app\Services\FamilySplitService;
 use Modules\Family\app\Services\HouseholdTransitionHistoryRecorder;
 use Modules\Family\app\Services\MarriageHouseholdService;
+use Modules\Family\app\Services\MemberCelebrationsService;
 use Modules\Family\app\Services\ParishionerFamilyAccessService;
 use Modules\Family\Models\Family;
 use Modules\Tenants\Services\SupportSessionAuthorizationService;
@@ -48,6 +50,8 @@ class FamilyController extends Controller
 
     protected HouseholdTransitionHistoryRecorder $historyRecorder;
 
+    protected MemberCelebrationsService $memberCelebrationsService;
+
     /**
      * FamilyController constructor.
      */
@@ -59,6 +63,7 @@ class FamilyController extends Controller
         BccRelocationService $bccRelocationService,
         MarriageHouseholdService $marriageHouseholdService,
         HouseholdTransitionHistoryRecorder $historyRecorder,
+        MemberCelebrationsService $memberCelebrationsService,
     ) {
         $this->familyService = $familyService;
         $this->familySplitService = $familySplitService;
@@ -67,6 +72,7 @@ class FamilyController extends Controller
         $this->bccRelocationService = $bccRelocationService;
         $this->marriageHouseholdService = $marriageHouseholdService;
         $this->historyRecorder = $historyRecorder;
+        $this->memberCelebrationsService = $memberCelebrationsService;
     }
 
     private function parishionerMutationForbidden(): ?JsonResponse
@@ -1296,6 +1302,47 @@ class FamilyController extends Controller
     }
 
     /**
+     * Birthdays and wedding anniversaries for the current parish week (Mon–Sun, tenant timezone).
+     */
+    public function memberCelebrations(): JsonResponse
+    {
+        try {
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+
+            if (! $tenantId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tenant ID is required',
+                ], 403);
+            }
+
+            $user = Auth::user();
+            if ($user && $this->parishionerAccessService->isParishioner($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Parishioners cannot view the parish member directory.',
+                ], 403);
+            }
+
+            if ($response = $this->denyUnlessCanViewFamilies()) {
+                return $response;
+            }
+
+            $data = $this->memberCelebrationsService->weekCelebrations((int) $tenantId);
+
+            return response()->json([
+                'success' => true,
+                'data' => $data,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve member celebrations',
+            ], 500);
+        }
+    }
+
+    /**
      * Get all members across all families for the current tenant
      */
     public function allMembers(Request $request): JsonResponse
@@ -1316,6 +1363,10 @@ class FamilyController extends Controller
                     'success' => false,
                     'message' => 'Parishioners cannot view the parish member directory.',
                 ], 403);
+            }
+
+            if ($response = $this->denyUnlessCanViewFamilies()) {
+                return $response;
             }
 
             $filters = [
@@ -1347,7 +1398,6 @@ class FamilyController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve members',
-                'error' => $e->getMessage(),
             ], 500);
         }
     }

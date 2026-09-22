@@ -55,8 +55,15 @@ class ParishLeadershipAdapter implements LeadershipAdapterInterface
         }
 
         $history = $this->leadershipDomain->getHistory($tenantId, ['status' => LeadershipAssignmentStatus::ACTIVE], 100);
-        $assignment = collect($history->items())
-            ->first(function (array $item) use ($officeCode, $date) {
+        $items = collect($history->items())->map(function ($item) {
+            if ($item instanceof LeadershipAssignment) {
+                return $this->leadershipDomain->presentAssignment($item->loadMissing(['person', 'role']));
+            }
+
+            return is_array($item) ? $item : null;
+        })->filter()->values();
+
+        $assignment = $items->first(function (array $item) use ($officeCode, $date) {
                 if (! $this->matchesOffice($item, $officeCode)) {
                     return false;
                 }

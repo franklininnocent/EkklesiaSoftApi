@@ -49,8 +49,12 @@ class SacramentGapAnalysisBuilder
         bool $includeMarriageGaps = false
     ): array {
         $members = $this->memberQuery->eligibleMembers($tenantId, $bccId);
-        $receiptIndex = $this->receiptIndexBuilder->build($tenantId, $restrictedTypeCodes);
         $trackedTypes = $this->trackedSacramentTypes($types, $includeMarriageGaps);
+        $includedCodes = array_values(array_unique(array_merge(
+            array_column($trackedTypes, 'code'),
+            ['HOLY_ORDERS']
+        )));
+        $receiptIndex = $this->receiptIndexBuilder->build($tenantId, $restrictedTypeCodes, $includedCodes);
 
         $bySacrament = [];
         foreach ($trackedTypes as $type) {

@@ -54,10 +54,12 @@ return new class extends Migration
             $table->index('expires_at');
         });
 
-        DB::statement("ALTER TABLE notification_events ADD CONSTRAINT notification_events_scope_tenant_chk CHECK (
-            (inbox_scope = 'platform' AND tenant_id IS NULL) OR
-            (inbox_scope = 'tenant' AND tenant_id IS NOT NULL)
-        )");
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement("ALTER TABLE notification_events ADD CONSTRAINT notification_events_scope_tenant_chk CHECK (
+                (inbox_scope = 'platform' AND tenant_id IS NULL) OR
+                (inbox_scope = 'tenant' AND tenant_id IS NOT NULL)
+            )");
+        }
 
         Schema::create('user_notifications', function (Blueprint $table) {
             $table->uuid('id')->primary();
@@ -80,14 +82,21 @@ return new class extends Migration
             $table->index(['user_id', 'inbox_scope', 'tenant_id', 'archived_at', 'created_at']);
         });
 
-        DB::statement("ALTER TABLE user_notifications ADD CONSTRAINT user_notifications_scope_tenant_chk CHECK (
-            (inbox_scope = 'platform' AND tenant_id IS NULL) OR
-            (inbox_scope = 'tenant' AND tenant_id IS NOT NULL)
-        )");
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement("ALTER TABLE user_notifications ADD CONSTRAINT user_notifications_scope_tenant_chk CHECK (
+                (inbox_scope = 'platform' AND tenant_id IS NULL) OR
+                (inbox_scope = 'tenant' AND tenant_id IS NOT NULL)
+            )");
 
-        DB::statement('CREATE INDEX user_notifications_unread_idx ON user_notifications (user_id, inbox_scope, tenant_id) WHERE status = \'unread\' AND archived_at IS NULL AND deleted_at IS NULL');
-        DB::statement("CREATE INDEX user_notifications_action_required_idx ON user_notifications (user_id, inbox_scope, tenant_id, created_at DESC) WHERE action_status = 'required' AND archived_at IS NULL AND deleted_at IS NULL");
-        DB::statement('CREATE INDEX user_notifications_collapse_idx ON user_notifications (user_id, collapse_key) WHERE status = \'unread\' AND collapse_key IS NOT NULL');
+            DB::statement('CREATE INDEX user_notifications_unread_idx ON user_notifications (user_id, inbox_scope, tenant_id) WHERE status = \'unread\' AND archived_at IS NULL AND deleted_at IS NULL');
+            DB::statement("CREATE INDEX user_notifications_action_required_idx ON user_notifications (user_id, inbox_scope, tenant_id, created_at DESC) WHERE action_status = 'required' AND archived_at IS NULL AND deleted_at IS NULL");
+            DB::statement('CREATE INDEX user_notifications_collapse_idx ON user_notifications (user_id, collapse_key) WHERE status = \'unread\' AND collapse_key IS NOT NULL');
+        } else {
+            Schema::table('user_notifications', function (Blueprint $table) {
+                $table->index(['user_id', 'inbox_scope', 'tenant_id', 'status'], 'user_notifications_unread_idx');
+                $table->index(['user_id', 'collapse_key', 'status'], 'user_notifications_collapse_idx');
+            });
+        }
 
         Schema::create('notification_deliveries', function (Blueprint $table) {
             $table->uuid('id')->primary();

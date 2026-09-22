@@ -27,7 +27,9 @@ use Modules\Authentication\Database\Factories\UserFactory;
 use Modules\Family\Models\Person;
 use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Tenants\Models\Address;
+use Modules\Tenants\Models\LeadershipAssignment;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Support\LeadershipAssignmentStatus;
 use Modules\Tenants\Support\TenantContext;
 use Modules\Tenants\Support\TenantCacheVersion;
 
@@ -117,14 +119,15 @@ class User extends Authenticatable
      */
     public function getProfileImageFullUrlAttribute(): ?string
     {
-        if (empty($this->profile_image_path) || ! $this->tenant_id) {
+        $storageKey = $this->resolveProfileImageStorageKey();
+        if ($storageKey === null || ! $this->tenant_id) {
             return null;
         }
 
         $signer = app(ImageMediaUrlSigner::class);
 
         return $signer->displayUrl(
-            $this->profile_image_path,
+            $storageKey,
             (int) $this->tenant_id,
             fn (): bool => UserProfileImageAuthorization::canView($this, auth()->user())
         );
@@ -135,17 +138,56 @@ class User extends Authenticatable
      */
     public function getProfileImageThumbUrlAttribute(): ?string
     {
-        if (empty($this->profile_image_path) || ! $this->tenant_id) {
+        $storageKey = $this->resolveProfileImageStorageKey();
+        if ($storageKey === null || ! $this->tenant_id) {
             return null;
         }
 
         $signer = app(ImageMediaUrlSigner::class);
 
         return $signer->thumbUrl(
-            $this->profile_image_path,
+            $storageKey,
             (int) $this->tenant_id,
             fn (): bool => UserProfileImageAuthorization::canView($this, auth()->user())
         );
+    }
+
+    /**
+     * Storage key for the image shown on user profile surfaces.
+     */
+    public function displayProfileImageStorageKey(): ?string
+    {
+        return $this->resolveProfileImageStorageKey();
+    }
+
+    /**
+     * User-uploaded profile image, or linked active leadership assignment photo.
+     */
+    private function resolveProfileImageStorageKey(): ?string
+    {
+        if (! empty($this->profile_image_path)) {
+            return $this->profile_image_path;
+        }
+
+        return $this->resolveLinkedLeadershipPhotoStorageKey();
+    }
+
+    private function resolveLinkedLeadershipPhotoStorageKey(): ?string
+    {
+        if (empty($this->person_id) || ! $this->tenant_id) {
+            return null;
+        }
+
+        $photoUrl = LeadershipAssignment::query()
+            ->where('tenant_id', $this->tenant_id)
+            ->where('person_id', $this->person_id)
+            ->where('status', LeadershipAssignmentStatus::ACTIVE)
+            ->whereNotNull('photo_url')
+            ->where('photo_url', '!=', '')
+            ->orderByDesc('start_date')
+            ->value('photo_url');
+
+        return is_string($photoUrl) && $photoUrl !== '' ? $photoUrl : null;
     }
 
     /**

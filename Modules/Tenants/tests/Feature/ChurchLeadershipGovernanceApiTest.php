@@ -652,4 +652,122 @@ class ChurchLeadershipGovernanceApiTest extends TestCase
         $this->assertNotNull($activePastor);
         $this->assertSame($pastorB->id, $activePastor['person']['id']);
     }
+
+    #[Test]
+    public function assign_external_leader_persists_optional_contact_fields(): void
+    {
+        $this->authenticateAdmin();
+
+        $response = $this->postJson('/api/church-profile/leadership/assign', [
+            'is_external' => true,
+            'first_name' => 'Visiting',
+            'last_name' => 'Priest',
+            'role_id' => $this->deaconRole->id,
+            'start_date' => '2025-03-01',
+            'email' => 'visiting@parish.test',
+            'phone' => '+919876543210',
+        ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('data.person.email', 'visiting@parish.test')
+            ->assertJsonPath('data.person.phone', '+919876543210');
+
+        $personId = $response->json('data.person_id');
+        $this->assertDatabaseHas('persons', [
+            'id' => $personId,
+            'email' => 'visiting@parish.test',
+            'phone' => '+919876543210',
+        ]);
+    }
+
+    #[Test]
+    public function assign_existing_parishioner_updates_contact_fields(): void
+    {
+        $this->authenticateAdmin();
+        $person = $this->makePerson('Existing', 'Parishioner');
+
+        $response = $this->postJson('/api/church-profile/leadership/assign', [
+            'is_external' => false,
+            'person_id' => $person->id,
+            'role_id' => $this->deaconRole->id,
+            'start_date' => '2025-01-01',
+            'email' => 'leader@parish.test',
+            'phone' => '+911234567890',
+        ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('data.person.email', 'leader@parish.test')
+            ->assertJsonPath('data.person.phone', '+911234567890');
+
+        $this->assertDatabaseHas('persons', [
+            'id' => $person->id,
+            'email' => 'leader@parish.test',
+            'phone' => '+911234567890',
+        ]);
+    }
+
+    #[Test]
+    public function assign_rejects_invalid_email(): void
+    {
+        $this->authenticateAdmin();
+        $person = $this->makePerson('Invalid', 'Email');
+
+        $response = $this->postJson('/api/church-profile/leadership/assign', [
+            'is_external' => false,
+            'person_id' => $person->id,
+            'role_id' => $this->deaconRole->id,
+            'start_date' => '2025-01-01',
+            'email' => 'not-an-email',
+        ]);
+
+        $response->assertStatus(422)->assertJsonValidationErrors(['email']);
+    }
+
+    #[Test]
+    public function update_assignment_can_change_and_clear_contact_fields(): void
+    {
+        $this->authenticateAdmin();
+        $person = $this->makePerson('Contact', 'Leader');
+        $person->update([
+            'email' => 'old@parish.test',
+            'phone' => '+911111111111',
+        ]);
+
+        $assign = $this->postJson('/api/church-profile/leadership/assign', [
+            'is_external' => false,
+            'person_id' => $person->id,
+            'role_id' => $this->deaconRole->id,
+            'start_date' => '2025-01-01',
+        ])->assertCreated();
+
+        $assignmentId = $assign->json('data.id');
+
+        $this->putJson("/api/church-profile/leadership/assignments/{$assignmentId}", [
+            'first_name' => 'Contact',
+            'last_name' => 'Leader',
+            'role_id' => $this->deaconRole->id,
+            'start_date' => '2025-01-01',
+            'email' => 'new@parish.test',
+            'phone' => '+912222222222',
+        ])->assertOk()
+            ->assertJsonPath('data.person.email', 'new@parish.test')
+            ->assertJsonPath('data.person.phone', '+912222222222');
+
+        $this->putJson("/api/church-profile/leadership/assignments/{$assignmentId}", [
+            'first_name' => 'Contact',
+            'last_name' => 'Leader',
+            'role_id' => $this->deaconRole->id,
+            'start_date' => '2025-01-01',
+            'email' => '',
+            'phone' => '',
+        ])->assertOk()
+            ->assertJsonPath('data.person.email', null)
+            ->assertJsonPath('data.person.phone', null);
+
+        $this->assertDatabaseHas('persons', [
+            'id' => $person->id,
+            'email' => null,
+            'phone' => null,
+        ]);
+    }
 }

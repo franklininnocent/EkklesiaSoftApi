@@ -2,6 +2,7 @@
 
 namespace Modules\Donations\Tests\Feature;
 
+use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Laravel\Passport\Passport;
@@ -1821,6 +1822,10 @@ class DonationsApiTest extends TestCase
             ->assertJsonStructure([
                 'data' => [
                     'persona' => ['persona', 'label', 'emphasis', 'sections'],
+                    'tenant_context' => ['currency_code'],
+                    'period' => ['month_start', 'month_end', 'timezone'],
+                    'collection_trend',
+                    'collections_by_method_this_month',
                     'financial' => [
                         'totals' => ['collected', 'pending_dues', 'current_month_collected', 'annual_collected'],
                         'attention_summary' => ['count', 'total_overdue_amount'],
@@ -1830,6 +1835,83 @@ class DonationsApiTest extends TestCase
                     'saved_views',
                 ],
             ]);
+    }
+
+    #[Test]
+    public function it_bounds_current_month_collected_to_tenant_business_month(): void
+    {
+        $family = Family::factory()->create(['tenant_id' => $this->tenant->id, 'status' => 'active']);
+        $thisMonth = now()->startOfMonth()->toDateString();
+        $lastMonth = now()->copy()->subMonth()->endOfMonth()->toDateString();
+        $nextMonth = now()->copy()->addMonth()->startOfMonth()->toDateString();
+
+        DonationPayment::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'payment_number' => 'PAY-LAST-MONTH',
+            'payer_name' => 'Last Month',
+            'payment_date' => $lastMonth,
+            'amount' => 100,
+            'currency' => 'INR',
+            'method' => 'cash',
+            'status' => 'succeeded',
+            'source_type' => 'general',
+        ]);
+
+        DonationPayment::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'payment_number' => 'PAY-THIS-MONTH',
+            'payer_name' => 'This Month',
+            'payment_date' => $thisMonth,
+            'amount' => 200,
+            'currency' => 'INR',
+            'method' => 'bank_transfer',
+            'status' => 'succeeded',
+            'source_type' => 'general',
+        ]);
+
+        DonationPayment::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'payment_number' => 'PAY-NEXT-MONTH',
+            'payer_name' => 'Next Month',
+            'payment_date' => $nextMonth,
+            'amount' => 300,
+            'currency' => 'INR',
+            'method' => 'cheque',
+            'status' => 'succeeded',
+            'source_type' => 'general',
+        ]);
+
+        $response = $this->getJson('/api/tenant/donations/dashboard/operations');
+
+        $response->assertOk()
+            ->assertJsonPath('data.financial.totals.current_month_collected', 200.0)
+            ->assertJsonPath('data.collections_by_method_this_month.bank_transfer', 200.0);
+
+        $methodMix = $response->json('data.collections_by_method_this_month') ?? [];
+        $this->assertArrayNotHasKey('cash', $methodMix);
+        $this->assertArrayNotHasKey('cheque', $methodMix);
+
+        $trend = $response->json('data.collection_trend') ?? [];
+        $this->assertCount(6, $trend);
+        $lastBucket = end($trend);
+        $this->assertIsArray($lastBucket);
+        $this->assertSame(now()->format('Y-m'), $lastBucket['period']);
+        $this->assertSame(200.0, (float) $lastBucket['collected']);
+        $this->assertSame(
+            (float) $response->json('data.financial.totals.current_month_collected'),
+            (float) $lastBucket['collected']
+        );
+
+        $previousBucket = $trend[count($trend) - 2] ?? null;
+        $this->assertIsArray($previousBucket);
+        $this->assertSame(now()->copy()->subMonth()->format('Y-m'), $previousBucket['period']);
+        $this->assertSame(100.0, (float) $previousBucket['collected']);
+
+        $trendTotal = array_sum(array_map(static fn ($row) => (float) ($row['collected'] ?? 0), $trend));
+        $this->assertSame(300.0, $trendTotal);
     }
 
     #[Test]
@@ -2313,5 +2395,335 @@ class DonationsApiTest extends TestCase
         $yearResponse = $this->getJson('/api/tenant/donations/dashboard/command-center?period=year');
         $yearResponse->assertOk();
         $this->assertGreaterThanOrEqual(1, count($yearResponse->json('data.analytics.collection_trend')));
+    }
+
+    #[Test]
+    public function it_counts_only_collectable_period_dues_in_outstanding_total(): void
+    {
+        Passport::actingAs($this->tenantAdminUser);
+
+        $fund = Fund::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'Parish Fund',
+            'code' => 'PARISH-OUT',
+            'status' => 'active',
+        ]);
+
+        $plan = ContributionPlan::create([
+            'tenant_id' => $this->tenant->id,
+            'fund_id' => $fund->id,
+            'name' => 'Monthly Family Contribution',
+            'code' => 'MONTHLY-OUT',
+            'plan_type' => 'uniform',
+            'frequency' => 'monthly',
+            'default_amount' => 100,
+            'status' => 'active',
+        ]);
+
+        $family = Family::factory()->create(['tenant_id' => $this->tenant->id, 'status' => 'active']);
+        $currentStart = now()->startOfMonth();
+        $currentEnd = now()->copy()->endOfMonth();
+        $nextStart = $currentStart->copy()->addMonth()->startOfMonth();
+        $nextEnd = $nextStart->copy()->endOfMonth();
+
+        ContributionDue::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'plan_id' => $plan->id,
+            'period_label' => $currentStart->format('Y-m'),
+            'period_start' => $currentStart->toDateString(),
+            'period_end' => $currentEnd->toDateString(),
+            'due_date' => $currentEnd->toDateString(),
+            'amount_due' => 100,
+            'amount_paid' => 0,
+            'status' => 'pending',
+        ]);
+
+        ContributionDue::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'plan_id' => $plan->id,
+            'period_label' => $nextStart->format('Y-m'),
+            'period_start' => $nextStart->toDateString(),
+            'period_end' => $nextEnd->toDateString(),
+            'due_date' => $nextEnd->toDateString(),
+            'amount_due' => 100,
+            'amount_paid' => 0,
+            'status' => 'pending',
+        ]);
+
+        $response = $this->getJson("/api/tenant/donations/families/{$family->id}/financial-profile");
+
+        $response->assertOk()
+            ->assertJsonPath('data.outstanding_balances.total', 100)
+            ->assertJsonPath('data.totals.pending_due', 100)
+            ->assertJsonPath('data.mandatory_contributions.totals.pending', 100);
+
+        $this->assertCount(1, $response->json('data.mandatory_contributions.current_period_dues'));
+        $this->assertCount(1, $response->json('data.mandatory_contributions.scheduled_dues'));
+    }
+
+    #[Test]
+    public function it_classifies_fund_allocations_as_voluntary_paid_without_reducing_outstanding(): void
+    {
+        Passport::actingAs($this->tenantAdminUser);
+
+        $fund = Fund::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'General Fund',
+            'code' => 'GEN-FUND',
+            'status' => 'active',
+        ]);
+
+        $plan = ContributionPlan::create([
+            'tenant_id' => $this->tenant->id,
+            'fund_id' => $fund->id,
+            'name' => 'Monthly',
+            'code' => 'MON-FUND',
+            'plan_type' => 'uniform',
+            'frequency' => 'monthly',
+            'default_amount' => 100,
+            'status' => 'active',
+        ]);
+
+        $family = Family::factory()->create(['tenant_id' => $this->tenant->id, 'status' => 'active']);
+
+        $due = ContributionDue::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'plan_id' => $plan->id,
+            'period_label' => now()->format('Y-m'),
+            'period_start' => now()->startOfMonth()->toDateString(),
+            'period_end' => now()->endOfMonth()->toDateString(),
+            'due_date' => now()->endOfMonth()->toDateString(),
+            'amount_due' => 100,
+            'amount_paid' => 0,
+            'status' => 'pending',
+        ]);
+
+        $this->postJson('/api/tenant/donations/payments', [
+            'family_id' => $family->id,
+            'payer_name' => 'Test Family',
+            'payment_date' => now()->toDateString(),
+            'amount' => 100,
+            'method' => 'cash',
+            'allocations' => [
+                ['allocatable_type' => 'fund', 'allocatable_id' => $fund->id, 'amount' => 100],
+            ],
+        ])->assertCreated();
+
+        $response = $this->getJson("/api/tenant/donations/families/{$family->id}/financial-profile");
+
+        $response->assertOk()
+            ->assertJsonPath('data.totals.total_paid', 100)
+            ->assertJsonPath('data.totals.voluntary_paid', 100)
+            ->assertJsonPath('data.totals.mandatory_paid', 0)
+            ->assertJsonPath('data.outstanding_balances.total', 100)
+            ->assertJsonPath('data.mandatory_contributions.totals.paid', 0);
+
+        $this->assertSame('pending', $due->fresh()->status);
+    }
+
+    #[Test]
+    public function it_clears_outstanding_when_payment_is_allocated_to_due(): void
+    {
+        Passport::actingAs($this->tenantAdminUser);
+
+        $fund = Fund::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'Parish Fund',
+            'code' => 'PARISH-DUE',
+            'status' => 'active',
+        ]);
+
+        $plan = ContributionPlan::create([
+            'tenant_id' => $this->tenant->id,
+            'fund_id' => $fund->id,
+            'name' => 'Monthly',
+            'code' => 'MON-DUE',
+            'plan_type' => 'uniform',
+            'frequency' => 'monthly',
+            'default_amount' => 100,
+            'status' => 'active',
+        ]);
+
+        $family = Family::factory()->create(['tenant_id' => $this->tenant->id, 'status' => 'active']);
+
+        $due = ContributionDue::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'plan_id' => $plan->id,
+            'period_label' => now()->format('Y-m'),
+            'period_start' => now()->startOfMonth()->toDateString(),
+            'period_end' => now()->endOfMonth()->toDateString(),
+            'due_date' => now()->endOfMonth()->toDateString(),
+            'amount_due' => 100,
+            'amount_paid' => 0,
+            'status' => 'pending',
+        ]);
+
+        $this->postJson('/api/tenant/donations/payments', [
+            'family_id' => $family->id,
+            'payer_name' => 'Test Family',
+            'payment_date' => now()->toDateString(),
+            'amount' => 100,
+            'method' => 'cash',
+            'allocations' => [
+                ['allocatable_type' => 'due', 'allocatable_id' => $due->id, 'amount' => 100],
+            ],
+        ])->assertCreated();
+
+        $response = $this->getJson("/api/tenant/donations/families/{$family->id}/financial-profile");
+
+        $response->assertOk()
+            ->assertJsonPath('data.totals.total_paid', 100)
+            ->assertJsonPath('data.totals.mandatory_paid', 100)
+            ->assertJsonPath('data.outstanding_balances.total', 0)
+            ->assertJsonPath('data.totals.pending_due', 0)
+            ->assertJsonPath('data.mandatory_contributions.totals.paid', 100);
+
+        $this->assertSame('paid', $due->fresh()->status);
+        $this->assertSame('100.00', (string) $due->fresh()->amount_paid);
+    }
+
+    #[Test]
+    public function it_generates_full_schedule_catch_up_through_current_period(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-09-19 10:00:00', 'Asia/Kolkata'));
+
+        $fund = Fund::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'Monthly Fund',
+            'code' => 'MONTHLY_FUND',
+            'status' => 'active',
+        ]);
+
+        Family::factory()->count(2)->create(['tenant_id' => $this->tenant->id, 'status' => 'active']);
+
+        $plan = ContributionPlan::create([
+            'tenant_id' => $this->tenant->id,
+            'fund_id' => $fund->id,
+            'name' => 'Monthly Family Contribution',
+            'code' => 'MONTHLY_FAMILY',
+            'plan_type' => 'uniform',
+            'frequency' => 'monthly',
+            'default_amount' => 100,
+            'start_date' => '2026-01-01',
+            'end_date' => '2026-12-31',
+            'auto_generate' => true,
+            'status' => 'active',
+        ]);
+
+        $preview = $this->getJson("/api/tenant/donations/plans/{$plan->id}/generation-preview");
+        $preview->assertOk()->assertJsonPath('data.period_count', 9);
+
+        $response = $this->postJson("/api/tenant/donations/plans/{$plan->id}/generate-dues", [
+            'generate_full_schedule' => true,
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('data.generated_count', 18)
+            ->assertJsonPath('data.period_count', 9);
+
+        $this->assertSame(18, ContributionDue::forTenant($this->tenant->id)->where('plan_id', $plan->id)->count());
+
+        $repeat = $this->postJson("/api/tenant/donations/plans/{$plan->id}/generate-dues", [
+            'generate_full_schedule' => true,
+        ]);
+
+        $repeat->assertOk()
+            ->assertJsonPath('data.generated_count', 0)
+            ->assertJsonPath('data.unchanged_count', 18);
+
+        $this->assertSame(18, ContributionDue::forTenant($this->tenant->id)->where('plan_id', $plan->id)->count());
+
+        Carbon::setTestNow();
+    }
+
+    #[Test]
+    public function scheduled_generation_catch_up_creates_all_eligible_periods(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-09-19 10:00:00', 'Asia/Kolkata'));
+
+        $fund = Fund::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'Scheduled Fund',
+            'code' => 'SCHED_FUND',
+            'status' => 'active',
+        ]);
+
+        Family::factory()->create(['tenant_id' => $this->tenant->id, 'status' => 'active']);
+
+        $plan = ContributionPlan::create([
+            'tenant_id' => $this->tenant->id,
+            'fund_id' => $fund->id,
+            'name' => 'Auto Monthly',
+            'code' => 'AUTO_MONTHLY',
+            'plan_type' => 'uniform',
+            'frequency' => 'monthly',
+            'default_amount' => 100,
+            'start_date' => '2026-01-01',
+            'end_date' => '2026-12-31',
+            'auto_generate' => true,
+            'status' => 'active',
+        ]);
+
+        $response = $this->postJson('/api/tenant/donations/contributions/generate-scheduled');
+
+        $response->assertOk()->assertJsonPath('data.generated', 9);
+        $this->assertSame(9, ContributionDue::forTenant($this->tenant->id)->where('plan_id', $plan->id)->count());
+
+        Carbon::setTestNow();
+    }
+
+    #[Test]
+    public function full_schedule_generation_preserves_paid_installment(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-09-19 10:00:00', 'Asia/Kolkata'));
+
+        $fund = Fund::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'Preserve Fund',
+            'code' => 'PRESERVE_FUND',
+            'status' => 'active',
+        ]);
+
+        $family = Family::factory()->create(['tenant_id' => $this->tenant->id, 'status' => 'active']);
+
+        $plan = ContributionPlan::create([
+            'tenant_id' => $this->tenant->id,
+            'fund_id' => $fund->id,
+            'name' => 'Preserve Paid',
+            'code' => 'PRESERVE_PAID',
+            'plan_type' => 'uniform',
+            'frequency' => 'monthly',
+            'default_amount' => 100,
+            'start_date' => '2026-01-01',
+            'end_date' => '2026-12-31',
+            'status' => 'active',
+        ]);
+
+        $januaryDue = ContributionDue::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'plan_id' => $plan->id,
+            'period_label' => '2026-01',
+            'period_start' => '2026-01-01',
+            'period_end' => '2026-01-31',
+            'due_date' => '2026-01-31',
+            'amount_due' => 100,
+            'amount_paid' => 100,
+            'status' => 'paid',
+        ]);
+
+        $this->postJson("/api/tenant/donations/plans/{$plan->id}/generate-dues", [
+            'generate_full_schedule' => true,
+        ])->assertOk();
+
+        $januaryDue->refresh();
+        $this->assertSame('paid', $januaryDue->status);
+        $this->assertSame('100.00', (string) $januaryDue->amount_paid);
+
+        Carbon::setTestNow();
     }
 }

@@ -81,6 +81,15 @@ class BishopAuthorizationTest extends TestCase
     }
 
     #[Test]
+    public function ekklesia_admin_cannot_view_bishop_audit_even_with_permission(): void
+    {
+        $user = $this->platformUser(['bishops.view_audit'], Role::EKKLESIA_ADMIN);
+        $bishop = BishopManagement::factory()->create(['archdiocese_id' => $this->diocese->id]);
+
+        $this->assertFalse($this->bishopPolicy->viewAudit($user, $bishop));
+    }
+
+    #[Test]
     public function platform_viewer_can_view_but_not_create_bishops(): void
     {
         $user = $this->platformUser(['bishops.view']);

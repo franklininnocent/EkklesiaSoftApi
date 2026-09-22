@@ -13,6 +13,7 @@ use Modules\Donations\Models\ContributionDue;
 use Modules\Donations\Services\ContributionDueService;
 use Modules\Donations\Services\DonationAuditService;
 use Modules\Donations\Support\ContributionBalance;
+use Modules\Donations\Support\DonationBusinessDate;
 
 class ContributionDuesController extends Controller
 {
@@ -37,14 +38,21 @@ class ContributionDuesController extends Controller
         if ($request->filled('plan_id')) {
             $query->where('plan_id', $request->string('plan_id'));
         }
+        $businessDate = DonationBusinessDate::today($tenantId);
+
         if ($request->boolean('overdue_only')) {
-            $query->whereDate('due_date', '<', now()->toDateString())
-                ->whereIn('status', ['pending', 'partially_paid']);
+            ContributionBalance::scopeOverdue($query, $businessDate);
+        }
+
+        if ($request->boolean('actionable')) {
+            ContributionBalance::scopeCollectable($query, $businessDate);
         }
 
         $paginator = $query->orderBy('due_date')->paginate((int) $request->input('per_page', 20));
-        $paginator->getCollection()->transform(function (ContributionDue $due): ContributionDue {
+        $paginator->getCollection()->transform(function (ContributionDue $due) use ($businessDate): ContributionDue {
             $due->setAttribute('outstanding_amount', ContributionBalance::outstandingForDue($due));
+            $due->setAttribute('is_overdue', ContributionBalance::scheduleState($due, $businessDate) === 'overdue');
+            $due->setAttribute('schedule_state', ContributionBalance::scheduleState($due, $businessDate));
 
             return $due;
         });

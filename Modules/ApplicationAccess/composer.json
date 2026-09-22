@@ -12,5 +12,10 @@
             "Modules\\ApplicationAccess\\": "app/",
             "Modules\\ApplicationAccess\\Database\\Seeders\\": "database/seeders/"
         }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Modules\\ApplicationAccess\\Tests\\": "tests/"
+        }
     }
 }

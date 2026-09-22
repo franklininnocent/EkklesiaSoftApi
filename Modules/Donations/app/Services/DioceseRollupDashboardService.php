@@ -2,10 +2,13 @@
 
 namespace Modules\Donations\Services;
 
+use Illuminate\Support\Facades\DB;
 use Modules\Donations\Models\ContributionDue;
 use Modules\Donations\Models\DonationPayment;
 use Modules\Donations\Models\DonationProject;
 use Modules\Donations\Support\ContributionBalance;
+use Modules\Donations\Support\DonationBusinessDate;
+use Modules\Donations\Support\MoneyMath;
 use Modules\Family\Models\Family;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Services\TenantHierarchyService;
@@ -48,8 +51,24 @@ class DioceseRollupDashboardService
             ];
         }
 
-        $consolidated = $this->buildConsolidatedMetrics($scopeTenantIds);
-        $parishRows = $parishNodes->map(fn (Tenant $parish) => $this->buildParishRow($parish))->values()->all();
+        $parishScopes = [];
+        foreach ($parishNodes as $parish) {
+            $parishScopes[(int) $parish->id] = $this->hierarchyService->descendantIds((int) $parish->id, true);
+        }
+
+        $metricTenantIds = $scopeTenantIds;
+        foreach ($parishScopes as $ids) {
+            foreach ($ids as $id) {
+                $metricTenantIds[] = (int) $id;
+            }
+        }
+        $metricTenantIds = array_values(array_unique(array_map('intval', $metricTenantIds)));
+        $byTenant = $this->metricsByTenant($metricTenantIds);
+
+        $consolidated = $this->composeMetrics($scopeTenantIds, $byTenant);
+        $parishRows = $parishNodes->map(function (Tenant $parish) use ($parishScopes, $byTenant): array {
+            return $this->buildParishRow($parish, $parishScopes[(int) $parish->id] ?? [], $byTenant);
+        })->values()->all();
         $trend = $this->buildConsolidatedTrend($scopeTenantIds);
 
         $participationRate = $consolidated['active_families'] > 0
@@ -104,76 +123,168 @@ class DioceseRollupDashboardService
     }
 
     /**
-     * @param array<int> $tenantIds
-     * @return array<string, mixed>
+     * One pass of additive metrics keyed by tenant. Parish rows sum the tenants
+     * already in their descendant set instead of repeating every aggregate.
+     *
+     * @param  array<int>  $tenantIds
+     * @return array<int, array<string, float|int>>
      */
-    private function buildConsolidatedMetrics(array $tenantIds): array
+    private function metricsByTenant(array $tenantIds): array
     {
-        $totalCollected = (float) DonationPayment::query()
-            ->whereIn('tenant_id', $tenantIds)
-            ->where('status', 'succeeded')
-            ->sum('amount');
+        $blank = [
+            'total_collected' => 0.0,
+            'pending_dues' => 0.0,
+            'overdue_amount' => 0.0,
+            'current_month_collected' => 0.0,
+            'previous_month_collected' => 0.0,
+            'active_families' => 0,
+            'participating_families' => 0,
+            'overdue_family_count' => 0,
+            'active_projects' => 0,
+            'project_progress_sum' => 0.0,
+            'project_count_for_avg' => 0,
+        ];
 
-        $pendingDues = (float) ContributionDue::query()
+        $byTenant = [];
+        foreach ($tenantIds as $tenantId) {
+            $byTenant[(int) $tenantId] = $blank;
+        }
+
+        if ($tenantIds === []) {
+            return $byTenant;
+        }
+
+        $payments = DonationPayment::query()
             ->whereIn('tenant_id', $tenantIds)
-            ->whereIn('status', ['pending', 'partially_paid'])
-            ->get()
-            ->sum(fn (ContributionDue $due) => ContributionBalance::outstandingForDue($due));
+            ->where('status', 'succeeded');
+
+        foreach ((clone $payments)->selectRaw('tenant_id, COALESCE(SUM(amount), 0) as total')->groupBy('tenant_id')->get() as $row) {
+            $byTenant[(int) $row->tenant_id]['total_collected'] = (float) $row->total;
+        }
 
         $currentMonthStart = now()->startOfMonth()->toDateString();
         $previousMonthStart = now()->copy()->subMonth()->startOfMonth()->toDateString();
         $previousMonthEnd = now()->copy()->subMonth()->endOfMonth()->toDateString();
 
-        $currentMonth = (float) DonationPayment::query()
-            ->whereIn('tenant_id', $tenantIds)
-            ->where('status', 'succeeded')
-            ->whereDate('payment_date', '>=', $currentMonthStart)
-            ->sum('amount');
+        foreach ((clone $payments)->whereDate('payment_date', '>=', $currentMonthStart)->selectRaw('tenant_id, COALESCE(SUM(amount), 0) as total')->groupBy('tenant_id')->get() as $row) {
+            $byTenant[(int) $row->tenant_id]['current_month_collected'] = (float) $row->total;
+        }
 
-        $previousMonth = (float) DonationPayment::query()
+        foreach ((clone $payments)->whereBetween('payment_date', [$previousMonthStart, $previousMonthEnd])->selectRaw('tenant_id, COALESCE(SUM(amount), 0) as total')->groupBy('tenant_id')->get() as $row) {
+            $byTenant[(int) $row->tenant_id]['previous_month_collected'] = (float) $row->total;
+        }
+
+        foreach ((clone $payments)
+            ->whereNotNull('family_id')
+            ->whereDate('payment_date', '>=', now()->subDays(90)->toDateString())
+            ->selectRaw('tenant_id, COUNT(DISTINCT family_id) as participating')
+            ->groupBy('tenant_id')
+            ->get() as $row) {
+            $byTenant[(int) $row->tenant_id]['participating_families'] = (int) $row->participating;
+        }
+
+        $idsByBusinessDate = [];
+        foreach ($tenantIds as $tenantId) {
+            $idsByBusinessDate[DonationBusinessDate::today((int) $tenantId)][] = (int) $tenantId;
+        }
+
+        foreach ($idsByBusinessDate as $businessDate => $ids) {
+            $rows = ContributionBalance::scopeCollectable(
+                ContributionDue::query()->whereIn('tenant_id', $ids),
+                (string) $businessDate
+            )
+                ->selectRaw('tenant_id, COALESCE(SUM(amount_due - amount_paid), 0) as outstanding')
+                ->groupBy('tenant_id')
+                ->get();
+
+            foreach ($rows as $row) {
+                $byTenant[(int) $row->tenant_id]['pending_dues'] = MoneyMath::toApiNumber($row->outstanding);
+            }
+        }
+
+        $today = now()->toDateString();
+        $overdueRows = ContributionDue::query()
             ->whereIn('tenant_id', $tenantIds)
-            ->where('status', 'succeeded')
-            ->whereBetween('payment_date', [$previousMonthStart, $previousMonthEnd])
-            ->sum('amount');
+            ->whereIn('status', ['pending', 'partially_paid'])
+            ->whereDate('due_date', '<', $today)
+            ->selectRaw(
+                'tenant_id, COALESCE(SUM(CASE WHEN COALESCE(amount_paid, 0) > COALESCE(amount_due, 0) THEN 0 ELSE COALESCE(amount_due, 0) - COALESCE(amount_paid, 0) END), 0) as overdue_amount, COUNT(DISTINCT family_id) + MAX(CASE WHEN family_id IS NULL THEN 1 ELSE 0 END) as overdue_families'
+            )
+            ->groupBy('tenant_id')
+            ->get();
+
+        foreach ($overdueRows as $row) {
+            $byTenant[(int) $row->tenant_id]['overdue_amount'] = (float) $row->overdue_amount;
+            $byTenant[(int) $row->tenant_id]['overdue_family_count'] = (int) $row->overdue_families;
+        }
+
+        foreach (Family::query()->whereIn('tenant_id', $tenantIds)->where('status', 'active')->selectRaw('tenant_id, COUNT(*) as active_families')->groupBy('tenant_id')->get() as $row) {
+            $byTenant[(int) $row->tenant_id]['active_families'] = (int) $row->active_families;
+        }
+
+        $projects = DonationProject::query()
+            ->whereIn('tenant_id', $tenantIds)
+            ->where('status', 'active')
+            ->get(['tenant_id', 'target_amount', 'raised_amount']);
+
+        foreach ($projects as $project) {
+            $tenantId = (int) $project->tenant_id;
+            if (! isset($byTenant[$tenantId])) {
+                continue;
+            }
+            $target = max((float) $project->target_amount, 1);
+            $byTenant[$tenantId]['project_progress_sum'] += min(100, ((float) $project->raised_amount / $target) * 100);
+            $byTenant[$tenantId]['project_count_for_avg']++;
+            $byTenant[$tenantId]['active_projects']++;
+        }
+
+        return $byTenant;
+    }
+
+    /**
+     * @param  array<int>  $tenantIds
+     * @param  array<int, array<string, float|int>>  $byTenant
+     * @return array<string, mixed>
+     */
+    private function composeMetrics(array $tenantIds, array $byTenant): array
+    {
+        $totalCollected = 0.0;
+        $pendingDues = 0.0;
+        $overdueAmount = 0.0;
+        $currentMonth = 0.0;
+        $previousMonth = 0.0;
+        $activeFamilies = 0;
+        $participatingFamilies = 0;
+        $overdueFamilies = 0;
+        $activeProjects = 0;
+        $progressSum = 0.0;
+        $progressCount = 0;
+
+        foreach (array_unique(array_map('intval', $tenantIds)) as $tenantId) {
+            $row = $byTenant[$tenantId] ?? null;
+            if ($row === null) {
+                continue;
+            }
+
+            $totalCollected += (float) $row['total_collected'];
+            $pendingDues += (float) $row['pending_dues'];
+            $overdueAmount += (float) $row['overdue_amount'];
+            $currentMonth += (float) $row['current_month_collected'];
+            $previousMonth += (float) $row['previous_month_collected'];
+            $activeFamilies += (int) $row['active_families'];
+            $participatingFamilies += (int) $row['participating_families'];
+            $overdueFamilies += (int) $row['overdue_family_count'];
+            $activeProjects += (int) $row['active_projects'];
+            $progressSum += (float) $row['project_progress_sum'];
+            $progressCount += (int) $row['project_count_for_avg'];
+        }
 
         $growthPct = $previousMonth > 0
             ? round((($currentMonth - $previousMonth) / $previousMonth) * 100, 1)
             : ($currentMonth > 0 ? 100.0 : 0.0);
 
-        $activeFamilies = Family::query()->whereIn('tenant_id', $tenantIds)->where('status', 'active')->count();
-        $participatingFamilies = DonationPayment::query()
-            ->whereIn('tenant_id', $tenantIds)
-            ->where('status', 'succeeded')
-            ->whereNotNull('family_id')
-            ->whereDate('payment_date', '>=', now()->subDays(90)->toDateString())
-            ->pluck('family_id')
-            ->unique()
-            ->count();
-
-        $today = now()->toDateString();
-        $overdueAmount = (float) ContributionDue::query()
-            ->whereIn('tenant_id', $tenantIds)
-            ->whereIn('status', ['pending', 'partially_paid'])
-            ->whereDate('due_date', '<', $today)
-            ->get()
-            ->sum(fn (ContributionDue $due) => ContributionBalance::outstandingForDue($due));
-
-        $overdueFamilies = ContributionDue::query()
-            ->whereIn('tenant_id', $tenantIds)
-            ->whereIn('status', ['pending', 'partially_paid'])
-            ->whereDate('due_date', '<', $today)
-            ->pluck('family_id')
-            ->unique()
-            ->count();
-
+        $projectMomentum = $progressCount > 0 ? $progressSum / $progressCount : 0.0;
         $overdueRatioPct = $pendingDues > 0 ? min(100, round(($overdueAmount / $pendingDues) * 100, 1)) : 0.0;
-
-        $projects = DonationProject::query()->whereIn('tenant_id', $tenantIds)->where('status', 'active')->get();
-        $projectMomentum = $projects->avg(function (DonationProject $project): float {
-            $target = max((float) $project->target_amount, 1);
-
-            return min(100, ((float) $project->raised_amount / $target) * 100);
-        }) ?? 0.0;
 
         return [
             'total_collected' => round($totalCollected, 2),
@@ -187,18 +298,18 @@ class DioceseRollupDashboardService
             'overdue_family_count' => $overdueFamilies,
             'overdue_ratio_pct' => $overdueRatioPct,
             'project_momentum_pct' => round((float) $projectMomentum, 1),
-            'active_projects' => $projects->count(),
+            'active_projects' => $activeProjects,
         ];
     }
 
     /**
+     * @param  array<int>  $scopeIds
+     * @param  array<int, array<string, float|int>>  $byTenant
      * @return array<string, mixed>
      */
-    private function buildParishRow(Tenant $parish): array
+    private function buildParishRow(Tenant $parish, array $scopeIds, array $byTenant): array
     {
-        $tenantId = (int) $parish->id;
-        $scopeIds = $this->hierarchyService->descendantIds($tenantId, true);
-        $metrics = $this->buildConsolidatedMetrics($scopeIds);
+        $metrics = $this->composeMetrics($scopeIds, $byTenant);
 
         $participationRate = $metrics['active_families'] > 0
             ? round(($metrics['participating_families'] / $metrics['active_families']) * 100, 1)
@@ -228,11 +339,18 @@ class DioceseRollupDashboardService
     private function buildConsolidatedTrend(array $tenantIds): array
     {
         $start = now()->subMonths(11)->startOfMonth();
-        $payments = DonationPayment::query()
+        $monthExpr = DB::connection()->getDriverName() === 'pgsql'
+            ? "TO_CHAR(payment_date, 'YYYY-MM')"
+            : "strftime('%Y-%m', payment_date)";
+
+        $collectedByMonth = DonationPayment::query()
             ->whereIn('tenant_id', $tenantIds)
             ->where('status', 'succeeded')
             ->whereDate('payment_date', '>=', $start->toDateString())
-            ->get();
+            ->selectRaw("{$monthExpr} as period, COALESCE(SUM(amount), 0) as collected")
+            ->groupByRaw($monthExpr)
+            ->get()
+            ->mapWithKeys(fn ($row) => [trim((string) $row->period) => $row->collected]);
 
         $buckets = [];
         for ($i = 0; $i < 12; $i++) {
@@ -241,15 +359,8 @@ class DioceseRollupDashboardService
             $buckets[$key] = [
                 'period' => $key,
                 'label' => $month->format('M Y'),
-                'collected' => 0.0,
+                'collected' => (float) ($collectedByMonth[$key] ?? 0),
             ];
-        }
-
-        foreach ($payments as $payment) {
-            $key = $payment->payment_date?->format('Y-m');
-            if ($key && isset($buckets[$key])) {
-                $buckets[$key]['collected'] += (float) $payment->amount;
-            }
         }
 
         return array_values(array_map(function (array $row): array {

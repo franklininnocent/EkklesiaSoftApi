@@ -26,7 +26,9 @@ class SacramentLegacyDenormMapper
             switch ($role) {
                 case SacramentParticipantRole::RECIPIENT:
                 case SacramentParticipantRole::CANDIDATE:
-                    $attrs['recipient_name'] = $name;
+                    if ($name) {
+                        $attrs['recipient_name'] = $name;
+                    }
                     if (! empty($snapshot['date_of_birth'])) {
                         $attrs['recipient_birth_date'] = $snapshot['date_of_birth'];
                     } elseif (! empty($p['external_date_of_birth'])) {
@@ -59,23 +61,33 @@ class SacramentLegacyDenormMapper
                     break;
 
                 case SacramentParticipantRole::FATHER:
-                    $attrs['father_name'] = $name;
+                    if ($name) {
+                        $attrs['father_name'] = $name;
+                    }
                     break;
 
                 case SacramentParticipantRole::MOTHER:
-                    $attrs['mother_name'] = $name;
+                    if ($name) {
+                        $attrs['mother_name'] = $name;
+                    }
                     break;
 
                 case SacramentParticipantRole::GODFATHER:
-                    $attrs['godparent1_name'] = $name;
+                    if ($name) {
+                        $attrs['godparent1_name'] = $name;
+                    }
                     break;
 
                 case SacramentParticipantRole::GODMOTHER:
-                    $attrs['godparent2_name'] = $name;
+                    if ($name) {
+                        $attrs['godparent2_name'] = $name;
+                    }
                     break;
 
                 case SacramentParticipantRole::MINISTER:
-                    $attrs['minister_name'] = $name;
+                    if ($name) {
+                        $attrs['minister_name'] = $name;
+                    }
                     $attrs['minister_title'] = $p['external_title']
                         ?? ($snapshot['title'] ?? null);
                     break;

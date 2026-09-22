@@ -32,6 +32,7 @@ class PasswordRecoveryDailyLimitMail extends Mailable implements ShouldQueue
     public function content(): Content
     {
         return new Content(
+            html: 'emails.messages.password-recovery-daily-limit',
             text: 'authentication::emails.password-recovery-daily-limit',
             with: [
                 'targetUserName' => $this->targetUserName,
@@ -39,6 +40,7 @@ class PasswordRecoveryDailyLimitMail extends Mailable implements ShouldQueue
                 'tenantName' => $this->tenantName,
                 'attemptCount' => $this->attemptCount,
                 'detectedAt' => $this->detectedAt,
+                'preheader' => 'Multiple password recovery attempts were detected.',
             ],
         );
     }

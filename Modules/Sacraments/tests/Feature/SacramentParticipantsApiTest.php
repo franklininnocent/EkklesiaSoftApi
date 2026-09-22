@@ -14,7 +14,11 @@ use Modules\Sacraments\Models\Sacrament;
 use Modules\Sacraments\Models\SacramentParticipant;
 use Modules\Sacraments\Models\SacramentType;
 use Modules\Tenants\Models\ChurchLeadership;
+use Modules\Tenants\Models\ChurchProfile;
+use Modules\Tenants\Models\LeadershipAssignment;
+use Modules\Tenants\Models\LeadershipRole;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Support\LeadershipAssignmentStatus;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -606,6 +610,58 @@ class SacramentParticipantsApiTest extends TestCase
 
         $response->assertCreated()
             ->assertJsonPath('data.minister_name', 'Fr. Parish Priest');
+    }
+
+    #[Test]
+    public function it_supports_internal_leadership_minister_via_assignment(): void
+    {
+        $profile = ChurchProfile::factory()->create(['tenant_id' => $this->tenant->id]);
+        $person = Person::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'first_name' => 'Andrew',
+            'last_name' => 'Kosmos',
+        ]);
+        $role = LeadershipRole::query()->where('title', 'Pastor')->first()
+            ?? LeadershipRole::factory()->pastor()->create();
+
+        $assignment = LeadershipAssignment::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'church_profile_id' => $profile->id,
+            'person_id' => $person->id,
+            'role_id' => $role->id,
+            'status' => LeadershipAssignmentStatus::ACTIVE,
+            'start_date' => now()->subMonth()->toDateString(),
+        ]);
+
+        $response = $this->postJson('/api/sacraments', array_merge($this->baptismIdentity(), [
+            'sacrament_type_id' => $this->baptismType->id,
+            'date_administered' => '2026-08-05',
+            'participants' => [
+                [
+                    'role' => 'recipient',
+                    'source' => 'member',
+                    'family_member_id' => $this->member->id,
+                ],
+                [
+                    'role' => 'minister',
+                    'source' => 'internal_leadership',
+                    'leadership_assignment_id' => $assignment->id,
+                ],
+            ],
+        ]));
+
+        $response->assertCreated();
+
+        $minister = SacramentParticipant::query()
+            ->where('sacrament_id', $response->json('data.id'))
+            ->where('role', 'minister')
+            ->first();
+
+        $this->assertNotNull($minister);
+        $this->assertSame('internal_leadership', $minister->source);
+        $this->assertSame($assignment->id, $minister->leadership_assignment_id);
+        $this->assertNull($minister->church_leadership_id);
+        $this->assertSame('Andrew Kosmos', $response->json('data.minister_name'));
     }
 
     #[Test]

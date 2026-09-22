@@ -185,8 +185,16 @@ class Sacrament extends Model
 
     public function scopeSearchRecipient($query, string $search)
     {
-        return $query->where(function ($q) use ($search) {
-            $q->whereRaw('LOWER(recipient_name) LIKE ?', ['%'.mb_strtolower($search).'%']);
+        $term = '%'.mb_strtolower(trim($search)).'%';
+
+        return $query->where(function ($q) use ($term) {
+            $q->whereRaw('LOWER(recipient_name) LIKE ?', [$term])
+                ->orWhereRaw('LOWER(minister_name) LIKE ?', [$term])
+                ->orWhereRaw('LOWER(certificate_number) LIKE ?', [$term])
+                ->orWhereRaw('LOWER(book_number) LIKE ?', [$term])
+                ->orWhereHas('sacramentType', function ($typeQuery) use ($term) {
+                    $typeQuery->whereRaw('LOWER(name) LIKE ?', [$term]);
+                });
         });
     }
 

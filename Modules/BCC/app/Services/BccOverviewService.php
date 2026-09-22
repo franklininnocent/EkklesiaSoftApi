@@ -10,6 +10,8 @@ use Modules\BCC\Models\BccFamilyMembership;
 use Modules\BCC\Support\BccAgeBands;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
+use Illuminate\Support\Facades\Auth;
+use Modules\Tenants\Support\AuditLogViewerAuthorization;
 use Modules\Tenants\Support\TenantFacingAuditActor;
 
 class BccOverviewService
@@ -115,13 +117,15 @@ class BccOverviewService
             $dataQuality['incomplete_count']
         );
 
-        $recent = BccAuditLog::query()
-            ->forTenant($tenantId)
-            ->forBcc($bccId)
-            ->with('actor:id,name,email')
-            ->orderByDesc('created_at')
-            ->limit(5)
-            ->get();
+        $recent = AuditLogViewerAuthorization::canViewTenantAudit(Auth::user())
+            ? BccAuditLog::query()
+                ->forTenant($tenantId)
+                ->forBcc($bccId)
+                ->with('actor:id,name,email')
+                ->orderByDesc('created_at')
+                ->limit(5)
+                ->get()
+            : collect();
 
         $activeMembers = (int) ($statusCounts['active'] ?? 0);
         $inactiveMembers = (int) ($statusCounts['inactive'] ?? 0);
@@ -351,6 +355,18 @@ class BccOverviewService
             ];
         }
 
+        $memberCountsByFamily = [];
+        $membershipFamilyIds = $memberships->pluck('family_id')->filter()->unique()->values();
+        if ($membershipFamilyIds->isNotEmpty()) {
+            $memberCountsByFamily = FamilyMember::query()
+                ->whereIn('family_id', $membershipFamilyIds)
+                ->whereNull('deleted_at')
+                ->selectRaw('family_id, COUNT(*) as member_count')
+                ->groupBy('family_id')
+                ->pluck('member_count', 'family_id')
+                ->all();
+        }
+
         $familiesSeries = [];
         $membersSeries = [];
         $anyNonZero = false;
@@ -381,12 +397,9 @@ class BccOverviewService
                 ->values();
 
             $familyCount = $familyIds->count();
-            $peopleCount = $familyCount === 0
-                ? 0
-                : FamilyMember::query()
-                    ->whereIn('family_id', $familyIds)
-                    ->whereNull('deleted_at')
-                    ->count();
+            $peopleCount = (int) $familyIds->sum(
+                fn ($familyId) => (int) ($memberCountsByFamily[$familyId] ?? 0)
+            );
 
             if ($familyCount > 0 || $peopleCount > 0) {
                 $anyNonZero = true;

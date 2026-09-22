@@ -49,6 +49,8 @@ class AssignLeadershipRequest extends FormRequest
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'jurisdiction_name' => ['nullable', 'string', 'max:255'],
             'appointment_letter_ref' => ['nullable', 'string', 'max:150'],
+            'email' => ['nullable', 'email', 'max:255'],
+            'phone' => ['nullable', 'string', 'max:20'],
         ];
     }
 }

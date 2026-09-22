@@ -85,15 +85,16 @@ class AdminMinistriesPlatformPermissionSeeder extends Seeder
             $permissionIds[] = $permission->id;
         }
 
-        $roles = Role::query()
-            ->whereIn('name', ['SuperAdmin', 'EkklesiaAdmin'])
-            ->get();
+        $auditPermissionId = Permission::query()
+            ->where('name', 'ministries.platform.audit')
+            ->value('id');
 
-        foreach ($roles as $role) {
+        $superAdmin = Role::query()->where('name', Role::SUPER_ADMIN)->first();
+        if ($superAdmin) {
             foreach ($permissionIds as $permissionId) {
                 DB::table('permission_role')->updateOrInsert(
                     [
-                        'role_id' => $role->id,
+                        'role_id' => $superAdmin->id,
                         'permission_id' => $permissionId,
                     ],
                     [
@@ -102,7 +103,33 @@ class AdminMinistriesPlatformPermissionSeeder extends Seeder
                     ]
                 );
             }
-            $role->clearUsersPermissionCache();
+            $superAdmin->clearUsersPermissionCache();
+        }
+
+        $ekklesiaAdmin = Role::query()->where('name', Role::EKKLESIA_ADMIN)->first();
+        if ($ekklesiaAdmin) {
+            foreach ($permissionIds as $permissionId) {
+                if ($auditPermissionId && (int) $permissionId === (int) $auditPermissionId) {
+                    continue;
+                }
+                DB::table('permission_role')->updateOrInsert(
+                    [
+                        'role_id' => $ekklesiaAdmin->id,
+                        'permission_id' => $permissionId,
+                    ],
+                    [
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ]
+                );
+            }
+            if ($auditPermissionId) {
+                DB::table('permission_role')
+                    ->where('role_id', $ekklesiaAdmin->id)
+                    ->where('permission_id', $auditPermissionId)
+                    ->delete();
+            }
+            $ekklesiaAdmin->clearUsersPermissionCache();
         }
 
         $this->command?->info('✅ Ministries Insights platform permissions seeded ('.count($permissions).')');

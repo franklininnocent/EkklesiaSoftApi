@@ -5,18 +5,26 @@ namespace Modules\Family\app\Http\Requests;
 use App\Rules\PhoneNumberForTenant;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Modules\Family\app\Http\Requests\Concerns\ValidatesPersonParentFields;
 use Modules\Tenants\Support\TenantContext;
 
 class StoreFamilyRequest extends FormRequest
 {
+    use ValidatesPersonParentFields;
+
     public function authorize(): bool
     {
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        $this->mergeEmptyParentIdsToNull();
+    }
+
     public function rules(): array
     {
-        return [
+        return array_merge([
             'family_name' => ['required', 'string', 'max:255'],
             'head_of_family' => ['nullable', 'string', 'max:255'],
             'address_line_1' => ['nullable', 'string', 'max:255'],
@@ -42,6 +50,6 @@ class StoreFamilyRequest extends FormRequest
             'members.*.date_of_birth' => ['required_with:members', 'date', 'before:today'],
             'members.*.phone' => ['nullable', new PhoneNumberForTenant],
             'members.*.email' => ['nullable', 'email', 'max:255'],
-        ];
+        ], $this->personParentFieldRules('members.*'));
     }
 }

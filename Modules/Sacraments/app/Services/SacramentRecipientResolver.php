@@ -2,6 +2,7 @@
 
 namespace Modules\Sacraments\Services;
 
+use Modules\Family\Models\Family;
 use Modules\Family\app\Services\FamilyService;
 use Modules\Family\app\Services\PersonMatchService;
 use Modules\Family\app\Services\PersonService;
@@ -16,6 +17,9 @@ use Modules\Sacraments\Support\SacramentTypeCode;
 /**
  * Resolves Baptism/Eucharist recipient Person + optional family association (ADR-24).
  * Never mutates an existing Person.
+ *
+ * For Baptism, FamilyMember creation is deferred until after the register row exists
+ * (see SacramentBaptismMembershipService).
  */
 class SacramentRecipientResolver
 {
@@ -43,9 +47,9 @@ class SacramentRecipientResolver
 
         if ($association !== null) {
             $data = match ($association) {
-                'existing' => $this->fromExistingFamily($data, $tenantId),
+                'existing' => $this->fromExistingFamily($data, $tenantId, $userId, $code),
                 'none' => $this->fromNoFamily($data, $tenantId, $userId),
-                'new' => $this->fromNewFamily($data, $tenantId, $userId),
+                'new' => $this->fromNewFamily($data, $tenantId, $userId, $code),
                 default => throw new SacramentBusinessRuleException(
                     'invalid_family_association',
                     'Family association must be none, existing, or new.'
@@ -73,16 +77,29 @@ class SacramentRecipientResolver
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
-    private function fromExistingFamily(array $data, int $tenantId): array
+    private function fromExistingFamily(array $data, int $tenantId, ?int $userId, string $typeCode): array
     {
         $memberId = $data['family_member_id'] ?? $this->recipientMemberId($data);
-        if (! $memberId) {
-            throw new SacramentBusinessRuleException(
-                'family_member_required',
-                'Select the recipient from the existing family.'
-            );
+        if ($memberId) {
+            return $this->fromExistingFamilyMember($data, $tenantId, $memberId);
         }
 
+        if ($typeCode === SacramentTypeCode::BAPTISM) {
+            return $this->fromExistingFamilyNewPerson($data, $tenantId, $userId);
+        }
+
+        throw new SacramentBusinessRuleException(
+            'family_member_required',
+            'Select the recipient from the existing family.'
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function fromExistingFamilyMember(array $data, int $tenantId, string $memberId): array
+    {
         $member = FamilyMember::query()
             ->where('id', $memberId)
             ->whereHas('family', fn ($q) => $q->where('tenant_id', $tenantId))
@@ -115,6 +132,75 @@ class SacramentRecipientResolver
     }
 
     /**
+     * Baptism: Person identity first; FamilyMember after register is saved.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function fromExistingFamilyNewPerson(array $data, int $tenantId, ?int $userId): array
+    {
+        $familyId = $data['family_id'] ?? null;
+        if (! $familyId) {
+            throw new SacramentBusinessRuleException(
+                'family_required',
+                'Select the family this person will belong to after Baptism.'
+            );
+        }
+
+        $familyExists = Family::query()
+            ->where('tenant_id', $tenantId)
+            ->where('id', $familyId)
+            ->exists();
+
+        if (! $familyExists) {
+            throw new SacramentBusinessRuleException(
+                'cross_tenant_family',
+                'Family not found in this parish.'
+            );
+        }
+
+        $relationship = trim((string) ($data['relationship_to_head'] ?? ''));
+        if ($relationship === '') {
+            throw new SacramentBusinessRuleException(
+                'relationship_required',
+                'Relationship to family head is required for a new person in an existing family.'
+            );
+        }
+
+        $person = $this->resolveOrCreatePerson($data, $tenantId, $userId);
+
+        $activeMember = FamilyMember::query()
+            ->where('person_id', $person->id)
+            ->whereNull('deleted_at')
+            ->where('status', 'active')
+            ->first();
+
+        if ($activeMember) {
+            if ((string) $activeMember->family_id === (string) $familyId) {
+                return $this->fromExistingFamilyMember($data, $tenantId, (string) $activeMember->id);
+            }
+
+            throw new SacramentBusinessRuleException(
+                'person_already_in_family',
+                'This person already belongs to another family.'
+            );
+        }
+
+        $data['person_id'] = $person->id;
+        $data['family_id'] = $familyId;
+        $data['family_member_id'] = null;
+        $data['_baptism_membership_deferred'] = 'link_existing';
+        $data['participants'] = $this->ensureRecipientParticipant(
+            $data['participants'] ?? [],
+            SacramentParticipantSource::PERSON,
+            $person->id,
+            null
+        );
+
+        return $data;
+    }
+
+    /**
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
@@ -138,7 +224,7 @@ class SacramentRecipientResolver
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
-    private function fromNewFamily(array $data, int $tenantId, ?int $userId): array
+    private function fromNewFamily(array $data, int $tenantId, ?int $userId, string $typeCode): array
     {
         $familyInput = $data['family'] ?? null;
         if (! is_array($familyInput) || trim((string) ($familyInput['family_name'] ?? '')) === '') {
@@ -149,6 +235,22 @@ class SacramentRecipientResolver
         }
 
         $person = $this->resolveOrCreatePerson($data, $tenantId, $userId);
+
+        if ($typeCode === SacramentTypeCode::BAPTISM) {
+            $data['person_id'] = $person->id;
+            $data['family_id'] = null;
+            $data['family_member_id'] = null;
+            $data['_baptism_membership_deferred'] = 'create_new';
+            $data['participants'] = $this->ensureRecipientParticipant(
+                $data['participants'] ?? [],
+                SacramentParticipantSource::PERSON,
+                $person->id,
+                null
+            );
+
+            return $data;
+        }
+
         $created = $this->familyService->createFamilyWithPerson(
             $familyInput,
             $person,

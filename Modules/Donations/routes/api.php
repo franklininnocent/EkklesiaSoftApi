@@ -85,6 +85,7 @@ Route::prefix('tenant/donations')->middleware(['donations.security.log', 'auth:a
     Route::post('/plans', [ContributionPlansController::class, 'store'])->middleware('tenant.permission:donations.manage');
     Route::put('/plans/{id}', [ContributionPlansController::class, 'update'])->middleware('tenant.permission:donations.manage');
     Route::get('/plans/{id}/revision-history', [ContributionPlansController::class, 'revisionHistory']);
+    Route::get('/plans/{id}/generation-preview', [ContributionPlansController::class, 'generationPreview'])->middleware('tenant.permission:donations.manage');
     Route::post('/plans/{id}/generate-dues', [ContributionPlansController::class, 'generateDues'])->middleware('tenant.permission:donations.manage');
     Route::get('/plans/{planId}/assignments', [ContributionPlanAssignmentsController::class, 'index']);
     Route::post('/plans/{planId}/assignments', [ContributionPlanAssignmentsController::class, 'store'])->middleware('tenant.permission:donations.manage');

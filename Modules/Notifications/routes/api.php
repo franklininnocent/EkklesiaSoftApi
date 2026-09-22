@@ -4,22 +4,26 @@ use Illuminate\Support\Facades\Route;
 use Modules\Notifications\Http\Controllers\NotificationInboxController;
 
 $inboxRoutes = function (string $audience): void {
-    Route::get('/', [NotificationInboxController::class, 'index']);
-    Route::get('/unread-count', [NotificationInboxController::class, 'unreadCount']);
-    Route::get('/preferences', [NotificationInboxController::class, 'preferences']);
-    Route::put('/preferences', [NotificationInboxController::class, 'updatePreferences']);
-    Route::patch('/read-all', [NotificationInboxController::class, 'markAllRead']);
-    Route::post('/bulk-action', [NotificationInboxController::class, 'bulkAction'])
+    $register = function (string $method, string $uri, array|string $action) use ($audience) {
+        return Route::{$method}($uri, $action)->defaults('audience', $audience);
+    };
+
+    $register('get', '/', [NotificationInboxController::class, 'index']);
+    $register('get', '/unread-count', [NotificationInboxController::class, 'unreadCount']);
+    $register('get', '/preferences', [NotificationInboxController::class, 'preferences']);
+    $register('put', '/preferences', [NotificationInboxController::class, 'updatePreferences']);
+    $register('patch', '/read-all', [NotificationInboxController::class, 'markAllRead']);
+    $register('post', '/bulk-action', [NotificationInboxController::class, 'bulkAction'])
         ->middleware('api.throttle:notifications');
-    Route::get('/{id}', [NotificationInboxController::class, 'show']);
-    Route::get('/{id}/open', [NotificationInboxController::class, 'open']);
-    Route::patch('/{id}/read', [NotificationInboxController::class, 'markRead'])
+    $register('get', '/{id}', [NotificationInboxController::class, 'show']);
+    $register('get', '/{id}/open', [NotificationInboxController::class, 'open']);
+    $register('patch', '/{id}/read', [NotificationInboxController::class, 'markRead'])
         ->middleware('api.throttle:notifications');
-    Route::patch('/{id}/unread', [NotificationInboxController::class, 'markUnread'])
+    $register('patch', '/{id}/unread', [NotificationInboxController::class, 'markUnread'])
         ->middleware('api.throttle:notifications');
-    Route::patch('/{id}/archive', [NotificationInboxController::class, 'archive'])
+    $register('patch', '/{id}/archive', [NotificationInboxController::class, 'archive'])
         ->middleware('api.throttle:notifications');
-    Route::patch('/{id}/restore', [NotificationInboxController::class, 'restore'])
+    $register('patch', '/{id}/restore', [NotificationInboxController::class, 'restore'])
         ->middleware('api.throttle:notifications');
 };
 

@@ -2,9 +2,9 @@
 
 namespace Modules\Tenants\Tests\Feature;
 
+use App\Mail\TransactionalNotificationMail;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Mail;
-use Mockery;
 use Modules\Authentication\Models\User;
 use Modules\Tenants\Models\SubscriptionSettings;
 use Modules\Tenants\Models\Tenant;
@@ -33,15 +33,11 @@ class SubscriptionLifecycleNotificationTest extends TestCase
         }
     }
 
-    protected function tearDown(): void
-    {
-        Mockery::close();
-        parent::tearDown();
-    }
-
     #[Test]
     public function lifecycle_worker_notifies_once_per_expired_transition(): void
     {
+        Mail::fake();
+
         $tenant = Tenant::factory()->active()->create([
             'subscription_ends_at' => now()->subDays(10),
             'trial_ends_at' => null,
@@ -55,13 +51,13 @@ class SubscriptionLifecycleNotificationTest extends TestCase
             'email' => 'parish-admin@example.test',
         ]);
 
-        Mail::shouldReceive('raw')->once();
+        $this->artisan('tenants:subscription-lifecycle')->assertSuccessful();
+
+        Mail::assertSent(TransactionalNotificationMail::class, 1);
 
         $this->artisan('tenants:subscription-lifecycle')->assertSuccessful();
 
-        Mail::shouldReceive('raw')->never();
-
-        $this->artisan('tenants:subscription-lifecycle')->assertSuccessful();
+        Mail::assertSent(TransactionalNotificationMail::class, 1);
 
         $this->assertSame(1, TenantSubscriptionAudit::query()
             ->where('tenant_id', $tenant->id)
@@ -72,6 +68,8 @@ class SubscriptionLifecycleNotificationTest extends TestCase
     #[Test]
     public function renew_triggers_subscription_extended_notice(): void
     {
+        Mail::fake();
+
         $tenant = Tenant::factory()->active()->create([
             'subscription_ends_at' => now()->subDays(10),
             'trial_ends_at' => null,
@@ -85,14 +83,14 @@ class SubscriptionLifecycleNotificationTest extends TestCase
             'email' => 'renew-admin@example.test',
         ]);
 
-        Mail::shouldReceive('raw')
-            ->once()
-            ->withArgs(fn (string $body): bool => str_contains($body, 'renewed'));
-
         $this->asSuperAdmin();
 
         $this->postJson('/api/tenant/'.$tenant->id.'/subscription/renew', [
             'duration_months' => 12,
         ])->assertOk();
+
+        Mail::assertSent(TransactionalNotificationMail::class, function (TransactionalNotificationMail $mail): bool {
+            return str_contains($mail->render(), 'renewed');
+        });
     }
 }

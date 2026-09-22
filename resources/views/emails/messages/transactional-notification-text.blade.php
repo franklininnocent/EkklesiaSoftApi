@@ -1,0 +1,5 @@
+{{ $productName ?? 'EkklesiaSoft' }}
+
+{{ $heading }}
+
+{{ $plainBody }}

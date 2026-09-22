@@ -31,12 +31,14 @@ class PasswordRecoveryCompletedMail extends Mailable implements ShouldQueue
     public function content(): Content
     {
         return new Content(
+            html: 'emails.messages.password-recovery-completed',
             text: 'authentication::emails.password-recovery-completed',
             with: [
                 'targetUserName' => $this->targetUserName,
                 'targetUserEmail' => $this->targetUserEmail,
                 'tenantName' => $this->tenantName,
                 'completedAt' => $this->completedAt,
+                'preheader' => 'A password reset was completed for an account you oversee.',
             ],
         );
     }

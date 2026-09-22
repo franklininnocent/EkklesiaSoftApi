@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Modules\Family\app\Services\PersonIdentityReconciliationService;
 use Modules\Family\app\Services\PersonMatchService;
 use Modules\Family\app\Services\PersonService;
+use Modules\Family\Models\Person;
 use Modules\Tenants\Support\TenantContext;
 
 class PersonController extends Controller
@@ -21,11 +22,14 @@ class PersonController extends Controller
     public function index(Request $request): JsonResponse
     {
         $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
-        $perPage = (int) $request->input('per_page', 15);
+        $this->authorize('viewAny', Person::class);
+
+        $perPage = min(max((int) $request->input('per_page', 15), 1), 25);
 
         $people = $this->personService->search($tenantId, [
             'search' => $request->input('search'),
             'unaffiliated' => $request->boolean('unaffiliated'),
+            'exclude_person_id' => $request->input('exclude_person_id'),
         ], $perPage);
 
         return response()->json([

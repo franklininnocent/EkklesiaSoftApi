@@ -3,6 +3,8 @@
 namespace Modules\Donations\Services;
 
 use Modules\Donations\Models\ContributionDue;
+use Modules\Donations\Support\ContributionBalance;
+use Modules\Donations\Support\DonationBusinessDate;
 use Modules\Donations\Models\DonationPayment;
 use Modules\Family\Models\Family;
 
@@ -70,7 +72,7 @@ class FamilyFinancialAnalyticsService
                 match ($allocation->allocatable_type) {
                     'due' => $buckets[$key]['mandatory_paid'] += $amount,
                     'project', 'project_installment' => $buckets[$key]['project_paid'] += $amount,
-                    'donation' => $buckets[$key]['voluntary_paid'] += $amount,
+                    'donation', 'fund', 'plan' => $buckets[$key]['voluntary_paid'] += $amount,
                     default => null,
                 };
             }
@@ -96,9 +98,10 @@ class FamilyFinancialAnalyticsService
      */
     private function buildPunctuality(int $tenantId, string $familyId): array
     {
+        $businessDate = DonationBusinessDate::today($tenantId);
         $dues = ContributionDue::forTenant($tenantId)
             ->where('family_id', $familyId)
-            ->whereDate('due_date', '<=', now()->toDateString())
+            ->whereDate('due_date', '<=', $businessDate)
             ->get();
 
         $evaluated = $dues->count();
@@ -108,10 +111,10 @@ class FamilyFinancialAnalyticsService
                 return false;
             }
 
-            return $due->due_date && $due->due_date->lt(now()->startOfDay());
+            return ContributionBalance::scheduleState($due, $businessDate) === 'overdue';
         })->count();
         $partiallyPaidLate = $dues->where('status', 'partially_paid')
-            ->filter(fn (ContributionDue $due) => $due->due_date && $due->due_date->lt(now()->startOfDay()))
+            ->filter(fn (ContributionDue $due) => ContributionBalance::scheduleState($due, $businessDate) === 'overdue')
             ->count();
 
         $score = $evaluated > 0
@@ -203,11 +206,13 @@ class FamilyFinancialAnalyticsService
             ? round((($familyTotalPaid - $tenantMedian) / $tenantMedian) * 100, 1)
             : 0.0;
 
-        $familyPendingTotals = ContributionDue::forTenant($tenantId)
-            ->whereIn('status', ['pending', 'partially_paid'])
-            ->get()
+        $businessDate = DonationBusinessDate::today($tenantId);
+        $familyPendingTotals = ContributionBalance::scopeCollectable(
+            ContributionDue::forTenant($tenantId),
+            $businessDate
+        )->get()
             ->groupBy('family_id')
-            ->map(fn ($dues) => (float) $dues->sum(fn (ContributionDue $due) => max((float) $due->amount_due - (float) $due->amount_paid, 0)))
+            ->map(fn ($dues) => (float) $dues->sum(fn (ContributionDue $due) => ContributionBalance::outstandingForDue($due)))
             ->values();
 
         $tenantMandatoryPendingAvg = (float) ($familyPendingTotals->avg() ?? 0);

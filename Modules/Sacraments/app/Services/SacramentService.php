@@ -95,6 +95,7 @@ class SacramentService
         protected SacramentTypedAttributesValidator $typedAttributesValidator,
         protected SacramentPrivacyAccess $privacyAccess,
         protected SacramentRecipientResolver $recipientResolver,
+        protected SacramentBaptismMembershipService $baptismMembershipService,
         protected MarriageCanonicalClassifier $canonicalClassifier,
         protected SacramentLeadershipContextBuilder $leadershipContextBuilder,
     ) {}
@@ -108,13 +109,17 @@ class SacramentService
 
         $cacheKey = $this->getCacheKey($params);
 
+        // Only cache stable list views. Family/BCC/search/date filters must never share a key.
         $shouldCache = empty($params['search'])
             && empty($params['date_from'])
             && empty($params['date_to'])
             && empty($params['minister_name'])
             && empty($params['certificate_number'])
             && empty($params['book_number'])
-            && empty($params['marriage_register_filter']);
+            && empty($params['marriage_register_filter'])
+            && empty($params['family_id'])
+            && empty($params['bcc_id'])
+            && empty($params['family_member_id']);
 
         if ($shouldCache) {
             return Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($params) {
@@ -137,6 +142,8 @@ class SacramentService
             'type_'.($params['sacrament_type_id'] ?? 'all'),
             'status_'.($params['status'] ?? 'all'),
             'subtype_'.($params['event_subtype'] ?? 'all'),
+            'family_'.($params['family_id'] ?? 'all'),
+            'bcc_'.($params['bcc_id'] ?? 'all'),
             'member_'.($params['family_member_id'] ?? 'all'),
             'marriage_filter_'.($params['marriage_register_filter'] ?? 'all'),
             'restricted_'.(($params['include_restricted'] ?? false) ? '1' : '0'),
@@ -273,7 +280,9 @@ class SacramentService
             $requestHash,
             $userId
         ) {
+            $membershipContext = $data;
             $data = $this->recipientResolver->resolve($data, $type, $tenantId, $userId);
+            $membershipContext = array_merge($membershipContext, $data);
             $participantsInput = $data['participants'] ?? $participantsInput;
 
             $normalized = $this->participantValidator->validateAndNormalize($type, $participantsInput, $tenantId);
@@ -297,7 +306,13 @@ class SacramentService
                 );
             }
 
-            $attrs = array_merge($data, $denorm, [
+            // Prefer non-empty denorm fields; never wipe a valid request value with null/''.
+            $denormFilled = array_filter(
+                $denorm,
+                static fn ($value) => $value !== null && $value !== ''
+            );
+
+            $attrs = array_merge($data, $denormFilled, [
                 'status' => SacramentStatus::normalize($data['status'] ?? null) ?? SacramentStatus::REGISTERED,
                 'lock_version' => 0,
                 'created_by' => $data['created_by'] ?? auth()->id(),
@@ -314,6 +329,15 @@ class SacramentService
 
             foreach ($normalized as $row) {
                 SacramentParticipant::create($this->participantPersistAttributes($tenantId, $sacrament->id, $row));
+            }
+
+            if (SacramentTypeCode::normalize($type->code) === SacramentTypeCode::BAPTISM) {
+                $this->baptismMembershipService->establishAfterCreate(
+                    $sacrament->fresh(['participants']),
+                    $membershipContext,
+                    $tenantId,
+                    $userId
+                );
             }
 
             $this->syncDispensations($sacrament, $data['dispensations'] ?? []);
@@ -333,7 +357,10 @@ class SacramentService
                 $this->privacyAccess->privacyClassForType($type)
             );
 
-            return ['sacrament' => $sacrament->fresh(['participants', 'sacramentType']), 'warning' => $warning];
+            return [
+                'sacrament' => $sacrament->fresh(['participants', 'sacramentType', 'family']),
+                'warning' => $warning,
+            ];
         });
     }
 
@@ -467,7 +494,11 @@ class SacramentService
                 $normalized = $this->participantValidator->validateAndNormalize($type, $participantsInput, $tenantId);
                 $denorm = $this->denormMapper->toSacramentAttributes($normalized);
                 $denorm = array_merge($denorm, $this->matrimonyCanonicalAttributes($type, $normalized, $data));
-                $patch = array_merge($patch, $denorm);
+                $denormFilled = array_filter(
+                    $denorm,
+                    static fn ($value) => $value !== null && $value !== ''
+                );
+                $patch = array_merge($patch, $denormFilled);
 
                 SacramentParticipant::query()
                     ->where('sacrament_id', $sacrament->id)
@@ -895,6 +926,7 @@ class SacramentService
             $attrs['relationship_to_head'],
             $attrs['person'],
             $attrs['family'],
+            $attrs['_baptism_membership_deferred'],
             $attrs['recipient_dob'],
             $attrs['include_restricted'],
             $attrs['reason'],

@@ -12,6 +12,8 @@ use Modules\BCC\Models\BccFamilyMembership;
 use Modules\BCC\Support\BccAgeBands;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
+use Illuminate\Support\Facades\Auth;
+use Modules\Tenants\Support\AuditLogViewerAuthorization;
 use Modules\Tenants\Support\TenantFacingAuditActor;
 
 class BccDashboardService
@@ -189,21 +191,23 @@ class BccDashboardService
             ])
             ->values();
 
-        $recent = BccAuditLog::query()
-            ->forTenant($tenantId)
-            ->with(['actor:id,name,email', 'bcc:id,name,bcc_code'])
-            ->orderByDesc('created_at')
-            ->limit(8)
-            ->get()
-            ->map(fn (BccAuditLog $log) => [
-                'id' => $log->id,
-                'event' => $log->event,
-                'bcc_id' => $log->bcc_id,
-                'bcc_name' => $log->bcc?->name,
-                'actor_name' => TenantFacingAuditActor::displayName($log->actor?->name, $log->support_session_id),
-                'created_at' => $log->created_at?->toIso8601String(),
-            ])
-            ->values();
+        $recent = AuditLogViewerAuthorization::canViewTenantAudit(Auth::user())
+            ? BccAuditLog::query()
+                ->forTenant($tenantId)
+                ->with(['actor:id,name,email', 'bcc:id,name,bcc_code'])
+                ->orderByDesc('created_at')
+                ->limit(8)
+                ->get()
+                ->map(fn (BccAuditLog $log) => [
+                    'id' => $log->id,
+                    'event' => $log->event,
+                    'bcc_id' => $log->bcc_id,
+                    'bcc_name' => $log->bcc?->name,
+                    'actor_name' => TenantFacingAuditActor::displayName($log->actor?->name, $log->support_session_id),
+                    'created_at' => $log->created_at?->toIso8601String(),
+                ])
+                ->values()
+            : collect();
 
         $attentionItems = $this->buildAttention(
             $withoutPrimary,
@@ -498,6 +502,12 @@ class BccDashboardService
             }
         }
 
+        $fallbackFamilyCounts = [];
+        $fallbackPeopleCounts = [];
+        if (! $useMemberships) {
+            [$fallbackFamilyCounts, $fallbackPeopleCounts] = $this->cumulativeCreatedCounts($tenantId, $months, $periodEnd);
+        }
+
         $familiesSeries = [];
         $peopleSeries = [];
         $anyNonZero = false;
@@ -507,6 +517,7 @@ class BccDashboardService
             if ($asOf->gt($periodEnd)) {
                 $asOf = $periodEnd->copy();
             }
+            $key = $month->format('Y-m');
 
             if ($useMemberships) {
                 $familyIds = $memberships
@@ -527,26 +538,14 @@ class BccDashboardService
                 $familyCount = $familyIds->count();
                 $peopleCount = $familyIds->sum(fn ($familyId) => (int) ($memberCountsByFamily[$familyId] ?? 0));
             } else {
-                $familyCount = Family::query()
-                    ->where('tenant_id', $tenantId)
-                    ->whereNotNull('bcc_id')
-                    ->where('created_at', '<=', $asOf)
-                    ->count();
-                $peopleCount = FamilyMember::query()
-                    ->join('families', 'families.id', '=', 'family_members.family_id')
-                    ->where('families.tenant_id', $tenantId)
-                    ->whereNotNull('families.bcc_id')
-                    ->where('families.created_at', '<=', $asOf)
-                    ->whereNull('families.deleted_at')
-                    ->whereNull('family_members.deleted_at')
-                    ->count();
+                $familyCount = (int) ($fallbackFamilyCounts[$key] ?? 0);
+                $peopleCount = (int) ($fallbackPeopleCounts[$key] ?? 0);
             }
 
             if ($familyCount > 0 || $peopleCount > 0) {
                 $anyNonZero = true;
             }
 
-            $key = $month->format('Y-m');
             $label = $month->format('M Y');
             $familiesSeries[] = ['period' => $key, 'label' => $label, 'value' => $familyCount];
             $peopleSeries[] = ['period' => $key, 'label' => $label, 'value' => $peopleCount];
@@ -558,6 +557,60 @@ class BccDashboardService
             'families' => $familiesSeries,
             'people' => $peopleSeries,
         ];
+    }
+
+    /**
+     * One query per series for the no-membership fallback.
+     * Each month uses the same created_at <= as-of predicate as the previous per-month counts.
+     *
+     * @param  list<Carbon>  $months
+     * @return array{0: array<string, int>, 1: array<string, int>}
+     */
+    private function cumulativeCreatedCounts(int $tenantId, array $months, Carbon $periodEnd): array
+    {
+        $familySelect = [];
+        $peopleSelect = [];
+        $familyBindings = [];
+        $peopleBindings = [];
+        $keys = [];
+
+        foreach ($months as $i => $month) {
+            $asOf = $month->copy()->endOfMonth();
+            if ($asOf->gt($periodEnd)) {
+                $asOf = $periodEnd->copy();
+            }
+
+            $keys[] = $month->format('Y-m');
+            $familySelect[] = "SUM(CASE WHEN created_at <= ? THEN 1 ELSE 0 END) as c{$i}";
+            $familyBindings[] = $asOf;
+            $peopleSelect[] = "SUM(CASE WHEN families.created_at <= ? THEN 1 ELSE 0 END) as c{$i}";
+            $peopleBindings[] = $asOf;
+        }
+
+        $familyRow = Family::query()
+            ->where('tenant_id', $tenantId)
+            ->whereNotNull('bcc_id')
+            ->selectRaw(implode(', ', $familySelect), $familyBindings)
+            ->first();
+
+        $peopleRow = FamilyMember::query()
+            ->join('families', 'families.id', '=', 'family_members.family_id')
+            ->where('families.tenant_id', $tenantId)
+            ->whereNotNull('families.bcc_id')
+            ->whereNull('families.deleted_at')
+            ->whereNull('family_members.deleted_at')
+            ->selectRaw(implode(', ', $peopleSelect), $peopleBindings)
+            ->first();
+
+        $families = [];
+        $people = [];
+        foreach ($keys as $i => $key) {
+            $alias = 'c'.$i;
+            $families[$key] = (int) ($familyRow->{$alias} ?? 0);
+            $people[$key] = (int) ($peopleRow->{$alias} ?? 0);
+        }
+
+        return [$families, $people];
     }
 
     /**

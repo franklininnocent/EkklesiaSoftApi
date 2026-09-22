@@ -70,13 +70,31 @@
             "Modules\\Tenants\\": "Modules/Tenants/app/",
             "Modules\\Tenants\\Database\\Factories\\": "Modules/Tenants/database/factories/",
             "Modules\\Tenants\\Database\\Seeders\\": "Modules/Tenants/database/seeders/",
+            "Modules\\Authentication\\Models\\": "Modules/Authentication/Models/",
+            "Modules\\Family\\Models\\": "Modules/Family/Models/",
             "Modules\\": "Modules/"
-        }
+        },
+        "exclude-from-classmap": [
+            "/Modules/*/tests/"
+        ]
     },
     "autoload-dev": {
         "psr-4": {
             "Tests\\": "tests/",
-            "Modules\\SupportTickets\\Tests\\": "Modules/SupportTickets/tests/"
+            "Modules\\ApplicationAccess\\Tests\\": "Modules/ApplicationAccess/tests/",
+            "Modules\\Authentication\\Tests\\": "Modules/Authentication/tests/",
+            "Modules\\BCC\\Tests\\": "Modules/BCC/tests/",
+            "Modules\\Donations\\Tests\\": "Modules/Donations/tests/",
+            "Modules\\EcclesiasticalData\\Tests\\": "Modules/EcclesiasticalData/tests/",
+            "Modules\\Family\\Tests\\": "Modules/Family/tests/",
+            "Modules\\MinistriesAssociations\\Tests\\": "Modules/MinistriesAssociations/tests/",
+            "Modules\\Notifications\\Tests\\": "Modules/Notifications/tests/",
+            "Modules\\PastoralCare\\Tests\\": "Modules/PastoralCare/tests/",
+            "Modules\\RolesAndPermissions\\Tests\\": "Modules/RolesAndPermissions/tests/",
+            "Modules\\Sacraments\\Tests\\": "Modules/Sacraments/tests/",
+            "Modules\\SupportAccess\\Tests\\": "Modules/SupportAccess/tests/",
+            "Modules\\SupportTickets\\Tests\\": "Modules/SupportTickets/tests/",
+            "Modules\\Tenants\\Tests\\": "Modules/Tenants/tests/"
         }
     },
     "scripts": {

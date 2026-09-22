@@ -98,10 +98,12 @@ class DonationDashboardController extends Controller
         try {
             $profile = $this->profileService->build(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(), $familyId);
         } catch (\RuntimeException $exception) {
+            $status = str_contains($exception->getMessage(), 'does not belong') ? 404 : 422;
+
             return response()->json([
                 'success' => false,
                 'message' => $exception->getMessage(),
-            ], 422);
+            ], $status);
         }
 
         return response()->json([

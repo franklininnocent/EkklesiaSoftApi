@@ -37,6 +37,9 @@ class PersonMatchService
         $candidates = $query
             ->whereRaw('LOWER(TRIM(first_name)) = ?', [$first])
             ->whereRaw('LOWER(TRIM(last_name)) = ?', [$last])
+            ->withExists(['familyMembers as has_family' => function ($relation): void {
+                $relation->whereNull('deleted_at');
+            }])
             ->limit(25)
             ->get();
 
@@ -54,7 +57,7 @@ class PersonMatchService
                 'date_of_birth' => optional($person->date_of_birth)?->format('Y-m-d'),
                 'gender' => $person->gender,
                 'strength' => $this->strength($person, $dob, $gender, $phone, $email, $father, $mother),
-                'has_family' => $person->familyMembers()->whereNull('deleted_at')->exists(),
+                'has_family' => (bool) $person->has_family,
             ];
         })->values();
 

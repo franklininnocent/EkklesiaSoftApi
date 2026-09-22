@@ -36,6 +36,7 @@ abstract class BccCertificationTestCase extends TestCase
         $user = User::factory()->create([
             'tenant_id' => $tenant->id,
             'role_id' => $role->id,
+            'is_primary_admin' => true,
         ]);
         $user->syncRoles([$role->id]);
 

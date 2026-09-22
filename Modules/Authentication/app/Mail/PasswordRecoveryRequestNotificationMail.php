@@ -33,6 +33,7 @@ class PasswordRecoveryRequestNotificationMail extends Mailable implements Should
     public function content(): Content
     {
         return new Content(
+            html: 'emails.messages.password-recovery-request-notification',
             text: 'authentication::emails.password-recovery-request-notification',
             with: [
                 'requesterName' => $this->requesterName,
@@ -41,6 +42,7 @@ class PasswordRecoveryRequestNotificationMail extends Mailable implements Should
                 'requesterRole' => $this->requesterRole,
                 'requestedAt' => $this->requestedAt,
                 'requestId' => $this->requestId,
+                'preheader' => 'A password recovery request requires your review.',
             ],
         );
     }

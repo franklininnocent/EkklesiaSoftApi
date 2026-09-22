@@ -8,6 +8,7 @@ use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
 use Modules\Authentication\Support\RecoveryMailEnvelope;
+
 class PasswordRecoveryOtpMail extends Mailable
 {
     use Queueable;
@@ -17,7 +18,7 @@ class PasswordRecoveryOtpMail extends Mailable
         public readonly string $recipientEmail,
         public readonly string $otp,
         public readonly int $expiresInSeconds,
-        public readonly string $challengeId,
+        private readonly string $challengeId,
     ) {
     }
 
@@ -28,13 +29,15 @@ class PasswordRecoveryOtpMail extends Mailable
 
     public function content(): Content
     {
+        // challengeId is intentionally omitted from the view payload.
         return new Content(
+            html: 'emails.messages.password-recovery-otp',
             text: 'authentication::emails.password-recovery-otp',
             with: [
                 'otp' => $this->otp,
                 'expiresInSeconds' => $this->expiresInSeconds,
+                'preheader' => 'Your password reset verification code.',
             ],
         );
     }
-
 }

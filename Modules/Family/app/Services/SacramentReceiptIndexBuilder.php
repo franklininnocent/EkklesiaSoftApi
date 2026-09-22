@@ -14,7 +14,7 @@ class SacramentReceiptIndexBuilder
      * @param  list<string>  $restrictedTypeCodes
      * @return array<string, array{person_ids: array<string, bool>, member_ids: array<string, bool>}>
      */
-    public function build(int|string $tenantId, array $restrictedTypeCodes = []): array
+    public function build(int|string $tenantId, array $restrictedTypeCodes = [], array $includedTypeCodes = []): array
     {
         $query = DB::table('sacraments as s')
             ->join('sacrament_types as st', 'st.id', '=', 's.sacrament_type_id')
@@ -34,7 +34,15 @@ class SacramentReceiptIndexBuilder
             );
         }
 
-        $records = $query->get([
+        if ($includedTypeCodes !== []) {
+            $codes = $this->expandIncludedCodes($includedTypeCodes);
+            $query->whereRaw(
+                'UPPER(st.code) IN ('.implode(',', array_fill(0, count($codes), '?')).')',
+                $codes
+            );
+        }
+
+        $records = $query->distinct()->get([
             's.person_id',
             'st.code as type_code',
             'sp.family_member_id',
@@ -83,6 +91,42 @@ class SacramentReceiptIndexBuilder
             'HOLYORDERS', 'ORDINATION' => 'HOLY_ORDERS',
             default => $normalized,
         };
+    }
+
+    /**
+     * Raw sacrament codes that normalize to the requested codes, including aliases
+     * such as FIRST_COMMUNION for EUCHARIST. Match results stay the same.
+     *
+     * @param  list<string>  $includedTypeCodes
+     * @return list<string>
+     */
+    private function expandIncludedCodes(array $includedTypeCodes): array
+    {
+        $wanted = [];
+        foreach ($includedTypeCodes as $code) {
+            $normalized = $this->normalizeCode((string) $code);
+            if ($normalized !== '') {
+                $wanted[$normalized] = true;
+            }
+        }
+
+        $raw = array_keys($wanted);
+        $aliases = [
+            'FIRST_COMMUNION' => 'EUCHARIST',
+            'FIRSTCOMMUNION' => 'EUCHARIST',
+            'MARRIAGE' => 'MATRIMONY',
+            'WEDDING' => 'MATRIMONY',
+            'HOLYORDERS' => 'HOLY_ORDERS',
+            'ORDINATION' => 'HOLY_ORDERS',
+        ];
+
+        foreach ($aliases as $rawCode => $canonical) {
+            if (isset($wanted[$canonical])) {
+                $raw[] = $rawCode;
+            }
+        }
+
+        return array_values(array_unique($raw));
     }
 
     /**

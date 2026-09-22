@@ -37,6 +37,8 @@ class SacramentDashboardController extends Controller
                 'bcc_id' => 'nullable|uuid',
                 'include_gaps' => 'nullable|boolean',
                 'include_marriage_gaps' => 'nullable|boolean',
+                'preset' => 'nullable|string|in:calendar_month_mtd',
+                'minimal' => 'nullable|boolean',
             ]);
 
             if (! empty($validated['date_from']) && ! empty($validated['date_to'])

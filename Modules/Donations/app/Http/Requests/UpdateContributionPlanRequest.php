@@ -3,8 +3,8 @@
 namespace Modules\Donations\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
+use Modules\Tenants\Support\TenantContext;
 
 class UpdateContributionPlanRequest extends FormRequest
 {
@@ -32,7 +32,7 @@ class UpdateContributionPlanRequest extends FormRequest
 
     public function rules(): array
     {
-        $tenantId = Auth::user()?->tenant_id;
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
         $planId = $this->route('id');
 
         return [
@@ -48,9 +48,9 @@ class UpdateContributionPlanRequest extends FormRequest
             ],
             'plan_type' => ['sometimes', 'in:uniform,individual'],
             'frequency' => ['sometimes', 'in:one_time,weekly,monthly,quarterly,half_yearly,yearly,custom'],
-            'custom_interval_days' => ['nullable', 'integer', 'min:1', 'required_if:frequency,custom'],
+            'custom_interval_days' => ['nullable', 'integer', 'min:1', 'max:366', 'required_if:frequency,custom'],
             'default_amount' => ['sometimes', 'numeric', 'min:0.01'],
-            'start_date' => ['sometimes', 'nullable', 'date'],
+            'start_date' => ['sometimes', 'required', 'date'],
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'grace_days' => ['nullable', 'integer', 'min:0', 'max:90'],
             'auto_generate' => ['nullable', 'boolean'],
@@ -59,7 +59,11 @@ class UpdateContributionPlanRequest extends FormRequest
             'effective_from' => ['nullable', 'date'],
             'revision_reason' => ['nullable', 'string', 'max:500'],
             'assignments' => ['nullable', 'array'],
-            'assignments.*.family_id' => ['required_with:assignments', 'uuid'],
+            'assignments.*.family_id' => [
+                'required_with:assignments',
+                'uuid',
+                Rule::exists('families', 'id')->where(fn ($q) => $q->where('tenant_id', $tenantId)),
+            ],
             'assignments.*.amount' => ['required_with:assignments', 'numeric', 'min:0.01'],
             'assignments.*.effective_from' => ['nullable', 'date'],
             'assignments.*.effective_to' => ['nullable', 'date'],

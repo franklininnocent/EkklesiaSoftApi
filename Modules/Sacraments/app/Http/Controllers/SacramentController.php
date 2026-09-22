@@ -60,12 +60,20 @@ class SacramentController extends Controller
             }
 
             $params = $request->only([
-                'sacrament_type_id', 'status', 'search',
+                'page', 'sacrament_type_id', 'status', 'search',
                 'date_from', 'date_to', 'per_page', 'sort_by', 'sort_dir',
                 'minister_name', 'certificate_number', 'book_number',
                 'family_id', 'bcc_id', 'event_subtype', 'family_member_id',
                 'marriage_register_filter',
             ]);
+
+            if (isset($params['page'])) {
+                $params['page'] = max(1, (int) $params['page']);
+            }
+
+            if (isset($params['per_page'])) {
+                $params['per_page'] = max(1, min(100, (int) $params['per_page']));
+            }
 
             if (isset($params['status'])) {
                 $params['status'] = SacramentStatus::normalize($params['status']) ?? $params['status'];

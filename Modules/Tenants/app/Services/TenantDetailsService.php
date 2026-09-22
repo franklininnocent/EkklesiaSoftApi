@@ -9,6 +9,7 @@ use Modules\EcclesiasticalData\Services\DioceseLeadershipQueryService;
 use Modules\Family\app\Services\FamilyService;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Models\TenantStatusAudit;
+use Modules\Tenants\Support\AuditLogViewerAuthorization;
 use Modules\Tenants\Support\TenantCacheVersion;
 
 /**
@@ -27,7 +28,7 @@ class TenantDetailsService
     /**
      * @return array<string, mixed>
      */
-    public function build(int $tenantId): array
+    public function build(int $tenantId, ?User $actor = null): array
     {
         $tenant = Tenant::query()
             ->with([
@@ -49,7 +50,9 @@ class TenantDetailsService
         $familyStats = $this->safeFamilyStatistics($tenantId);
         $modules = $this->buildModules($tenant, $subscription);
         $church = $this->buildChurchSnapshot($tenant);
-        $historyPreview = $this->buildHistoryPreview($tenantId);
+        $historyPreview = AuditLogViewerAuthorization::canViewPlatformCompleteAudit($actor)
+            ? $this->buildHistoryPreview($tenantId)
+            : [];
         $warnings = $this->buildWarnings($tenant, $subscription, $storage, $userActivity);
 
         return [

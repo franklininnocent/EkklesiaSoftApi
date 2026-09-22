@@ -175,7 +175,12 @@ class BccLeadershipController extends Controller
             'notes' => $leader->notes,
             'remarks' => $leader->remarks,
             'member_name' => $leader->member?->full_name_display,
+            'family_id' => $leader->member?->family_id,
             'family_name' => $leader->member?->family?->family_name,
+            'leader_phone' => $leader->leader_phone,
+            'leader_email' => $leader->leader_email,
+            'contact_phone' => $leader->contact_phone,
+            'contact_email' => $leader->contact_email,
         ];
     }
 }

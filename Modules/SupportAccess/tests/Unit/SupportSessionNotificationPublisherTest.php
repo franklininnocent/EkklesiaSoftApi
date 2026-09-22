@@ -2,6 +2,7 @@
 
 namespace Modules\SupportAccess\Tests\Unit;
 
+use App\Mail\TransactionalNotificationMail;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Mail;
 use Mockery;
@@ -25,7 +26,7 @@ class SupportSessionNotificationPublisherTest extends TestCase
     #[Test]
     public function never_mode_skips_delivery(): void
     {
-        Mail::shouldReceive('raw')->never();
+        Mail::fake();
 
         $settings = Mockery::mock(SupportSettingsService::class);
         $settings->shouldReceive('getOpsSettings')->andReturn(['notification_mode' => 'never']);
@@ -33,22 +34,14 @@ class SupportSessionNotificationPublisherTest extends TestCase
         $publisher = new SupportSessionNotificationPublisher($settings);
         $publisher->sessionStarted($this->fakeSession());
 
-        $this->addToAssertionCount(1);
+        Mail::assertNothingSent();
     }
 
     #[Test]
     public function immediate_mode_logs_and_mails_when_configured(): void
     {
         config(['supportaccess.notify_to' => 'ops@example.com']);
-
-        $mailCalled = false;
-        Mail::shouldReceive('raw')
-            ->once()
-            ->withArgs(function (string $body, callable $callback) use (&$mailCalled): bool {
-                $mailCalled = str_contains($body, 'Support Access notification');
-
-                return $mailCalled;
-            });
+        Mail::fake();
 
         $settings = Mockery::mock(SupportSettingsService::class);
         $settings->shouldReceive('getOpsSettings')->andReturn(['notification_mode' => 'immediate']);
@@ -56,13 +49,15 @@ class SupportSessionNotificationPublisherTest extends TestCase
         $publisher = new SupportSessionNotificationPublisher($settings);
         $publisher->sessionStarted($this->fakeSession());
 
-        $this->assertTrue($mailCalled);
+        Mail::assertSent(TransactionalNotificationMail::class, function (TransactionalNotificationMail $mail): bool {
+            return str_contains($mail->render(), 'Support Access notification');
+        });
     }
 
     #[Test]
     public function digest_mode_enqueues_without_mail(): void
     {
-        Mail::shouldReceive('raw')->never();
+        Mail::fake();
 
         $settings = Mockery::mock(SupportSettingsService::class);
         $settings->shouldReceive('getOpsSettings')->andReturn(['notification_mode' => 'digest']);
@@ -76,12 +71,14 @@ class SupportSessionNotificationPublisherTest extends TestCase
 
         $this->assertNotNull($row);
         $this->assertCount(1, $row->value['items'] ?? []);
+        Mail::assertNothingSent();
     }
 
     #[Test]
     public function flush_digest_sends_combined_mail_and_clears_queue(): void
     {
         config(['supportaccess.notify_to' => 'ops@example.com']);
+        Mail::fake();
 
         SupportSessionSetting::query()->updateOrCreate(
             ['key' => SupportSessionNotificationPublisher::DIGEST_KEY],
@@ -98,18 +95,16 @@ class SupportSessionNotificationPublisherTest extends TestCase
             ]]
         );
 
-        Mail::shouldReceive('raw')
-            ->once()
-            ->withArgs(function (string $body, callable $callback): bool {
-                return str_contains($body, 'Support Access digest');
-            });
-
         $settings = Mockery::mock(SupportSettingsService::class);
         $publisher = new SupportSessionNotificationPublisher($settings);
 
         $count = $publisher->flushDigest();
 
         $this->assertSame(1, $count);
+
+        Mail::assertSent(TransactionalNotificationMail::class, function (TransactionalNotificationMail $mail): bool {
+            return str_contains($mail->render(), 'Support Access digest');
+        });
 
         $row = SupportSessionSetting::query()
             ->where('key', SupportSessionNotificationPublisher::DIGEST_KEY)

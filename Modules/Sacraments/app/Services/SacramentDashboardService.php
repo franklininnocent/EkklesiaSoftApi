@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Modules\Donations\Support\DonationBusinessDate;
 use Modules\BCC\Models\BCC;
 use Modules\Sacraments\Models\Sacrament;
 use Modules\Sacraments\Models\SacramentType;
@@ -72,6 +73,14 @@ class SacramentDashboardService
             }
         }
 
+        $minimal = filter_var($params['minimal'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        $preset = (string) ($params['preset'] ?? '');
+        if ($preset === 'calendar_month_mtd') {
+            $timezone = DonationBusinessDate::timezoneForTenant($tenantId);
+            $params['date_from'] = Carbon::now($timezone)->startOfMonth()->toDateString();
+            $params['date_to'] = Carbon::now($timezone)->toDateString();
+        }
+
         $hasExplicitFrom = isset($params['date_from']) && $params['date_from'] !== '';
         $hasExplicitTo = isset($params['date_to']) && $params['date_to'] !== '';
         $isAllTime = ! $hasExplicitFrom && ! $hasExplicitTo;
@@ -107,8 +116,9 @@ class SacramentDashboardService
         $totalPeriod = (clone $periodQuery)->count();
         $totalAllTime = (clone $allTimeQuery)->count();
 
-        $monthStart = now()->startOfMonth()->toDateString();
-        $monthEnd = now()->endOfMonth()->toDateString();
+        $timezone = DonationBusinessDate::timezoneForTenant($tenantId);
+        $monthStart = Carbon::now($timezone)->startOfMonth()->toDateString();
+        $monthEnd = Carbon::now($timezone)->endOfMonth()->toDateString();
         $thisMonth = (clone $allTimeQuery)
             ->whereBetween('date_administered', [$monthStart, $monthEnd])
             ->count();
@@ -121,6 +131,38 @@ class SacramentDashboardService
         $matrimonyTypeId = $this->matrimonyBuilder->resolveMatrimonyTypeId($types);
         $includeGaps = filter_var($params['include_gaps'] ?? true, FILTER_VALIDATE_BOOLEAN);
         $includeMarriageGaps = filter_var($params['include_marriage_gaps'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
+        $byTypeTotals = array_map(static fn (array $row) => [
+            'code' => $row['code'],
+            'label' => $row['label'],
+            'count' => $row['period'],
+        ], $byType);
+
+        if ($minimal) {
+            return [
+                'period' => [
+                    'date_from' => $from->toDateString(),
+                    'date_to' => $to->toDateString(),
+                    'label' => $periodLabel,
+                ],
+                'kpis' => [
+                    'total_period' => $totalPeriod,
+                    'this_month' => $thisMonth,
+                ],
+                'breakdowns' => [
+                    'by_type_totals' => $byTypeTotals,
+                ],
+                'recent' => $this->buildRecentRecords($periodQuery),
+                'meta' => [
+                    'restricted_types_excluded' => array_values(array_map(
+                        static fn (string $code) => SacramentTypeCode::normalize($code) ?? strtoupper($code),
+                        $restrictedTypeCodes
+                    )),
+                    'generated_at' => now()->toIso8601String(),
+                    'minimal' => true,
+                ],
+            ];
+        }
 
         $payload = [
             'period' => [
@@ -139,11 +181,7 @@ class SacramentDashboardService
             'trends' => $this->buildTrends($tenantId, $restrictedTypeCodes, $bccId, $to, $typeIds),
             'breakdowns' => [
                 'member_status' => $this->buildMemberStatusBreakdown($periodQuery),
-                'by_type_totals' => array_map(static fn (array $row) => [
-                    'code' => $row['code'],
-                    'label' => $row['label'],
-                    'count' => $row['period'],
-                ], $byType),
+                'by_type_totals' => $byTypeTotals,
             ],
             'demographics' => $this->demographicsBuilder->build($periodQuery),
             'matrimony' => $this->matrimonyBuilder->build($periodQuery, $allTimeQuery, $matrimonyTypeId),
@@ -438,6 +476,8 @@ class SacramentDashboardService
         $parts = [
             'from_'.($params['date_from'] ?? 'default'),
             'to_'.($params['date_to'] ?? 'default'),
+            'preset_'.($params['preset'] ?? 'none'),
+            'minimal_'.(filter_var($params['minimal'] ?? false, FILTER_VALIDATE_BOOLEAN) ? '1' : '0'),
             'bcc_'.($params['bcc_id'] ?? 'all'),
             'gaps_'.(filter_var($params['include_gaps'] ?? true, FILTER_VALIDATE_BOOLEAN) ? '1' : '0'),
             'marriage_gaps_'.(filter_var($params['include_marriage_gaps'] ?? false, FILTER_VALIDATE_BOOLEAN) ? '1' : '0'),

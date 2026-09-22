@@ -9,6 +9,7 @@ use Modules\Donations\Models\DonationPayment;
 use Modules\Donations\Models\DonationProject;
 use Modules\Donations\Models\ProjectInstallmentDue;
 use Modules\Donations\Support\ContributionBalance;
+use Modules\Donations\Support\DonationBusinessDate;
 use Modules\Family\Models\Family;
 
 class ActionCenterService
@@ -33,7 +34,7 @@ class ActionCenterService
      */
     private function buildFollowUpQueue(int $tenantId): array
     {
-        $today = now()->toDateString();
+        $today = DonationBusinessDate::today($tenantId);
         $mandatoryCount = ContributionDue::forTenant($tenantId)
             ->whereIn('status', ['pending', 'partially_paid'])
             ->whereDate('due_date', '<', $today)
@@ -72,13 +73,14 @@ class ActionCenterService
      */
     private function buildOutstandingCollectionsQueue(int $tenantId): array
     {
-        $outstanding = ContributionBalance::sumOutstanding(
-            ContributionDue::forTenant($tenantId)
+        $outstanding = ContributionBalance::sumCollectable(
+            ContributionDue::forTenant($tenantId),
+            DonationBusinessDate::today($tenantId)
         );
-        $familyCount = ContributionDue::forTenant($tenantId)
-            ->whereIn('status', ['pending', 'partially_paid'])
-            ->distinct('family_id')
-            ->count('family_id');
+        $familyCount = ContributionBalance::scopeCollectable(
+            ContributionDue::forTenant($tenantId),
+            DonationBusinessDate::today($tenantId)
+        )->distinct('family_id')->count('family_id');
 
         return [
             'key' => 'outstanding_collections',
@@ -168,16 +170,24 @@ class ActionCenterService
             ->where('status', 'active')
             ->get();
 
-        $missing = $assignments->filter(function (ContributionPlanAssignment $assignment) use ($tenantId, $fyStart): bool {
+        $familyIds = $assignments->pluck('family_id')->filter()->unique()->values();
+        $paidByFamily = collect();
+        if ($familyIds->isNotEmpty()) {
+            $paidByFamily = DonationPayment::forTenant($tenantId)
+                ->whereIn('family_id', $familyIds)
+                ->where('status', 'succeeded')
+                ->whereDate('payment_date', '>=', $fyStart)
+                ->selectRaw('family_id, COALESCE(SUM(amount), 0) as paid')
+                ->groupBy('family_id')
+                ->pluck('paid', 'family_id');
+        }
+
+        $missing = $assignments->filter(function (ContributionPlanAssignment $assignment) use ($paidByFamily): bool {
             if (!$assignment->family_id) {
                 return false;
             }
 
-            $paid = (float) DonationPayment::forTenant($tenantId)
-                ->where('family_id', $assignment->family_id)
-                ->where('status', 'succeeded')
-                ->whereDate('payment_date', '>=', $fyStart)
-                ->sum('amount');
+            $paid = (float) ($paidByFamily[$assignment->family_id] ?? 0);
 
             return $paid <= 0;
         });

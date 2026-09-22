@@ -45,7 +45,7 @@ class DonationsServiceProvider extends ModuleServiceProvider
      */
     protected function configureSchedules(Schedule $schedule): void
     {
-        $schedule->command('donations:generate-scheduled-dues')->dailyAt('01:00');
+        $schedule->command('donations:generate-scheduled-dues')->dailyAt('01:00')->withoutOverlapping();
     }
 
     public function boot(): void

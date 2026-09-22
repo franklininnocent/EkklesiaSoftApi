@@ -94,7 +94,12 @@ Route::middleware(['auth:api'])->prefix('families')->group(function () {
 
 // Members Routes - Get all members across all families for a tenant
 Route::middleware(['auth:api'])->prefix('members')->group(function () {
-    Route::get('/', [FamilyController::class, 'allMembers'])->name('members.index');
+    Route::get('/celebrations', [FamilyController::class, 'memberCelebrations'])
+        ->middleware('tenant.permission:families.view')
+        ->name('members.celebrations');
+    Route::get('/', [FamilyController::class, 'allMembers'])
+        ->middleware('tenant.permission:families.view')
+        ->name('members.index');
 });
 
 // Parish persons — used by family member + sacrament recipient search

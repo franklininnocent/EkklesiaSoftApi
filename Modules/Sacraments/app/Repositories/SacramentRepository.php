@@ -92,13 +92,14 @@ class SacramentRepository
             }
         }
 
-        $perPage = $params['per_page'] ?? 20;
+        $perPage = max(1, min(100, (int) ($params['per_page'] ?? 20)));
+        $page = max(1, (int) ($params['page'] ?? 1));
         $sortBy = $params['sort_by'] ?? 'date_administered';
         $sortDir = $params['sort_dir'] ?? 'desc';
 
         $query->whereNull('deleted_at');
 
-        return $query->orderBy($sortBy, $sortDir)->paginate($perPage);
+        return $query->orderBy($sortBy, $sortDir)->paginate($perPage, ['*'], 'page', $page);
     }
 
     private function applyMarriageRegisterFilter($query, string $filter): void

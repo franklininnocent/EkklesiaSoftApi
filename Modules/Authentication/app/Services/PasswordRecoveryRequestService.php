@@ -3,16 +3,17 @@
 namespace Modules\Authentication\Services;
 
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Str;
 use Modules\Authentication\Mail\PasswordRecoveryRequestNotificationMail;
 use Modules\Authentication\Models\PasswordRecoveryRequest;
-use Modules\Authentication\Models\PasswordRecoveryThrottle;
 use Modules\Authentication\Models\User;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Support\TenantContext;
 use RuntimeException;
+use Throwable;
 
 class PasswordRecoveryRequestService
 {
@@ -99,7 +100,7 @@ class PasswordRecoveryRequestService
             throw new RuntimeException('You are not authorized to reject this request.', 403);
         }
 
-        return DB::transaction(function () use ($actor, $request, $reason) {
+        $result = DB::transaction(function () use ($actor, $request, $reason) {
             $locked = PasswordRecoveryRequest::query()
                 ->whereKey($request->id)
                 ->lockForUpdate()
@@ -119,6 +120,10 @@ class PasswordRecoveryRequestService
 
             return $locked->fresh(['user.role', 'tenant']);
         });
+
+        $this->completeApproverNotificationSubject((string) $result->id);
+
+        return $result;
     }
 
     public function retryDelivery(User $actor, string $requestId): PasswordRecoveryRequest
@@ -257,15 +262,20 @@ class PasswordRecoveryRequestService
                 $request->save();
             }
 
+            $this->completeApproverNotificationSubject((string) $request->id);
+
             throw new RuntimeException('A temporary password was generated but the email could not be delivered. Please retry from the request list.', 422);
         }
+
+        $this->completeApproverNotificationSubject((string) $request->id);
 
         return $request->fresh(['user.role', 'tenant', 'processedBy']);
     }
 
     public function notifyApprovers(PasswordRecoveryRequest $request, User $target): void
     {
-        if (! config('authentication.recovery.mail_enabled', true)) {
+        $approvers = $this->resolveApproverRecipients($request);
+        if ($approvers->isEmpty()) {
             return;
         }
 
@@ -275,43 +285,118 @@ class PasswordRecoveryRequestService
         }
 
         $roleLabel = $this->roleLabelForClassification($request->requester_classification);
+        $requestedAt = $request->created_at?->toIso8601String() ?? now()->toIso8601String();
 
-        if (in_array($request->requester_classification, [
-            PasswordRecoveryRequest::CLASSIFICATION_EKKLESIA_USER,
-            PasswordRecoveryRequest::CLASSIFICATION_TENANT_ADMIN,
-        ], true)) {
-            foreach ($this->approverResolver->resolveSuperAdmins() as $admin) {
-                if (! filter_var((string) $admin->email, FILTER_VALIDATE_EMAIL)) {
+        if (config('authentication.recovery.mail_enabled', true)) {
+            foreach ($approvers as $approver) {
+                if (! filter_var((string) $approver->email, FILTER_VALIDATE_EMAIL)) {
                     continue;
                 }
 
-                Mail::to((string) $admin->email)->queue(new PasswordRecoveryRequestNotificationMail(
+                Mail::to((string) $approver->email)->queue(new PasswordRecoveryRequestNotificationMail(
                     requesterName: (string) $target->name,
                     requesterEmail: (string) $target->email,
                     tenantName: $tenantName,
                     requesterRole: $roleLabel,
-                    requestedAt: $request->created_at?->toIso8601String() ?? now()->toIso8601String(),
+                    requestedAt: $requestedAt,
                     requestId: $request->id,
                 ));
             }
+        }
 
-            return;
+        $this->publishApproverInAppNotification(
+            $request,
+            $target,
+            $approvers->pluck('id')->map(fn ($id) => (int) $id)->values()->all(),
+            $tenantName,
+            $roleLabel,
+        );
+    }
+
+    /**
+     * @return Collection<int, User>
+     */
+    private function resolveApproverRecipients(PasswordRecoveryRequest $request): Collection
+    {
+        if (in_array($request->requester_classification, [
+            PasswordRecoveryRequest::CLASSIFICATION_EKKLESIA_USER,
+            PasswordRecoveryRequest::CLASSIFICATION_TENANT_ADMIN,
+        ], true)) {
+            return $this->approverResolver->resolveSuperAdmins();
         }
 
         if ($request->requester_classification === PasswordRecoveryRequest::CLASSIFICATION_TENANT_USER
             && $request->intended_approver_user_id !== null
         ) {
             $approver = User::query()->find($request->intended_approver_user_id);
-            if ($approver && filter_var((string) $approver->email, FILTER_VALIDATE_EMAIL)) {
-                Mail::to((string) $approver->email)->queue(new PasswordRecoveryRequestNotificationMail(
-                    requesterName: (string) $target->name,
-                    requesterEmail: (string) $target->email,
-                    tenantName: $tenantName,
-                    requesterRole: $roleLabel,
-                    requestedAt: $request->created_at?->toIso8601String() ?? now()->toIso8601String(),
-                    requestId: $request->id,
-                ));
-            }
+
+            return $approver !== null ? collect([$approver]) : collect();
+        }
+
+        return collect();
+    }
+
+    /**
+     * @param  list<int>  $recipientIds
+     */
+    private function publishApproverInAppNotification(
+        PasswordRecoveryRequest $request,
+        User $target,
+        array $recipientIds,
+        ?string $tenantName,
+        string $roleLabel,
+    ): void {
+        if ($recipientIds === [] || ! interface_exists(\Modules\Notifications\Contracts\NotificationPublisherContract::class)) {
+            return;
+        }
+
+        $isTenantScoped = $request->requester_classification === PasswordRecoveryRequest::CLASSIFICATION_TENANT_USER
+            && $request->tenant_id !== null;
+
+        try {
+            app(\Modules\Notifications\Contracts\NotificationPublisherContract::class)->publish(
+                new \Modules\Notifications\Support\NotificationIntent(
+                    definitionCode: 'auth.password_recovery.requested',
+                    actor: $target,
+                    subjectType: 'password_recovery_request',
+                    subjectId: (string) $request->id,
+                    tenantId: $isTenantScoped ? (int) $request->tenant_id : null,
+                    scope: $isTenantScoped
+                        ? \Modules\Notifications\Support\InboxScope::Tenant
+                        : \Modules\Notifications\Support\InboxScope::Platform,
+                    occurrenceId: (string) $request->id,
+                    data: [
+                        'requester_name' => (string) $target->name,
+                        'requester_email' => (string) $target->email,
+                        'requester_role' => $roleLabel,
+                        'tenant_name' => $tenantName ?? 'Platform',
+                    ],
+                    explicitRecipientIds: $recipientIds,
+                    actionStatus: 'required',
+                )
+            );
+        } catch (Throwable $e) {
+            Log::warning('Password recovery in-app notification failed', [
+                'request_id' => $request->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    public function completeApproverNotificationSubject(string $requestId): void
+    {
+        if (! interface_exists(\Modules\Notifications\Contracts\NotificationPublisherContract::class)) {
+            return;
+        }
+
+        try {
+            app(\Modules\Notifications\Contracts\NotificationPublisherContract::class)
+                ->completeSubject('password_recovery_request', $requestId);
+        } catch (Throwable $e) {
+            Log::warning('Password recovery notification subject completion failed', [
+                'request_id' => $requestId,
+                'error' => $e->getMessage(),
+            ]);
         }
     }
 

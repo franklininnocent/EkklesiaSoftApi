@@ -3,15 +3,23 @@
 namespace Modules\Family\app\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Modules\Family\app\Http\Requests\Concerns\ValidatesPersonParentFields;
 
 class UpdateFamilyMemberRequest extends FormRequest
 {
+    use ValidatesPersonParentFields;
+
     /**
      * Determine if the user is authorized to make this request.
      */
     public function authorize(): bool
     {
         return true;
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $this->mergeEmptyParentIdsToNull();
     }
 
     /**
@@ -21,7 +29,7 @@ class UpdateFamilyMemberRequest extends FormRequest
      */
     public function rules(): array
     {
-        return [
+        return array_merge([
             // Personal Information
             'first_name' => ['sometimes', 'required', 'string', 'max:100'],
             'middle_name' => ['nullable', 'string', 'max:100'],
@@ -79,7 +87,7 @@ class UpdateFamilyMemberRequest extends FormRequest
             // Status
             'status' => ['nullable', 'in:active,inactive,deceased,migrated'],
             'deceased_date' => ['nullable', 'date', 'before_or_equal:today', 'required_if:status,deceased'],
-        ];
+        ], $this->personParentFieldRules());
     }
 
     /**
@@ -117,8 +125,11 @@ class UpdateFamilyMemberRequest extends FormRequest
             'marriage_groom_church_type' => 'groom church type',
             'marriage_groom_church_name' => 'groom church name',
             'marriage_groom_church_address' => 'groom church address',
+            'father_person_id' => 'father',
+            'father_name' => "father's name",
+            'mother_person_id' => 'mother',
+            'mother_name' => "mother's name",
         ];
     }
 }
-
 

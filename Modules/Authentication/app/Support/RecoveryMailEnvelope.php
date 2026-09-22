@@ -2,6 +2,7 @@
 
 namespace Modules\Authentication\Support;
 
+use App\Support\Email\EmailSubject;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
@@ -16,7 +17,7 @@ final class RecoveryMailEnvelope
                 (string) ($from['address'] ?? 'franklininnocent.fs@gmail.com'),
                 (string) ($from['name'] ?? 'EkklesiaSoft'),
             ),
-            subject: $subject,
+            subject: EmailSubject::sanitize($subject),
         );
     }
 }

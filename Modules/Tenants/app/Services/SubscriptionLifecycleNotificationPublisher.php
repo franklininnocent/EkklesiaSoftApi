@@ -2,6 +2,7 @@
 
 namespace Modules\Tenants\Services;
 
+use App\Mail\TransactionalNotificationMail;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Modules\Authentication\Models\User;
@@ -38,9 +39,12 @@ class SubscriptionLifecycleNotificationPublisher
 
         foreach ($recipients as $email) {
             try {
-                Mail::raw($body, function ($message) use ($email, $subject): void {
-                    $message->to($email)->subject($subject);
-                });
+                Mail::to($email)->send(new TransactionalNotificationMail(
+                    mailSubject: $subject,
+                    heading: $subject,
+                    body: $body,
+                    preheader: $subject,
+                ));
             } catch (Throwable $e) {
                 Log::warning('Subscription lifecycle mail failed', [
                     'tenant_id' => $tenant->id,
@@ -61,7 +65,7 @@ class SubscriptionLifecycleNotificationPublisher
 
     private function publishInApp(Tenant $tenant, string $operation): void
     {
-        if (! class_exists(\Modules\Notifications\Contracts\NotificationPublisherContract::class)) {
+        if (! interface_exists(\Modules\Notifications\Contracts\NotificationPublisherContract::class)) {
             return;
         }
 

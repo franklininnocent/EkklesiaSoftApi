@@ -314,20 +314,28 @@ class AuthenticationController extends Controller
         ];
 
         // #region agent log
-        $debugLog = '/var/www/html/EkklesiaSoft/.cursor/debug-b84b28.log';
-        @file_put_contents($debugLog, json_encode([
-            'sessionId' => 'b84b28',
+        $leadershipPhotoPath = null;
+        if ($user->person_id && $user->tenant_id) {
+            $leadershipPhotoPath = \Modules\Tenants\Models\LeadershipAssignment::query()
+                ->where('tenant_id', $user->tenant_id)
+                ->where('person_id', $user->person_id)
+                ->where('status', 'active')
+                ->whereNotNull('photo_url')
+                ->value('photo_url');
+        }
+        @file_put_contents('/var/www/html/EkklesiaSoft/.cursor/debug-4fbd99.log', json_encode([
+            'sessionId' => '4fbd99',
             'location' => 'AuthenticationController.php:getUser',
-            'message' => 'get-user response flags',
+            'message' => 'get-user profile image fields',
             'data' => [
                 'userId' => $user->id,
-                'is_super_admin' => $userData['is_super_admin'],
-                'is_primary_admin' => $userData['is_primary_admin'],
-                'role_name' => $userData['role_name'],
-                'tenant_id' => $userData['tenant_id'],
+                'personId' => $user->person_id,
+                'profile_image_path' => $user->profile_image_path,
+                'profile_image_full_url' => $userData['profile_image_full_url'],
+                'leadership_photo_path' => $leadershipPhotoPath,
             ],
             'timestamp' => (int) round(microtime(true) * 1000),
-            'hypothesisId' => 'H1-H2',
+            'hypothesisId' => 'H1',
             'runId' => 'post-fix',
         ]).PHP_EOL, FILE_APPEND);
         // #endregion

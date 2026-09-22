@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use InvalidArgumentException;
 use Modules\MinistriesAssociations\Services\Admin\AdminMinistriesAuditService;
 use Modules\MinistriesAssociations\Support\AdminMinistriesWindow;
+use Modules\Tenants\Support\AuditLogViewerAuthorization;
 
 class AdminMinistriesAuditController extends Controller
 {
@@ -18,6 +19,13 @@ class AdminMinistriesAuditController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        if (! AuditLogViewerAuthorization::canViewPlatformCompleteAudit($request->user())) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized. Platform audit access is restricted to SuperAdmin.',
+            ], 403);
+        }
+
         $filters = $request->validate([
             'window_days' => ['sometimes', 'integer', 'in:'.implode(',', AdminMinistriesWindow::ALLOWED_DAYS)],
             'date_from' => ['sometimes', 'nullable', 'date'],

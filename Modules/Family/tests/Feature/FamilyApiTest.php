@@ -776,6 +776,34 @@ class FamilyApiTest extends TestCase
     }
 
     #[Test]
+    public function it_counts_members_created_this_month_in_statistics(): void
+    {
+        FamilyMember::factory()->create([
+            'family_id' => $this->family->id,
+            'tenant_id' => $this->tenant->id,
+            'created_at' => now()->startOfMonth()->addDay(),
+        ]);
+
+        FamilyMember::factory()->create([
+            'family_id' => $this->family->id,
+            'tenant_id' => $this->tenant->id,
+            'created_at' => now()->subMonth()->endOfMonth(),
+        ]);
+
+        $response = $this->getJson('/api/families/statistics');
+
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true)
+            ->assertJsonStructure([
+                'data' => [
+                    'members_created_this_month',
+                ],
+            ]);
+
+        $this->assertGreaterThanOrEqual(1, $response->json('data.members_created_this_month'));
+    }
+
+    #[Test]
     public function it_can_get_families_by_bcc()
     {
         // Arrange

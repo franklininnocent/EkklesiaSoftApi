@@ -34,6 +34,7 @@ class FamilyService
         FamilyAuditService $familyAuditService,
         protected PersonService $personService,
         protected FamilyMemberParentNameResolver $parentNameResolver,
+        protected PersonParentRelationshipService $parentRelationshipService,
         protected FamilyDuplicateDetectionService $duplicateDetectionService,
     ) {
         $this->familyRepository = $familyRepository;
@@ -62,7 +63,13 @@ class FamilyService
      */
     public function getFamilyById(string $id, string $tenantId): ?Family
     {
-        return $this->familyRepository->findById($id, $tenantId);
+        $family = $this->familyRepository->findById($id, $tenantId);
+
+        if ($family !== null && $family->relationLoaded('members') && $family->members->isNotEmpty()) {
+            $this->parentNameResolver->attachToMembers($family->members);
+        }
+
+        return $family;
     }
 
     /**
@@ -103,7 +110,7 @@ class FamilyService
                 foreach ($data['members'] as $memberData) {
                     $memberData['created_by'] = $userId;
                     $memberData['updated_by'] = $userId;
-                    $memberData = $this->ensureMemberPerson($memberData, $tenantId, $userId);
+                    $memberData = $this->ensureMemberPersonWithParents($memberData, $tenantId, $userId);
                     $this->enforceSacramentDependencies($memberData);
                     $this->familyRepository->addMember($family, $memberData);
                 }
@@ -219,6 +226,8 @@ class FamilyService
 
                     unset($memberData['id']); // Remove id from update data
 
+                    $parentPayload = $this->parentRelationshipService->extractFromMemberPayload($memberData);
+
                     if ($memberId) {
                         // Update existing member
                         $member = $this->familyRepository->findMemberById($memberId, $family->id);
@@ -231,6 +240,7 @@ class FamilyService
                             $memberData['updated_by'] = $userId;
                             $this->enforceSacramentDependencies($memberData, $member);
                             $this->familyRepository->updateMember($member, $memberData);
+                            $this->syncMemberPersonFromPayload($member, $memberData, $parentPayload, $tenantId, $userId, $memberId);
                             $member->refresh();
                             $pendingStatusChangeEvents[] = [
                                 'member' => $member,
@@ -255,7 +265,7 @@ class FamilyService
                         ]);
                         $memberData['created_by'] = $userId;
                         $memberData['updated_by'] = $userId;
-                        $memberData = $this->ensureMemberPerson($memberData, $tenantId, $userId);
+                        $memberData = $this->ensureMemberPersonWithParents($memberData, $tenantId, $userId);
                         $this->enforceSacramentDependencies($memberData);
                         $this->familyRepository->addMember($family, $memberData);
                     }
@@ -422,13 +432,17 @@ class FamilyService
             // Add audit info
             $memberData['created_by'] = $userId;
             $memberData['updated_by'] = $userId;
-            $memberData = $this->ensureMemberPerson($memberData, $tenantId, $userId);
+            $memberData = $this->ensureMemberPersonWithParents($memberData, $tenantId, $userId);
 
             $this->enforceSacramentDependencies($memberData);
             $this->enforceSingleActiveHead($familyId, $memberData);
 
             // Create member
             $member = $this->familyRepository->addMember($family, $memberData);
+
+            if ($member->person_id) {
+                $this->applyBaptismRegisterToMemberIfEmpty($member, (string) $member->person_id, (int) $tenantId);
+            }
 
             DB::commit();
 
@@ -508,6 +522,8 @@ class FamilyService
             // Add audit info
             $data['updated_by'] = $userId;
 
+            $parentPayload = $this->parentRelationshipService->extractFromMemberPayload($data);
+
             $this->enforceSacramentDependencies($data, $member);
             $this->enforceSingleActiveHead($familyId, $data, $memberId);
 
@@ -526,12 +542,7 @@ class FamilyService
                 throw new \RuntimeException('Failed to update family member');
             }
 
-            if ($member->person_id) {
-                $person = Person::query()->find($member->person_id);
-                if ($person) {
-                    $this->personService->syncFromFamilyMember($person, $data, (int) $userId);
-                }
-            }
+            $this->syncMemberPersonFromPayload($member, $data, $parentPayload, $tenantId, $userId, $memberId);
 
             DB::commit();
 
@@ -546,7 +557,14 @@ class FamilyService
                 'updated_fields' => array_keys($data),
             ]);
 
-            return $member->fresh();
+            $member = $member->fresh([
+                'person:id,date_of_birth,gender,father_name,mother_name,father_person_id,mother_person_id',
+                'person.father:id,first_name,middle_name,last_name,deleted_at',
+                'person.mother:id,first_name,middle_name,last_name,deleted_at',
+            ]);
+            $this->parentNameResolver->attachToMembers([$member]);
+
+            return $member;
 
         } catch (\Exception $e) {
             DB::rollBack();
@@ -942,10 +960,6 @@ class FamilyService
             }
         }
 
-        if ($hasFirstCommunion && ! $hasConfirmation) {
-            $errors['first_communion_date'][] = 'Confirmation must be recorded before First Communion.';
-        }
-
         if (! empty($errors)) {
             throw ValidationException::withMessages($errors);
         }
@@ -1095,8 +1109,12 @@ class FamilyService
         $memberData['updated_by'] = $userId;
         $memberData = $this->personService->memberIdentityFromPerson($person, $memberData);
         $this->enforceSacramentDependencies($memberData);
+        $this->enforceSingleActiveHead($familyId, $memberData);
 
-        return $this->familyRepository->addMember($family, $memberData);
+        $member = $this->familyRepository->addMember($family, $memberData);
+        $this->applyBaptismRegisterToMemberIfEmpty($member, $person->id, (int) $tenantId);
+
+        return $member;
     }
 
     /**
@@ -1128,9 +1146,75 @@ class FamilyService
             $memberData['relationship_to_head'] = 'self';
         }
         $this->enforceSacramentDependencies($memberData);
+        $this->enforceSingleActiveHead((string) $family->id, $memberData);
         $member = $this->familyRepository->addMember($family, $memberData);
+        $this->applyBaptismRegisterToMemberIfEmpty($member, $person->id, (int) $tenantId);
 
         return ['family' => $family, 'person' => $person, 'member' => $member];
+    }
+
+    /**
+     * @param  array<string, mixed>  $memberData
+     * @return array<string, mixed>
+     */
+    private function ensureMemberPersonWithParents(array $memberData, int|string $tenantId, int|string $userId): array
+    {
+        $parentPayload = $this->parentRelationshipService->extractFromMemberPayload($memberData);
+        $memberData = $this->ensureMemberPerson($memberData, $tenantId, $userId);
+
+        if (! empty($memberData['person_id'])) {
+            $person = Person::query()->find($memberData['person_id']);
+            if ($person) {
+                $this->parentRelationshipService->applyToPerson(
+                    $person,
+                    $parentPayload,
+                    $tenantId,
+                    (int) $userId,
+                    [
+                        'service' => $this->familyAuditService,
+                        'tenant_id' => $tenantId,
+                        'member_id' => $memberData['id'] ?? null,
+                    ]
+                );
+            }
+        }
+
+        return $memberData;
+    }
+
+    /**
+     * @param  array<string, mixed>  $memberData
+     * @param  array<string, mixed>  $parentPayload
+     */
+    private function syncMemberPersonFromPayload(
+        FamilyMember $member,
+        array $memberData,
+        array $parentPayload,
+        int|string $tenantId,
+        int|string $userId,
+        ?string $memberId = null
+    ): void {
+        if (! $member->person_id) {
+            return;
+        }
+
+        $person = Person::query()->find($member->person_id);
+        if (! $person) {
+            return;
+        }
+
+        $this->personService->syncFromFamilyMember($person, $memberData, (int) $userId);
+        $this->parentRelationshipService->applyToPerson(
+            $person,
+            $parentPayload,
+            $tenantId,
+            (int) $userId,
+            [
+                'service' => $this->familyAuditService,
+                'tenant_id' => $tenantId,
+                'member_id' => $memberId ?? $member->id,
+            ]
+        );
     }
 
     /**
@@ -1241,5 +1325,44 @@ class FamilyService
             $payload,
             ['requested_by' => $userId],
         );
+    }
+
+    /**
+     * When linking a baptized Person, copy the baptismal register date if the profile is empty.
+     */
+    private function applyBaptismRegisterToMemberIfEmpty(
+        FamilyMember $member,
+        string $personId,
+        int $tenantId
+    ): void {
+        if ($member->baptism_date !== null) {
+            return;
+        }
+
+        if (! class_exists(\Modules\Sacraments\Models\Sacrament::class)) {
+            return;
+        }
+
+        $baptism = \Modules\Sacraments\Models\Sacrament::query()
+            ->where('tenant_id', $tenantId)
+            ->where('person_id', $personId)
+            ->whereNull('deleted_at')
+            ->whereHas('sacramentType', fn ($q) => $q->where('code', 'BAPTISM'))
+            ->orderByDesc('date_administered')
+            ->first();
+
+        if (! $baptism) {
+            return;
+        }
+
+        $date = $baptism->date_administered;
+        if ($date instanceof \DateTimeInterface) {
+            $date = $date->format('Y-m-d');
+        }
+
+        $member->update([
+            'baptism_date' => $date,
+            'baptism_place' => $baptism->place_administered,
+        ]);
     }
 }

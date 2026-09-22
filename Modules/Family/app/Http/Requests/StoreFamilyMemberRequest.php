@@ -4,10 +4,13 @@ namespace Modules\Family\app\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Modules\Family\app\Http\Requests\Concerns\ValidatesPersonParentFields;
 use Modules\Tenants\Support\TenantContext;
 
 class StoreFamilyMemberRequest extends FormRequest
 {
+    use ValidatesPersonParentFields;
+
     public function authorize(): bool
     {
         return true;
@@ -18,6 +21,8 @@ class StoreFamilyMemberRequest extends FormRequest
         if (! $this->exists('baptism_priest_is_home') || $this->input('baptism_priest_is_home') === null) {
             $this->merge(['baptism_priest_is_home' => false]);
         }
+
+        $this->mergeEmptyParentIdsToNull();
     }
 
     public function rules(): array
@@ -25,7 +30,7 @@ class StoreFamilyMemberRequest extends FormRequest
         $tenantId = app(TenantContext::class)->effectiveTenantId();
         $linkingExistingPerson = filled($this->input('person_id'));
 
-        return [
+        return array_merge([
             'person_id' => [
                 'nullable',
                 'uuid',
@@ -93,7 +98,7 @@ class StoreFamilyMemberRequest extends FormRequest
             // Status
             'status' => ['nullable', 'in:active,inactive,deceased,migrated'],
             'deceased_date' => ['nullable', 'date', 'after_or_equal:date_of_birth', 'before_or_equal:today', 'required_if:status,deceased'],
-        ];
+        ], $this->personParentFieldRules());
     }
 
     public function attributes(): array
@@ -127,6 +132,10 @@ class StoreFamilyMemberRequest extends FormRequest
             'marriage_groom_church_type' => 'groom church type',
             'marriage_groom_church_name' => 'groom church name',
             'marriage_groom_church_address' => 'groom church address',
+            'father_person_id' => 'father',
+            'father_name' => "father's name",
+            'mother_person_id' => 'mother',
+            'mother_name' => "mother's name",
         ];
     }
 

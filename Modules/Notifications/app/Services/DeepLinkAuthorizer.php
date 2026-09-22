@@ -2,7 +2,9 @@
 
 namespace Modules\Notifications\Services;
 
+use Modules\Authentication\Models\PasswordRecoveryRequest;
 use Modules\Authentication\Models\User;
+use Modules\Authentication\Services\PasswordRecoveryAuthorizationService;
 use Modules\Notifications\Models\NotificationEvent;
 
 class DeepLinkAuthorizer
@@ -34,7 +36,24 @@ class DeepLinkAuthorizer
             return true;
         }
 
+        if ($event->subject_type === 'password_recovery_request') {
+            return $this->mayOpenPasswordRecoveryRequest($user, (string) $event->subject_id);
+        }
+
         return true;
+    }
+
+    private function mayOpenPasswordRecoveryRequest(User $user, string $requestId): bool
+    {
+        $exists = PasswordRecoveryRequest::query()->whereKey($requestId)->exists();
+        if (! $exists) {
+            return false;
+        }
+
+        $visible = PasswordRecoveryRequest::query()->whereKey($requestId);
+        app(PasswordRecoveryAuthorizationService::class)->scopeVisibleToActor($user, $visible);
+
+        return $visible->exists();
     }
 
     /**
@@ -53,7 +72,10 @@ class DeepLinkAuthorizer
 
         return match ($event->subject_type) {
             'donation_approval' => ['route' => '/donations/approvals', 'params' => []],
-            'password_recovery_request' => ['route' => '/settings/forgot-password-requests', 'params' => []],
+            'password_recovery_request' => [
+                'route' => '/settings/forgot-password-requests',
+                'params' => ['request' => (string) $event->subject_id],
+            ],
             'support_ticket' => ['route' => '/support', 'params' => ['ticket' => (string) $event->subject_id]],
             'subscription' => ['route' => '/settings/my-subscription', 'params' => []],
             'family' => ['route' => '/families/'.(string) $event->subject_id, 'params' => []],

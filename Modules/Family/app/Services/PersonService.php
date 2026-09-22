@@ -110,22 +110,97 @@ class PersonService
         return $person;
     }
 
+    /**
+     * Update optional contact fields on Person and mirror to active FamilyMember when present.
+     */
+    public function syncContact(Person $person, ?string $email, ?string $phone, ?int $userId = null): Person
+    {
+        $person->email = $email;
+        $person->phone = $phone;
+        $person->updated_by = $userId;
+        $person->save();
+
+        $member = $person->activeFamilyMember;
+        if ($member !== null) {
+            $member->email = $email;
+            $member->phone = $phone;
+            $member->updated_by = $userId;
+            $member->save();
+        }
+
+        return $person;
+    }
+
+    /**
+     * Normalize optional contact fields from request payload (blank → null).
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array{email: ?string, phone: ?string}|null  null when neither key is present
+     */
+    public function contactFromPayload(array $payload): ?array
+    {
+        if (! array_key_exists('email', $payload) && ! array_key_exists('phone', $payload)) {
+            return null;
+        }
+
+        return [
+            'email' => array_key_exists('email', $payload)
+                ? $this->normalizeContactString($payload['email'])
+                : null,
+            'phone' => array_key_exists('phone', $payload)
+                ? $this->normalizeContactString($payload['phone'])
+                : null,
+        ];
+    }
+
+    private function normalizeContactString(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $trimmed = trim((string) $value);
+
+        return $trimmed === '' ? null : $trimmed;
+    }
+
     public function search(int|string $tenantId, array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
-        $query = Person::query()->forTenant($tenantId)->whereNull('deleted_at');
+        $perPage = min(max((int) $perPage, 1), 25);
+
+        $query = Person::query()
+            ->forTenant($tenantId)
+            ->whereNull('deleted_at')
+            ->with([
+                'activeFamilyMember.family:id,family_name,family_code,bcc_id',
+                'activeFamilyMember.family.bcc:id,name,bcc_code',
+            ]);
 
         $search = trim((string) ($filters['search'] ?? ''));
         if ($search !== '') {
-            $pattern = '%'.$search.'%';
-            $query->where(function ($q) use ($pattern) {
-                CaseInsensitiveSearch::applyColumnLike($q, 'first_name', $pattern);
-                CaseInsensitiveSearch::applyColumnLike($q, 'last_name', $pattern, 'or');
-                CaseInsensitiveSearch::applyMemberFullNameLike($q, $pattern, 'or');
-            });
+            if (\Illuminate\Support\Str::isUuid($search)) {
+                $query->where('id', $search);
+            } else {
+                $pattern = '%'.$search.'%';
+                $query->where(function ($q) use ($pattern, $search) {
+                    CaseInsensitiveSearch::applyColumnLike($q, 'first_name', $pattern);
+                    CaseInsensitiveSearch::applyColumnLike($q, 'last_name', $pattern, 'or');
+                    CaseInsensitiveSearch::applyMemberFullNameLike($q, $pattern, 'or');
+                    $q->orWhereHas('activeFamilyMember.family', function ($familyQuery) use ($search) {
+                        $familyQuery->where('family_code', 'ilike', '%'.$search.'%');
+                    });
+                });
+            }
+        } elseif (strlen($search) > 0 && strlen($search) < 2) {
+            $query->whereRaw('1 = 0');
         }
 
         if (! empty($filters['unaffiliated'])) {
             $query->whereDoesntHave('familyMembers', fn ($q) => $q->whereNull('deleted_at'));
+        }
+
+        if (! empty($filters['exclude_person_id'])) {
+            $query->where('id', '!=', (string) $filters['exclude_person_id']);
         }
 
         return $query->orderBy('last_name')->orderBy('first_name')->paginate($perPage);

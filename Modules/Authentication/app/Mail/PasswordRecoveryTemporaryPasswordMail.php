@@ -27,10 +27,12 @@ class PasswordRecoveryTemporaryPasswordMail extends Mailable
     public function content(): Content
     {
         return new Content(
+            html: 'emails.messages.password-recovery-temporary-password',
             text: 'authentication::emails.password-recovery-temporary-password',
             with: [
                 'recipientName' => $this->recipientName,
                 'temporaryPassword' => $this->temporaryPassword,
+                'preheader' => 'Your password recovery request has been approved.',
             ],
         );
     }

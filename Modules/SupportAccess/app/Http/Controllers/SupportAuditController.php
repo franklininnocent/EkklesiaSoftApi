@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Modules\SupportAccess\Services\SupportSessionService;
+use Modules\Tenants\Support\AuditLogViewerAuthorization;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class SupportAuditController extends Controller
@@ -17,6 +18,10 @@ class SupportAuditController extends Controller
 
     public function events(Request $request): JsonResponse
     {
+        if ($denied = $this->denyUnlessAuthorized($request)) {
+            return $denied;
+        }
+
         $filters = $request->validate([
             'support_session_id' => ['nullable', 'uuid'],
             'effective_tenant_id' => ['nullable', 'integer'],
@@ -37,8 +42,12 @@ class SupportAuditController extends Controller
         ]);
     }
 
-    public function exportEvents(Request $request): StreamedResponse
+    public function exportEvents(Request $request): StreamedResponse|JsonResponse
     {
+        if ($denied = $this->denyUnlessAuthorized($request)) {
+            return $denied;
+        }
+
         $filters = $request->validate([
             'support_session_id' => ['nullable', 'uuid'],
             'effective_tenant_id' => ['nullable', 'integer'],
@@ -48,5 +57,17 @@ class SupportAuditController extends Controller
         ]);
 
         return $this->sessions->exportEventsCsv($filters);
+    }
+
+    private function denyUnlessAuthorized(Request $request): ?JsonResponse
+    {
+        if (AuditLogViewerAuthorization::canViewSupportOperationalAudit($request->user())) {
+            return null;
+        }
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Unauthorized. Support audit access is restricted to platform operators.',
+        ], 403);
     }
 }

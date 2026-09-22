@@ -3,15 +3,16 @@
 namespace Modules\Donations\Services;
 
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Modules\Donations\Models\ContributionDue;
 use Modules\Donations\Models\Donation;
 use Modules\Donations\Models\DonationPayment;
 use Modules\Donations\Models\DonationProject;
 use Modules\Donations\Models\DonationRefund;
-use Modules\Donations\Models\DonationSetting;
 use Modules\Donations\Models\RecurringDonationSchedule;
 use Modules\Donations\Support\ContributionBalance;
+use Modules\Donations\Support\DonationBusinessDate;
 use Modules\Donations\Support\MoneyMath;
 use Modules\Family\Models\Family;
 use Modules\Tenants\Models\Tenant;
@@ -30,7 +31,10 @@ class DonationDashboardService
         $base = $this->buildBaseTotals($tenantId);
         $families = $this->buildFamilyMetrics($tenantId);
         $periodCollections = $this->buildPeriodCollections($tenantId);
-        $trend = $this->buildCollectionTrend($tenantId);
+        $trend = $this->buildCollectionTrend(
+            $tenantId,
+            (float) ($periodCollections['current_month_collected'] ?? 0)
+        );
         $attentionList = $this->buildAttentionList($tenantId);
         $recentActivity = $this->buildRecentActivity($tenantId);
         $projectSummaries = $this->buildProjectSummaries($tenantId);
@@ -47,9 +51,12 @@ class DonationDashboardService
 
         $avgProjectPct = collect($projectSummaries)->avg('funding_percentage') ?? 0;
 
+        $monthStart = (string) ($periodCollections['period']['month_start'] ?? DonationBusinessDate::monthStart($tenantId));
+        $monthEnd = (string) ($periodCollections['period']['month_end'] ?? DonationBusinessDate::monthEnd($tenantId));
+
         $paymentCount = DonationPayment::forTenant($tenantId)
             ->where('status', 'succeeded')
-            ->whereDate('payment_date', '>=', now()->startOfMonth()->toDateString())
+            ->whereBetween('payment_date', [$monthStart, $monthEnd])
             ->count();
 
         $averageContribution = $paymentCount > 0
@@ -148,8 +155,8 @@ class DonationDashboardService
 
     private function buildPlanCompliancePct(int $tenantId): float
     {
-        $monthStart = now()->startOfMonth()->toDateString();
-        $monthEnd = now()->endOfMonth()->toDateString();
+        $monthStart = DonationBusinessDate::monthStart($tenantId);
+        $monthEnd = DonationBusinessDate::monthEnd($tenantId);
 
         $assessed = (float) ContributionDue::forTenant($tenantId)
             ->whereBetween('due_date', [$monthStart, $monthEnd])
@@ -283,28 +290,34 @@ class DonationDashboardService
      */
     private function buildBaseTotals(int $tenantId): array
     {
-        $totalCollected = MoneyMath::normalize(
-            DonationPayment::forTenant($tenantId)->where('status', 'succeeded')->sum('amount')
-        );
+        $succeededByMethod = DonationPayment::forTenant($tenantId)
+            ->where('status', 'succeeded')
+            ->selectRaw(
+                "method, COALESCE(SUM(amount), 0) as total, COALESCE(SUM(CASE WHEN source_type IN ('voluntary', 'recurring_schedule') THEN amount ELSE 0 END), 0) as voluntary"
+            )
+            ->groupBy('method')
+            ->get();
+
+        $totalCollected = '0.00';
+        $voluntaryCollected = '0.00';
+        foreach ($succeededByMethod as $row) {
+            $totalCollected = MoneyMath::add($totalCollected, $row->total);
+            $voluntaryCollected = MoneyMath::add($voluntaryCollected, $row->voluntary);
+        }
 
         $totalRefunded = MoneyMath::normalize(
             DonationRefund::forTenant($tenantId)->where('status', 'completed')->sum('amount')
         );
 
-        $pendingDues = ContributionBalance::sumOutstanding(
-            ContributionDue::forTenant($tenantId)
+        $businessDate = \Modules\Donations\Support\DonationBusinessDate::today($tenantId);
+        $pendingDues = ContributionBalance::sumCollectable(
+            ContributionDue::forTenant($tenantId),
+            $businessDate
         );
 
         $activeProjects = DonationProject::forTenant($tenantId)
             ->where('status', 'active')
             ->count();
-
-        $voluntaryCollected = MoneyMath::normalize(
-            DonationPayment::forTenant($tenantId)
-                ->where('status', 'succeeded')
-                ->whereIn('source_type', ['voluntary', 'recurring_schedule'])
-                ->sum('amount')
-        );
 
         $voluntaryEntries = Donation::forTenant($tenantId)->count();
         $anonymousDonations = Donation::forTenant($tenantId)->where('is_anonymous', true)->count();
@@ -316,10 +329,7 @@ class DonationDashboardService
                 ->value('outstanding')
         );
 
-        $collectionsByMethod = DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->selectRaw('method, COALESCE(SUM(amount), 0) as total')
-            ->groupBy('method')
+        $collectionsByMethod = $succeededByMethod
             ->pluck('total', 'method')
             ->map(fn ($sum) => MoneyMath::toApiNumber($sum));
 
@@ -362,30 +372,35 @@ class DonationDashboardService
      */
     private function buildFamilyMetrics(int $tenantId): array
     {
-        $totalFamilies = Family::query()->where('tenant_id', $tenantId)->count();
-        $activeFamilies = Family::query()->where('tenant_id', $tenantId)->where('status', 'active')->count();
+        $familyCounts = Family::query()
+            ->where('tenant_id', $tenantId)
+            ->selectRaw('COUNT(*) as total, COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as active', ['active'])
+            ->first();
+        $totalFamilies = (int) ($familyCounts->total ?? 0);
+        $activeFamilies = (int) ($familyCounts->active ?? 0);
+        $activeFamilyIds = Family::query()
+            ->select('id')
+            ->where('tenant_id', $tenantId)
+            ->where('status', 'active');
 
-        $participatingFamilies = DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->whereNotNull('family_id')
-            ->whereDate('payment_date', '>=', now()->subDays(90)->toDateString())
-            ->pluck('family_id')
-            ->unique()
-            ->count();
+        $windowStart = DonationBusinessDate::subDays($tenantId, 89);
+        $previousWindowStart = DonationBusinessDate::subDays($tenantId, 179);
+        $previousWindowEnd = DonationBusinessDate::subDays($tenantId, 90);
 
-        $previousParticipatingFamilies = DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->whereNotNull('family_id')
-            ->whereBetween('payment_date', [
-                now()->subDays(180)->toDateString(),
-                now()->subDays(91)->toDateString(),
-            ])
-            ->pluck('family_id')
-            ->unique()
-            ->count();
+        $participatingFamilies = $this->countDistinctPayingFamilies(
+            $tenantId,
+            clone $activeFamilyIds,
+            $windowStart
+        );
+        $previousParticipatingFamilies = $this->countDistinctPayingFamilies(
+            $tenantId,
+            clone $activeFamilyIds,
+            $previousWindowStart,
+            $previousWindowEnd
+        );
 
         $participationRate = $activeFamilies > 0
-            ? round(($participatingFamilies / $activeFamilies) * 100, 1)
+            ? min(100.0, round(($participatingFamilies / $activeFamilies) * 100, 1))
             : 0.0;
 
         return [
@@ -398,58 +413,91 @@ class DonationDashboardService
     }
 
     /**
+     * Distinct active families with a succeeded payment in the window.
+     * Two payments for one family count as one family.
+     */
+    private function countDistinctPayingFamilies(
+        int $tenantId,
+        Builder $activeFamilyIds,
+        string $start,
+        ?string $end = null
+    ): int {
+        $query = DonationPayment::forTenant($tenantId)
+            ->where('status', 'succeeded')
+            ->whereNotNull('family_id')
+            ->whereIn('family_id', $activeFamilyIds);
+
+        if ($end === null) {
+            $query->whereDate('payment_date', '>=', $start);
+        } else {
+            $query->whereBetween('payment_date', [$start, $end]);
+        }
+
+        return (int) $query->selectRaw('COUNT(DISTINCT family_id) as aggregate')->value('aggregate');
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function buildPeriodCollections(int $tenantId): array
     {
-        $fyStart = $this->resolveFinancialYearStart($tenantId);
-        $currentMonthStart = now()->startOfMonth();
-        $previousMonthStart = now()->copy()->subMonth()->startOfMonth();
-        $previousMonthEnd = now()->copy()->subMonth()->endOfMonth();
+        $timezone = DonationBusinessDate::timezoneForTenant($tenantId);
+        $today = DonationBusinessDate::today($tenantId);
+        $currentMonthStart = DonationBusinessDate::monthStart($tenantId);
+        $currentMonthEnd = DonationBusinessDate::monthEnd($tenantId);
+        $currentMonth = Carbon::parse($today, $timezone);
+        $previousMonthStart = $currentMonth->copy()->subMonth()->startOfMonth()->toDateString();
+        $previousMonthEnd = $currentMonth->copy()->subMonth()->endOfMonth()->toDateString();
+        $fyBounds = DonationBusinessDate::currentFinancialYearBounds($tenantId, $today);
+        $fyStart = $fyBounds['start'];
 
-        $currentMonthCollected = MoneyMath::normalize(
-            DonationPayment::forTenant($tenantId)
-                ->where('status', 'succeeded')
-                ->whereDate('payment_date', '>=', $currentMonthStart->toDateString())
-                ->sum('amount')
-        );
+        $currentMonthCollected = $this->sumSucceededPayments($tenantId, $currentMonthStart, $currentMonthEnd);
+        $previousMonthCollected = $this->sumSucceededPayments($tenantId, $previousMonthStart, $previousMonthEnd);
+        $annualCollected = $this->sumSucceededPayments($tenantId, $fyStart, $fyBounds['end']);
 
-        $previousMonthCollected = MoneyMath::normalize(
-            DonationPayment::forTenant($tenantId)
-                ->where('status', 'succeeded')
-                ->whereBetween('payment_date', [$previousMonthStart->toDateString(), $previousMonthEnd->toDateString()])
-                ->sum('amount')
-        );
-
-        $annualCollected = MoneyMath::normalize(
-            DonationPayment::forTenant($tenantId)
-                ->where('status', 'succeeded')
-                ->whereDate('payment_date', '>=', $fyStart->toDateString())
-                ->sum('amount')
-        );
+        $fyStartCarbon = Carbon::parse($fyStart, $timezone);
 
         return [
-            'financial_year' => sprintf('%s-%s', $fyStart->format('Y'), $fyStart->copy()->addYear()->subDay()->format('Y')),
+            'financial_year' => sprintf('%s-%s', $fyStartCarbon->format('Y'), Carbon::parse($fyBounds['end'], $timezone)->format('Y')),
             'current_month_collected' => MoneyMath::toApiNumber($currentMonthCollected),
             'previous_month_collected' => MoneyMath::toApiNumber($previousMonthCollected),
             'annual_collected' => MoneyMath::toApiNumber($annualCollected),
+            'collections_by_method_this_month' => $this->buildCollectionsByMethodForRange($tenantId, $currentMonthStart, $currentMonthEnd),
+            'period' => [
+                'month_start' => $currentMonthStart,
+                'month_end' => $currentMonthEnd,
+                'timezone' => $timezone,
+            ],
         ];
     }
 
     /**
      * @return array<int, array<string, mixed>>
      */
-    private function buildCollectionTrend(int $tenantId): array
+    private function buildCollectionTrend(int $tenantId, float $currentMonthCollected): array
     {
-        $start = now()->subMonths(11)->startOfMonth();
+        $timezone = DonationBusinessDate::timezoneForTenant($tenantId);
+        $currentMonthEnd = DonationBusinessDate::monthEnd($tenantId);
+        $start = Carbon::now($timezone)->subMonths(11)->startOfMonth();
+        $startDate = $start->toDateString();
+        $currentPeriodKey = Carbon::parse(DonationBusinessDate::today($tenantId), $timezone)->format('Y-m');
         $monthExpr = $this->sqlYearMonthExpression('payment_date');
 
-        $collectedByMonth = DonationPayment::forTenant($tenantId)
+        $rows = DonationPayment::forTenant($tenantId)
             ->where('status', 'succeeded')
-            ->whereDate('payment_date', '>=', $start->toDateString())
+            ->whereBetween('payment_date', [$startDate, $currentMonthEnd])
             ->selectRaw("{$monthExpr} as period, COALESCE(SUM(amount), 0) as collected")
-            ->groupBy('period')
-            ->pluck('collected', 'period');
+            ->groupByRaw($monthExpr)
+            ->get();
+
+        $collectedByMonth = [];
+        foreach ($rows as $row) {
+            $key = trim((string) $row->period);
+            if ($key === '') {
+                continue;
+            }
+            $collectedByMonth[$key] = MoneyMath::toApiNumber($row->collected);
+        }
 
         $buckets = [];
         for ($i = 0; $i < 12; $i++) {
@@ -458,11 +506,23 @@ class DonationDashboardService
             $buckets[] = [
                 'period' => $key,
                 'label' => $month->format('M Y'),
-                'collected' => round((float) ($collectedByMonth[$key] ?? 0), 2),
+                'collected' => $key === $currentPeriodKey
+                    ? $currentMonthCollected
+                    : (float) ($collectedByMonth[$key] ?? 0),
             ];
         }
 
         return $buckets;
+    }
+
+    private function sumSucceededPayments(int $tenantId, string $startDate, string $endDate): string
+    {
+        return MoneyMath::normalize(
+            DonationPayment::forTenant($tenantId)
+                ->where('status', 'succeeded')
+                ->whereBetween('payment_date', [$startDate, $endDate])
+                ->sum('amount')
+        );
     }
 
     /**
@@ -470,12 +530,15 @@ class DonationDashboardService
      */
     private function buildAttentionList(int $tenantId): array
     {
-        $today = now()->toDateString();
+        $businessDate = DonationBusinessDate::today($tenantId);
+        $timezone = DonationBusinessDate::timezoneForTenant($tenantId);
+        $outstandingExpr = $this->outstandingSumExpression();
 
-        $familyAggregates = ContributionDue::forTenant($tenantId)
-            ->whereIn('status', ['pending', 'partially_paid'])
-            ->whereDate('due_date', '<', $today)
-            ->selectRaw('family_id, COALESCE(SUM(amount_due - amount_paid), 0) as overdue_amount, COUNT(*) as overdue_count, MIN(due_date) as oldest_due_date')
+        $overdueQuery = ContributionDue::forTenant($tenantId);
+        ContributionBalance::scopeOverdue($overdueQuery, $businessDate);
+
+        $familyAggregates = $overdueQuery
+            ->selectRaw("family_id, {$outstandingExpr} as overdue_amount, COUNT(*) as overdue_count, MIN(due_date) as oldest_due_date")
             ->groupBy('family_id')
             ->orderByDesc('overdue_amount')
             ->get();
@@ -485,10 +548,10 @@ class DonationDashboardService
 
         $oldestDueByFamily = [];
         if ($topFamilyIds !== []) {
-            ContributionDue::forTenant($tenantId)
-                ->whereIn('family_id', $topFamilyIds)
-                ->whereIn('status', ['pending', 'partially_paid'])
-                ->whereDate('due_date', '<', $today)
+            $detailQuery = ContributionDue::forTenant($tenantId)
+                ->whereIn('family_id', $topFamilyIds);
+            ContributionBalance::scopeOverdue($detailQuery, $businessDate);
+            $detailQuery
                 ->with(['family:id,family_name,family_code', 'plan:id,name'])
                 ->orderBy('due_date')
                 ->get()
@@ -498,29 +561,36 @@ class DonationDashboardService
                 });
         }
 
-        $families = $topAggregates->map(function ($aggregate) use ($oldestDueByFamily) {
+        $businessDay = Carbon::parse($businessDate, $timezone)->startOfDay();
+
+        $families = $topAggregates->map(function ($aggregate) use ($oldestDueByFamily, $businessDay) {
             $familyId = $aggregate->family_id;
             $firstDue = $oldestDueByFamily[$familyId] ?? null;
             $oldestDueDate = $aggregate->oldest_due_date;
             $daysOverdue = $oldestDueDate
-                ? (int) Carbon::parse($oldestDueDate)->diffInDays(now()->startOfDay())
+                ? (int) Carbon::parse($oldestDueDate)->diffInDays($businessDay)
                 : 0;
 
             return [
                 'family_id' => $familyId,
                 'family_name' => $firstDue?->family?->family_name,
                 'family_code' => $firstDue?->family?->family_code,
-                'overdue_amount' => round((float) $aggregate->overdue_amount, 2),
+                'overdue_amount' => MoneyMath::toApiNumber($aggregate->overdue_amount),
                 'overdue_count' => (int) $aggregate->overdue_count,
                 'days_overdue' => $daysOverdue,
                 'oldest_due_label' => $firstDue?->plan?->name ?? $firstDue?->period_label,
             ];
         })->values()->all();
 
+        $totalOverdue = '0';
+        foreach ($familyAggregates as $aggregate) {
+            $totalOverdue = MoneyMath::add($totalOverdue, $aggregate->overdue_amount ?? 0);
+        }
+
         return [
             'families' => $families,
             'count' => $familyAggregates->count(),
-            'total_overdue_amount' => round((float) $familyAggregates->sum('overdue_amount'), 2),
+            'total_overdue_amount' => MoneyMath::toApiNumber($totalOverdue),
         ];
     }
 
@@ -619,18 +689,25 @@ class DonationDashboardService
         ];
     }
 
-    private function resolveFinancialYearStart(int $tenantId): Carbon
+    /**
+     * @return array<string, float>
+     */
+    private function buildCollectionsByMethodForRange(int $tenantId, string $startDate, string $endDate): array
     {
-        $settings = DonationSetting::forTenant($tenantId)->first();
-        $month = (int) ($settings?->financial_year_start_month ?? 1);
-        $day = (int) ($settings?->financial_year_start_day ?? 1);
-        $now = now();
-        $fyStart = $now->copy()->setMonth($month)->setDay($day)->startOfDay();
+        return DonationPayment::forTenant($tenantId)
+            ->where('status', 'succeeded')
+            ->whereBetween('payment_date', [$startDate, $endDate])
+            ->selectRaw('method, COALESCE(SUM(amount), 0) as total')
+            ->groupBy('method')
+            ->pluck('total', 'method')
+            ->map(fn ($sum) => MoneyMath::toApiNumber($sum))
+            ->all();
+    }
 
-        if ($now->lt($fyStart)) {
-            $fyStart->subYear();
-        }
-
-        return $fyStart;
+    private function outstandingSumExpression(): string
+    {
+        return DB::connection()->getDriverName() === 'pgsql'
+            ? 'COALESCE(SUM(GREATEST(amount_due - amount_paid, 0)), 0)'
+            : 'COALESCE(SUM(CASE WHEN amount_due > amount_paid THEN amount_due - amount_paid ELSE 0 END), 0)';
     }
 }

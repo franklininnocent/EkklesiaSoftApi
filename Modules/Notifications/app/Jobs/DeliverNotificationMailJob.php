@@ -7,6 +7,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use App\Mail\TransactionalNotificationMail;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Modules\Authentication\Models\User;
@@ -49,9 +50,12 @@ class DeliverNotificationMailJob implements ShouldQueue
         }
 
         try {
-            Mail::raw($event->body, function ($message) use ($user, $event): void {
-                $message->to($user->email)->subject($event->title);
-            });
+            Mail::to($user->email)->send(new TransactionalNotificationMail(
+                mailSubject: (string) $event->title,
+                heading: (string) $event->title,
+                body: (string) $event->body,
+                preheader: (string) $event->title,
+            ));
 
             $delivery->update([
                 'status' => 'sent',

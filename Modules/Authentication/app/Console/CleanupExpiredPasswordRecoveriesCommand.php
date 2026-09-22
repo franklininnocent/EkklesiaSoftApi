@@ -21,13 +21,19 @@ class CleanupExpiredPasswordRecoveriesCommand extends Command
         $staleMinutes = (int) config('authentication.recovery.processing_stale_minutes', 5);
         $staleCutoff = now()->subMinutes($staleMinutes);
 
-        $expired = PasswordRecoveryRequest::query()
+        $expiredIds = PasswordRecoveryRequest::query()
             ->where('status', PasswordRecoveryRequest::STATUS_PENDING_APPROVAL)
             ->where('expires_at', '<', now())
+            ->pluck('id');
+
+        $expired = PasswordRecoveryRequest::query()
+            ->whereIn('id', $expiredIds)
             ->update([
                 'status' => PasswordRecoveryRequest::STATUS_EXPIRED,
                 'updated_at' => now(),
             ]);
+
+        $this->completeNotificationSubjects($expiredIds->all());
 
         $stuckProcessing = PasswordRecoveryRequest::query()
             ->where('status', PasswordRecoveryRequest::STATUS_PROCESSING)
@@ -45,6 +51,7 @@ class CleanupExpiredPasswordRecoveriesCommand extends Command
                 $request->failed_at = now();
             }
             $request->save();
+            $this->completeNotificationSubjects([(string) $request->id]);
         }
 
         $deleted = 0;
@@ -75,5 +82,25 @@ class CleanupExpiredPasswordRecoveriesCommand extends Command
         $this->info("Deleted {$deleted} legacy recovery challenge(s).");
 
         return self::SUCCESS;
+    }
+
+    /**
+     * @param  list<string>|array<int, string>  $requestIds
+     */
+    private function completeNotificationSubjects(array $requestIds): void
+    {
+        if ($requestIds === [] || ! interface_exists(\Modules\Notifications\Contracts\NotificationPublisherContract::class)) {
+            return;
+        }
+
+        $publisher = app(\Modules\Notifications\Contracts\NotificationPublisherContract::class);
+
+        foreach ($requestIds as $requestId) {
+            try {
+                $publisher->completeSubject('password_recovery_request', (string) $requestId);
+            } catch (\Throwable) {
+                // Cleanup must continue even if notification completion fails.
+            }
+        }
     }
 }

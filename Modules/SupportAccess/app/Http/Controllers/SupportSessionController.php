@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Modules\SupportAccess\Services\SupportSessionService;
+use Modules\Tenants\Support\AuditLogViewerAuthorization;
 use RuntimeException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -69,6 +70,13 @@ class SupportSessionController extends Controller
 
     public function export(Request $request): StreamedResponse|JsonResponse
     {
+        if (! AuditLogViewerAuthorization::canViewSupportOperationalAudit($request->user())) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized. Support audit export is restricted to platform operators.',
+            ], 403);
+        }
+
         $filters = $request->validate([
             'status' => ['nullable', 'in:active,ended,expired'],
             'mode' => ['nullable', 'in:readonly,standard,emergency'],

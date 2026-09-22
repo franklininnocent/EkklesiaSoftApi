@@ -300,7 +300,7 @@ class PastoralCareService
 
     private function notifyAssignee(int $tenantId, User $actor, PastoralCareRequest $request, int $assigneeId): void
     {
-        if (! class_exists(\Modules\Notifications\Contracts\NotificationPublisherContract::class)) {
+        if (! interface_exists(\Modules\Notifications\Contracts\NotificationPublisherContract::class)) {
             return;
         }
 

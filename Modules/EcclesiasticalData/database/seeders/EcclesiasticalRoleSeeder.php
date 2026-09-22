@@ -21,18 +21,34 @@ class EcclesiasticalRoleSeeder extends Seeder
             return;
         }
 
-        $adminRoles = Role::query()
-            ->whereIn('name', [Role::SUPER_ADMIN, Role::EKKLESIA_ADMIN])
-            ->get();
+        $viewAuditId = Permission::query()
+            ->where('name', 'bishops.view_audit')
+            ->value('id');
 
-        foreach ($adminRoles as $role) {
-            $role->permissions()->syncWithoutDetaching($allIds);
-            $role->clearUsersPermissionCache();
+        $superAdmin = Role::query()->where('name', Role::SUPER_ADMIN)->first();
+        if ($superAdmin) {
+            $superAdmin->permissions()->syncWithoutDetaching($allIds);
+            $superAdmin->clearUsersPermissionCache();
+        }
+
+        $ekklesiaAdmin = Role::query()->where('name', Role::EKKLESIA_ADMIN)->first();
+        if ($ekklesiaAdmin) {
+            $ekklesiaIds = $viewAuditId
+                ? $allIds->reject(fn ($id) => (int) $id === (int) $viewAuditId)->values()
+                : $allIds;
+            $ekklesiaAdmin->permissions()->syncWithoutDetaching($ekklesiaIds);
+            if ($viewAuditId) {
+                DB::table('permission_role')
+                    ->where('role_id', $ekklesiaAdmin->id)
+                    ->where('permission_id', $viewAuditId)
+                    ->delete();
+            }
+            $ekklesiaAdmin->clearUsersPermissionCache();
         }
 
         $readOnlyIds = Permission::query()
             ->where('module', 'EcclesiasticalData')
-            ->whereIn('name', ['bishops.view', 'dioceses.view', 'bishops.view_audit'])
+            ->whereIn('name', ['bishops.view', 'dioceses.view'])
             ->pluck('id');
 
         $reviewerIds = Permission::query()
@@ -42,7 +58,6 @@ class EcclesiasticalRoleSeeder extends Seeder
                 'dioceses.view',
                 'bishops.review_requests',
                 'bishops.request_clarification',
-                'bishops.view_audit',
             ])
             ->pluck('id');
 
@@ -57,6 +72,13 @@ class EcclesiasticalRoleSeeder extends Seeder
                     ['role_id' => $role->id, 'permission_id' => $permissionId],
                     ['created_at' => now(), 'updated_at' => now()]
                 );
+            }
+
+            if ($viewAuditId) {
+                DB::table('permission_role')
+                    ->where('role_id', $role->id)
+                    ->where('permission_id', $viewAuditId)
+                    ->delete();
             }
 
             $role->clearUsersPermissionCache();

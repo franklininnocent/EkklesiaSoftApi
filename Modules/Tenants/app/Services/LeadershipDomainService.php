@@ -406,6 +406,16 @@ class LeadershipDomainService
             $person->updated_by = Auth::id();
             $person->save();
 
+            $contact = $this->personService->contactFromPayload($payload);
+            if ($contact !== null) {
+                $this->personService->syncContact(
+                    $person,
+                    $contact['email'],
+                    $contact['phone'],
+                    Auth::id(),
+                );
+            }
+
             $assignment->role_id = $role->id;
             $assignment->jurisdiction_name = $payload['jurisdiction_name'] ?? null;
             $assignment->appointment_date = $appointmentDate;
@@ -477,13 +487,28 @@ class LeadershipDomainService
         $isExternal = filter_var($payload['is_external'] ?? false, FILTER_VALIDATE_BOOLEAN);
 
         if ($isExternal) {
+            $contact = $this->personService->contactFromPayload($payload);
+
             return $this->personService->create([
                 'first_name' => trim((string) ($payload['first_name'] ?? '')),
                 'last_name' => trim((string) ($payload['last_name'] ?? '')),
+                'email' => $contact['email'] ?? null,
+                'phone' => $contact['phone'] ?? null,
             ], $tenantId, Auth::id());
         }
 
-        return $this->personService->resolve((string) $payload['person_id'], $tenantId);
+        $person = $this->personService->resolve((string) $payload['person_id'], $tenantId);
+        $contact = $this->personService->contactFromPayload($payload);
+        if ($contact !== null) {
+            $this->personService->syncContact(
+                $person,
+                $contact['email'],
+                $contact['phone'],
+                Auth::id(),
+            );
+        }
+
+        return $person->fresh();
     }
 
     public function listRoles(int $tenantId, ?string $category = null): Collection

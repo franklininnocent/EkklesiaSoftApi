@@ -2,6 +2,7 @@
 
 namespace Modules\SupportAccess\Services;
 
+use App\Mail\TransactionalNotificationMail;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Modules\Authentication\Models\User;
@@ -80,7 +81,7 @@ class SupportSessionNotificationPublisher
 
     private function publishEmergencyInApp(SupportAccessRequest $request): void
     {
-        if (! class_exists(\Modules\Notifications\Contracts\NotificationPublisherContract::class)) {
+        if (! interface_exists(\Modules\Notifications\Contracts\NotificationPublisherContract::class)) {
             return;
         }
 
@@ -213,9 +214,12 @@ class SupportSessionNotificationPublisher
 
         foreach ($emails as $email) {
             try {
-                Mail::raw($body, function ($message) use ($email, $subject): void {
-                    $message->to($email)->subject($subject);
-                });
+                Mail::to($email)->send(new TransactionalNotificationMail(
+                    mailSubject: $subject,
+                    heading: $subject,
+                    body: $body,
+                    preheader: $subject,
+                ));
             } catch (Throwable $e) {
                 Log::error('support_access.customer_disclosure.mail_failed', [
                     'email' => $email,
@@ -348,9 +352,12 @@ class SupportSessionNotificationPublisher
         }
 
         try {
-            Mail::raw($body, function ($message) use ($to, $subject): void {
-                $message->to($to)->subject($subject);
-            });
+            Mail::to($to)->send(new TransactionalNotificationMail(
+                mailSubject: $subject,
+                heading: $subject,
+                body: $body,
+                preheader: $subject,
+            ));
         } catch (Throwable $e) {
             Log::error('support_access.notification.mail_failed', [
                 'subject' => $subject,

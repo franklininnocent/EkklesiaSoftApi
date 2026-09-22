@@ -38,12 +38,27 @@ class SupportAccessRoleSeeder extends Seeder
             return;
         }
 
-        $roles = Role::query()
-            ->whereIn('name', [Role::SUPER_ADMIN, Role::EKKLESIA_ADMIN])
-            ->get();
+        $auditPermissionId = Permission::query()
+            ->where('name', 'support.audit.view')
+            ->value('id');
 
-        foreach ($roles as $role) {
-            $this->syncPermissions($role, $permissionIds->all());
+        $superAdmin = Role::query()->where('name', Role::SUPER_ADMIN)->first();
+        if ($superAdmin) {
+            $this->syncPermissions($superAdmin, $permissionIds->all());
+        }
+
+        $ekklesiaAdmin = Role::query()->where('name', Role::EKKLESIA_ADMIN)->first();
+        if ($ekklesiaAdmin) {
+            $ekklesiaPermissionIds = $auditPermissionId
+                ? $permissionIds->reject(fn ($id) => (int) $id === (int) $auditPermissionId)->values()->all()
+                : $permissionIds->all();
+            $this->syncPermissions($ekklesiaAdmin, $ekklesiaPermissionIds);
+            if ($auditPermissionId) {
+                DB::table('permission_role')
+                    ->where('role_id', $ekklesiaAdmin->id)
+                    ->where('permission_id', $auditPermissionId)
+                    ->delete();
+            }
         }
 
         $supportAdmin = Role::query()->updateOrCreate(

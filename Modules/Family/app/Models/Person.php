@@ -30,6 +30,8 @@ class Person extends Model
         'gender',
         'father_name',
         'mother_name',
+        'father_person_id',
+        'mother_person_id',
         'phone',
         'email',
         'address_line_1',
@@ -68,6 +70,16 @@ class Person extends Model
     public function activeFamilyMember(): HasOne
     {
         return $this->hasOne(FamilyMember::class, 'person_id')->whereNull('deleted_at');
+    }
+
+    public function father(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'father_person_id');
+    }
+
+    public function mother(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'mother_person_id');
     }
 
     public function creator(): BelongsTo

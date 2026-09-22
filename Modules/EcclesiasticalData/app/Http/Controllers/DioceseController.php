@@ -3,11 +3,12 @@
 namespace Modules\EcclesiasticalData\Http\Controllers;
 
 use App\Http\Controllers\Controller;
-use Modules\EcclesiasticalData\Services\DioceseService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Modules\EcclesiasticalData\Http\Requests\StoreDioceseRequest;
 use Modules\EcclesiasticalData\Http\Requests\UpdateDioceseRequest;
-use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
+use Modules\EcclesiasticalData\Services\DioceseService;
+use Modules\Tenants\Support\AuditLogViewerAuthorization;
 
 class DioceseController extends Controller
 {
@@ -288,8 +289,15 @@ class DioceseController extends Controller
     /**
      * Get audit history for a diocese
      */
-    public function auditHistory(string $id): JsonResponse
+    public function auditHistory(Request $request, string $id): JsonResponse
     {
+        if (! AuditLogViewerAuthorization::canViewPlatformCompleteAudit($request->user())) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized. Platform audit access is restricted to SuperAdmin.',
+            ], 403);
+        }
+
         try {
             $diocese = $this->service->getById($id);
             $history = $diocese->auditHistory();

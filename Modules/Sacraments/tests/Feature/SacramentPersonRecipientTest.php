@@ -86,7 +86,7 @@ class SacramentPersonRecipientTest extends TestCase
     private function grantPermissions(Role $role): void
     {
         $ids = [];
-        foreach (['sacraments.view', 'sacraments.create', 'sacraments.edit', 'families.view', 'families.create'] as $name) {
+        foreach (['sacraments.view', 'sacraments.create', 'sacraments.edit', 'families.view', 'families.create', 'families.edit'] as $name) {
             $permission = Permission::updateOrCreate(
                 ['name' => $name],
                 [
@@ -159,6 +159,59 @@ class SacramentPersonRecipientTest extends TestCase
             'role' => 'recipient',
             'person_id' => $this->member->person_id,
             'family_member_id' => $this->member->id,
+        ]);
+        $this->member->refresh();
+        $this->assertSame('2026-08-01', $this->member->baptism_date?->format('Y-m-d'));
+    }
+
+    #[Test]
+    public function existing_family_new_person_creates_member_with_baptism_date(): void
+    {
+        $beforeMembers = FamilyMember::query()->where('family_id', $this->family->id)->count();
+        $beforePeople = Person::query()->count();
+
+        $response = $this->postJson('/api/sacraments', array_merge($this->identityFields([
+            'recipient_birth_date' => '2026-03-15',
+            'recipient_gender' => 'female',
+        ]), [
+            'sacrament_type_id' => $this->baptismType->id,
+            'date_administered' => '2026-09-01',
+            'place_administered' => 'St. Mary',
+            'family_association' => 'existing',
+            'family_id' => $this->family->id,
+            'relationship_to_head' => 'daughter',
+            'person' => [
+                'first_name' => 'Grace',
+                'last_name' => 'Thomas',
+                'date_of_birth' => '2026-03-15',
+                'place_of_birth' => 'Parish City',
+                'gender' => 'female',
+                'father_name' => 'Joseph Thomas',
+                'mother_name' => 'Mary Thomas',
+            ],
+            'participants' => array_merge([
+                ['role' => 'father', 'source' => 'external', 'external_full_name' => 'Joseph Thomas'],
+                ['role' => 'mother', 'source' => 'external', 'external_full_name' => 'Mary Thomas'],
+            ], $this->minister()),
+        ]));
+
+        $response->assertCreated();
+        $this->assertSame($beforePeople + 1, Person::query()->count());
+        $this->assertSame($beforeMembers + 1, FamilyMember::query()->where('family_id', $this->family->id)->count());
+
+        $personId = $response->json('data.person_id');
+        $this->assertDatabaseHas('family_members', [
+            'family_id' => $this->family->id,
+            'person_id' => $personId,
+            'relationship_to_head' => 'daughter',
+            'baptism_date' => '2026-09-01',
+            'baptism_place' => 'St. Mary',
+        ]);
+        $this->assertDatabaseHas('sacrament_participants', [
+            'sacrament_id' => $response->json('data.id'),
+            'role' => 'recipient',
+            'source' => 'member',
+            'person_id' => $personId,
         ]);
     }
 
@@ -250,6 +303,8 @@ class SacramentPersonRecipientTest extends TestCase
             'family_id' => $familyId,
             'person_id' => $personId,
             'first_name' => 'Luke',
+            'baptism_date' => '2026-08-01',
+            'baptism_place' => 'St. Mary',
         ]);
     }
 
@@ -287,6 +342,8 @@ class SacramentPersonRecipientTest extends TestCase
         $this->assertDatabaseHas('family_members', [
             'person_id' => $personId,
             'family_id' => $this->family->id,
+            'baptism_date' => '2026-08-01',
+            'baptism_place' => 'St. Mary',
         ]);
     }
 

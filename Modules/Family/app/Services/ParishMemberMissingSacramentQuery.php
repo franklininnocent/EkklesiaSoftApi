@@ -40,7 +40,12 @@ class ParishMemberMissingSacramentQuery
         ?array $receiptIndex = null,
     ): array {
         $members ??= $this->memberQuery->eligibleMembers((int) $tenantId, $bccId);
-        $receiptIndex ??= $this->receiptIndexBuilder->build($tenantId);
+        $receiptIndex ??= $this->receiptIndexBuilder->build($tenantId, [], [
+            'BAPTISM',
+            'EUCHARIST',
+            'CONFIRMATION',
+            'HOLY_ORDERS',
+        ]);
 
         $withoutCommunion = 0;
         $withoutCommunionEligible = 0;
@@ -115,7 +120,7 @@ class ParishMemberMissingSacramentQuery
     public function memberIdsForProgression(int|string $tenantId, string $progression, ?string $bccId = null): array
     {
         $members = $this->memberQuery->eligibleMembers((int) $tenantId, $bccId);
-        $receiptIndex = $this->receiptIndexBuilder->build($tenantId);
+        $receiptIndex = $this->receiptIndexBuilder->build($tenantId, [], $this->codesForProgression($progression));
 
         $memberIds = [];
         foreach ($members as $member) {
@@ -136,7 +141,7 @@ class ParishMemberMissingSacramentQuery
     {
         $code = $this->receiptIndexBuilder->normalizeCode($sacramentCode);
         $members = $this->memberQuery->eligibleMembers((int) $tenantId, $bccId);
-        $receiptIndex = $this->receiptIndexBuilder->build($tenantId);
+        $receiptIndex = $this->receiptIndexBuilder->build($tenantId, [], [$code]);
 
         $familyIds = [];
         foreach ($members as $member) {
@@ -162,7 +167,7 @@ class ParishMemberMissingSacramentQuery
     public function familyIdsForProgression(int|string $tenantId, string $progression, ?string $bccId = null): array
     {
         $members = $this->memberQuery->eligibleMembers((int) $tenantId, $bccId);
-        $receiptIndex = $this->receiptIndexBuilder->build($tenantId);
+        $receiptIndex = $this->receiptIndexBuilder->build($tenantId, [], $this->codesForProgression($progression));
 
         $familyIds = [];
         foreach ($members as $member) {
@@ -293,6 +298,22 @@ class ParishMemberMissingSacramentQuery
     /**
      * @param  array{id: string, person_id: ?string, family_id: ?string, age: ?int, gender: ?string, marital_status: ?string, baptism_date: ?string, first_communion_date: ?string, confirmation_date: ?string, marriage_date: ?string}  $member
      */
+    /**
+     * Sacrament codes this progression actually checks. Other types are not loaded.
+     *
+     * @return list<string>
+     */
+    private function codesForProgression(string $progression): array
+    {
+        return match (ParishProgressionFilter::normalize($progression)) {
+            ParishProgressionFilter::BAPTIZED_WITHOUT_COMMUNION => ['BAPTISM', 'EUCHARIST'],
+            ParishProgressionFilter::BAPTIZED_WITHOUT_CONFIRMATION => ['BAPTISM', 'CONFIRMATION'],
+            ParishProgressionFilter::FEMALE_UNMARRIED_OVER_18,
+            ParishProgressionFilter::MALE_UNMARRIED_OVER_23 => ['HOLY_ORDERS'],
+            default => [],
+        };
+    }
+
     private function isEligibleForSacrament(array $member, string $code): bool
     {
         return match ($code) {

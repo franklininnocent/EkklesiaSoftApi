@@ -15,6 +15,7 @@ use Modules\Notifications\Services\InboxQueryService;
 use Modules\Notifications\Services\InboxStateService;
 use Modules\Notifications\Services\NotificationPreferenceService;
 use Modules\Notifications\Services\UnreadCounter;
+use Modules\Notifications\Support\InboxContext;
 use Modules\Tenants\Support\ApiPagination;
 
 class NotificationInboxController extends Controller
@@ -29,11 +30,9 @@ class NotificationInboxController extends Controller
     ) {
     }
 
-    public function index(Request $request, string $audience): JsonResponse
+    public function index(Request $request): JsonResponse
     {
-        $user = $this->user();
-        $context = $this->inboxContext->forUser($user);
-        $this->inboxContext->assertRouteMatches($context, $audience);
+        $context = $this->contextFor($request);
 
         $perPage = min(50, ApiPagination::clampFromRequest($request, 20));
         $result = $this->query->list($context, $request->query(), $perPage);
@@ -49,11 +48,9 @@ class NotificationInboxController extends Controller
         ]);
     }
 
-    public function unreadCount(Request $request, string $audience): JsonResponse
+    public function unreadCount(Request $request): JsonResponse
     {
-        $user = $this->user();
-        $context = $this->inboxContext->forUser($user);
-        $this->inboxContext->assertRouteMatches($context, $audience);
+        $context = $this->contextFor($request);
 
         return response()->json([
             'success' => true,
@@ -61,11 +58,10 @@ class NotificationInboxController extends Controller
         ]);
     }
 
-    public function show(Request $request, string $audience, string $id): JsonResponse
+    public function show(Request $request, string $id): JsonResponse
     {
         $user = $this->user();
-        $context = $this->inboxContext->forUser($user);
-        $this->inboxContext->assertRouteMatches($context, $audience);
+        $context = $this->contextFor($request);
 
         $row = $this->query->findForUser($context, $id);
         if ($row === null) {
@@ -86,11 +82,10 @@ class NotificationInboxController extends Controller
         ]);
     }
 
-    public function open(Request $request, string $audience, string $id): JsonResponse
+    public function open(Request $request, string $id): JsonResponse
     {
         $user = $this->user();
-        $context = $this->inboxContext->forUser($user);
-        $this->inboxContext->assertRouteMatches($context, $audience);
+        $context = $this->contextFor($request);
 
         $row = $this->query->findForUser($context, $id);
         if ($row === null) {
@@ -108,42 +103,37 @@ class NotificationInboxController extends Controller
         ]);
     }
 
-    public function markRead(Request $request, string $audience, string $id): JsonResponse
+    public function markRead(Request $request, string $id): JsonResponse
     {
-        return $this->stateResponse($audience, fn ($ctx) => $this->state->markRead($ctx, $id));
+        return $this->stateResponse($request, fn ($ctx) => $this->state->markRead($ctx, $id));
     }
 
-    public function markUnread(Request $request, string $audience, string $id): JsonResponse
+    public function markUnread(Request $request, string $id): JsonResponse
     {
-        return $this->stateResponse($audience, fn ($ctx) => $this->state->markUnread($ctx, $id));
+        return $this->stateResponse($request, fn ($ctx) => $this->state->markUnread($ctx, $id));
     }
 
-    public function archive(Request $request, string $audience, string $id): JsonResponse
+    public function archive(Request $request, string $id): JsonResponse
     {
-        return $this->stateResponse($audience, fn ($ctx) => $this->state->archive($ctx, $id));
+        return $this->stateResponse($request, fn ($ctx) => $this->state->archive($ctx, $id));
     }
 
-    public function restore(Request $request, string $audience, string $id): JsonResponse
+    public function restore(Request $request, string $id): JsonResponse
     {
-        return $this->stateResponse($audience, fn ($ctx) => $this->state->restore($ctx, $id));
+        return $this->stateResponse($request, fn ($ctx) => $this->state->restore($ctx, $id));
     }
 
-    public function markAllRead(Request $request, string $audience): JsonResponse
+    public function markAllRead(Request $request): JsonResponse
     {
-        $user = $this->user();
-        $context = $this->inboxContext->forUser($user);
-        $this->inboxContext->assertRouteMatches($context, $audience);
-
+        $context = $this->contextFor($request);
         $result = $this->state->markAllRead($context);
 
         return response()->json(['success' => true, 'data' => $result]);
     }
 
-    public function bulkAction(BulkNotificationActionRequest $request, string $audience): JsonResponse
+    public function bulkAction(BulkNotificationActionRequest $request): JsonResponse
     {
-        $user = $this->user();
-        $context = $this->inboxContext->forUser($user);
-        $this->inboxContext->assertRouteMatches($context, $audience);
+        $context = $this->contextFor($request);
 
         $count = $this->state->bulkAction(
             $context,
@@ -154,11 +144,10 @@ class NotificationInboxController extends Controller
         return response()->json(['success' => true, 'data' => ['affected' => $count]]);
     }
 
-    public function preferences(Request $request, string $audience): JsonResponse
+    public function preferences(Request $request): JsonResponse
     {
         $user = $this->user();
-        $context = $this->inboxContext->forUser($user);
-        $this->inboxContext->assertRouteMatches($context, $audience);
+        $this->contextFor($request);
 
         return response()->json([
             'success' => true,
@@ -166,22 +155,19 @@ class NotificationInboxController extends Controller
         ]);
     }
 
-    public function updatePreferences(UpdateNotificationPreferencesRequest $request, string $audience): JsonResponse
+    public function updatePreferences(UpdateNotificationPreferencesRequest $request): JsonResponse
     {
         $user = $this->user();
-        $context = $this->inboxContext->forUser($user);
-        $this->inboxContext->assertRouteMatches($context, $audience);
+        $this->contextFor($request);
 
         $this->preferences->updateForUser((int) $user->id, $request->validated('preferences'));
 
         return response()->json(['success' => true, 'message' => 'Preferences saved.']);
     }
 
-    private function stateResponse(string $audience, callable $action): JsonResponse
+    private function stateResponse(Request $request, callable $action): JsonResponse
     {
-        $user = $this->user();
-        $context = $this->inboxContext->forUser($user);
-        $this->inboxContext->assertRouteMatches($context, $audience);
+        $context = $this->contextFor($request);
 
         try {
             $row = $action($context);
@@ -193,6 +179,20 @@ class NotificationInboxController extends Controller
             'success' => true,
             'data' => new UserNotificationResource($row),
         ]);
+    }
+
+    private function contextFor(Request $request): InboxContext
+    {
+        $user = $this->user();
+        $context = $this->inboxContext->forUser($user);
+        $this->inboxContext->assertRouteMatches($context, $this->audience($request));
+
+        return $context;
+    }
+
+    private function audience(Request $request): string
+    {
+        return (string) $request->route('audience', '');
     }
 
     private function user(): User

@@ -565,7 +565,7 @@ class DonationLedgerService
         DonationPayment $payment,
         string $amount,
     ): void {
-        if (! class_exists(\Modules\Notifications\Contracts\NotificationPublisherContract::class)) {
+        if (! interface_exists(\Modules\Notifications\Contracts\NotificationPublisherContract::class)) {
             return;
         }
 

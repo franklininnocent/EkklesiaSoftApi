@@ -28,7 +28,10 @@ class BccLifecycleApiTest extends TestCase
         parent::setUp();
 
         $this->tenant = Tenant::factory()->create();
-        $this->user = User::factory()->create(['tenant_id' => $this->tenant->id]);
+        $this->user = User::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'is_primary_admin' => true,
+        ]);
         $this->bcc = BCC::factory()->create([
             'tenant_id' => $this->tenant->id,
             'status' => 'active',

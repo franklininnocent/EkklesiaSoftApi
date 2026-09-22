@@ -2,9 +2,9 @@
 
 namespace Modules\Tenants\Tests\Unit;
 
+use App\Mail\TransactionalNotificationMail;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Mail;
-use Mockery;
 use Modules\Authentication\Models\User;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Services\SubscriptionLifecycleNotificationPublisher;
@@ -15,16 +15,11 @@ class SubscriptionLifecycleNotificationPublisherTest extends TestCase
 {
     use RefreshDatabase;
 
-    protected function tearDown(): void
-    {
-        Mockery::close();
-        parent::tearDown();
-    }
-
     #[Test]
     public function it_sends_expired_notice_to_primary_admin(): void
     {
         config(['tenants.subscription.lifecycle.mail_enabled' => true]);
+        Mail::fake();
 
         $tenant = Tenant::factory()->active()->create([
             'subscription_ends_at' => now()->subDays(10),
@@ -37,46 +32,39 @@ class SubscriptionLifecycleNotificationPublisherTest extends TestCase
             'email' => 'parish-admin@example.test',
         ]);
 
-        $mailCalled = false;
-        Mail::shouldReceive('raw')
-            ->once()
-            ->withArgs(function (string $body, callable $callback) use (&$mailCalled, $tenant): bool {
-                $mailCalled = str_contains($body, 'cannot save changes')
-                    && str_contains($body, (string) $tenant->name);
-
-                return $mailCalled;
-            });
-
         app(SubscriptionLifecycleNotificationPublisher::class)->notifyTransition($tenant, 'entered_expired');
 
-        $this->assertTrue($mailCalled);
+        Mail::assertSent(TransactionalNotificationMail::class, function (TransactionalNotificationMail $mail) use ($tenant): bool {
+            $html = $mail->render();
+
+            return str_contains($html, 'cannot save changes')
+                && str_contains($html, (string) $tenant->name);
+        });
     }
 
     #[Test]
     public function it_skips_when_mail_disabled(): void
     {
         config(['tenants.subscription.lifecycle.mail_enabled' => false]);
+        Mail::fake();
 
         $tenant = Tenant::factory()->active()->create();
 
-        Mail::shouldReceive('raw')->never();
-
         app(SubscriptionLifecycleNotificationPublisher::class)->notifyTransition($tenant, 'entered_expired');
 
-        $this->addToAssertionCount(1);
+        Mail::assertNothingSent();
     }
 
     #[Test]
     public function it_skips_when_no_recipients(): void
     {
         config(['tenants.subscription.lifecycle.mail_enabled' => true]);
+        Mail::fake();
 
         $tenant = Tenant::factory()->active()->create();
 
-        Mail::shouldReceive('raw')->never();
-
         app(SubscriptionLifecycleNotificationPublisher::class)->notifyTransition($tenant, 'entered_expired');
 
-        $this->addToAssertionCount(1);
+        Mail::assertNothingSent();
     }
 }
