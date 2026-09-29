@@ -2,6 +2,8 @@
 
 namespace Modules\Tenants\Http\Controllers;
 
+use Illuminate\Contracts\Support\Responsable;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -15,21 +17,25 @@ use Modules\Authentication\Models\User;
 use Modules\MinistriesAssociations\Database\Seeders\MinistriesAssociationsDefaultSeeder;
 use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Sacraments\Services\TenantSacramentSettingsService;
+use Modules\Tenants\Contracts\TenantEntitlementGate;
+use Modules\Tenants\Contracts\TenantPlanAssigner;
 use Modules\Tenants\Http\Requests\StoreTenantRequest;
 use Modules\Tenants\Http\Requests\UpdateTenantRequest;
 use Modules\Tenants\Http\Requests\UploadTenantLogoRequest;
-use Modules\Tenants\Services\Media\ImageMediaException;
+use Modules\Tenants\Http\Resources\TenantDetailsResource;
+use Modules\Tenants\Models\ChurchProfile;
 use Modules\Tenants\Models\SubscriptionDurationOption;
 use Modules\Tenants\Models\SubscriptionPlan;
 use Modules\Tenants\Models\SubscriptionSettings;
-use Modules\Tenants\Models\ChurchProfile;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Models\TenantStatusAudit;
-use Modules\Tenants\Http\Resources\TenantDetailsResource;
 use Modules\Tenants\Services\AddressService;
+use Modules\Tenants\Services\ChurchCurrencyResolver;
+use Modules\Tenants\Services\ChurchFinancialPeriodResolver;
 use Modules\Tenants\Services\FileUploadService;
-use Modules\Tenants\Services\SupportSessionAuthorizationService;
+use Modules\Tenants\Services\Media\ImageMediaException;
 use Modules\Tenants\Services\SubscriptionService;
+use Modules\Tenants\Services\SupportSessionAuthorizationService;
 use Modules\Tenants\Services\TenantDetailsService;
 use Modules\Tenants\Support\TenantContext;
 
@@ -224,7 +230,7 @@ class TenantsController extends Controller
                 'success' => true,
                 'data' => new TenantDetailsResource($snapshot),
             ]);
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+        } catch (ModelNotFoundException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Tenant not found',
@@ -261,12 +267,14 @@ class TenantsController extends Controller
             }
 
             // Step 1: Create the tenant
+            $planAssigner = app()->bound(TenantPlanAssigner::class) ? app(TenantPlanAssigner::class) : null;
             $plan = $request->plan ?? 'free';
             $trialDays = config('tenants.trial_days', 30);
 
-            // For Free plan, set 30-day trial if not explicitly provided
+            // For Free plan, set 30-day trial if not explicitly provided.
+            // With the plan catalog, the trial comes from the assigned plan version instead.
             $trialEndsAt = $request->trial_ends_at;
-            if ($plan === 'free' && ! $trialEndsAt) {
+            if (! $planAssigner && $plan === 'free' && ! $trialEndsAt) {
                 $trialEndsAt = now()->addDays($trialDays);
             }
 
@@ -296,6 +304,18 @@ class TenantsController extends Controller
             // Create tenant first (needed for tenant ID in file path)
             $tenant = Tenant::create($tenantData);
 
+            // Catalog-managed plan: entitlements, limits and legacy columns come from the plan
+            // version (request-supplied features/limits are not trusted).
+            if ($planAssigner) {
+                $actor = auth()->user();
+                $tenant = $planAssigner->assignInitialPlan(
+                    $tenant,
+                    $request->filled('plan') ? (string) $request->plan : null,
+                    $actor?->id,
+                    $actor?->role?->name,
+                );
+            }
+
             // SECURITY: Handle logo upload AFTER tenant creation with tenant-specific path
             if ($request->hasFile('tenant_logo')) {
                 try {
@@ -323,6 +343,8 @@ class TenantsController extends Controller
                     'official',  // Mark as tenant's official address
                     true  // Set as default
                 );
+                app(ChurchCurrencyResolver::class)->syncDerivedColumns((int) $tenant->id);
+                app(ChurchFinancialPeriodResolver::class)->syncDerivedFyStartColumns((int) $tenant->id);
             }
 
             // Step 1.6: Seed church profile diocese when provided at creation time
@@ -536,6 +558,10 @@ class TenantsController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
 
+            if ($e instanceof Responsable) {
+                return $e->toResponse($request);
+            }
+
             Log::error('Error creating tenant: '.$e->getMessage(), [
                 'request_data' => $request->except(['tenant_logo']),
                 'trace' => $e->getTraceAsString(),
@@ -645,10 +671,19 @@ class TenantsController extends Controller
             // Step 1: Update tenant basic info
             $tenantUpdateData = [];
 
+            // With the plan catalog, plan and entitlement columns are written only by the
+            // subscription plan-change service (upgrade endpoint / admin subscription APIs).
+            $catalogManagedKeys = app()->bound(TenantPlanAssigner::class)
+                ? ['plan', 'max_users', 'max_storage_mb', 'features']
+                : [];
+
             foreach (['tenant_name' => 'name', 'slogan', 'slug', 'domain', 'plan', 'max_users',
                 'max_storage_mb', 'trial_ends_at', 'subscription_ends_at', 'active',
                 'primary_color', 'secondary_color', 'settings', 'features'] as $key => $dbKey) {
                 $requestKey = is_int($key) ? $dbKey : $key;
+                if (in_array($dbKey, $catalogManagedKeys, true)) {
+                    continue;
+                }
                 if ($request->has($requestKey)) {
                     $tenantUpdateData[$dbKey] = $request->$requestKey;
                 }
@@ -715,6 +750,8 @@ class TenantsController extends Controller
                         true
                     );
                 }
+                app(ChurchCurrencyResolver::class)->syncDerivedColumns((int) $tenant->id);
+                app(ChurchFinancialPeriodResolver::class)->syncDerivedFyStartColumns((int) $tenant->id);
             }
 
             // Step 2: Update primary contact user (if exists)
@@ -1138,6 +1175,27 @@ class TenantsController extends Controller
     }
 
     /**
+     * Tenant counts keyed by every plan key in the catalog (zero-filled).
+     *
+     * @return array<string, int>
+     */
+    private function tenantCountsByPlan(): array
+    {
+        $counts = array_fill_keys(
+            SubscriptionPlan::withTrashed()->pluck('key')->map(static fn ($k) => (string) $k)->all(),
+            0
+        );
+
+        foreach (Tenant::query()->selectRaw('plan, COUNT(*) as aggregate')->groupBy('plan')->pluck('aggregate', 'plan') as $key => $count) {
+            if ($key !== null && $key !== '') {
+                $counts[(string) $key] = (int) $count;
+            }
+        }
+
+        return $counts;
+    }
+
+    /**
      * Get tenant statistics.
      *
      * @route GET /api/tenant/statistics
@@ -1156,12 +1214,7 @@ class TenantsController extends Controller
                 'total_tenants' => Tenant::count(),
                 'active_tenants' => Tenant::active()->count(),
                 'inactive_tenants' => Tenant::inactive()->count(),
-                'tenants_by_plan' => [
-                    'free' => Tenant::where('plan', 'free')->count(),
-                    'basic' => Tenant::where('plan', 'basic')->count(),
-                    'premium' => Tenant::where('plan', 'premium')->count(),
-                    'enterprise' => Tenant::where('plan', 'enterprise')->count(),
-                ],
+                'tenants_by_plan' => $this->tenantCountsByPlan(),
                 'in_trial' => Tenant::inTrial()->count(),
                 'subscribed' => Tenant::subscribed()->count(),
                 'recent_tenants' => Tenant::orderBy('created_at', 'desc')->take(5)->get(),
@@ -1436,6 +1489,9 @@ class TenantsController extends Controller
                 'errors' => $e->errors(),
             ], 422);
         } catch (\RuntimeException $e) {
+            if ($e instanceof Responsable) {
+                return $e->toResponse($request);
+            }
             $message = match ($e->getMessage()) {
                 'invalid_plan' => 'Invalid or inactive subscription plan',
                 'downgrade_not_allowed' => 'Cannot downgrade to this plan. Only downgrades to Free plan are allowed for special cases.',
@@ -1700,7 +1756,7 @@ class TenantsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $this->subscriptionService->buildAccessSnapshot($tenant),
+                'data' => $this->subscriptionService->buildAccessSnapshot($tenant) + $this->entitlementAccessSummary($tenant, false),
             ]);
         } catch (\Exception $e) {
             Log::error('Error fetching subscription access: '.$e->getMessage());
@@ -1710,6 +1766,26 @@ class TenantsController extends Controller
                 'message' => 'Error fetching subscription access',
                 'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
             ], 500);
+        }
+    }
+
+    /**
+     * Additive plan/entitlement fields; the lifecycle payload must still load if resolution fails.
+     *
+     * @return array<string, mixed>
+     */
+    private function entitlementAccessSummary(Tenant $tenant, bool $withUsage): array
+    {
+        if (! app()->bound(TenantEntitlementGate::class)) {
+            return [];
+        }
+
+        try {
+            return app(TenantEntitlementGate::class)->accessSummary($tenant, $withUsage);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return [];
         }
     }
 
@@ -1755,7 +1831,7 @@ class TenantsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $this->subscriptionService->buildSummary($tenant),
+                'data' => $this->subscriptionService->buildSummary($tenant) + $this->entitlementAccessSummary($tenant, true),
             ]);
         } catch (\Exception $e) {
             Log::error('Error fetching my subscription: '.$e->getMessage());
@@ -2091,6 +2167,20 @@ class TenantsController extends Controller
         }
     }
 
+    private function isCatalogManagedPlan(SubscriptionPlan $plan): bool
+    {
+        return app()->bound(TenantPlanAssigner::class) || ! empty($plan->getAttribute('code'));
+    }
+
+    private function catalogManagedPlanResponse(): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'code' => 'PLAN_CHANGE_NOT_ALLOWED',
+            'message' => 'Subscription plans are managed in the plan catalog (Subscriptions → Plans). Changes there are versioned and audited.',
+        ], 409);
+    }
+
     /**
      * Get all subscription plans.
      *
@@ -2136,6 +2226,10 @@ class TenantsController extends Controller
                     'success' => false,
                     'message' => 'Unauthorized. Only SuperAdmin and EkklesiaAdmin can manage subscription plans.',
                 ], 403);
+            }
+
+            if (app()->bound(TenantPlanAssigner::class)) {
+                return $this->catalogManagedPlanResponse();
             }
 
             $validated = $request->validate([
@@ -2202,6 +2296,9 @@ class TenantsController extends Controller
             }
 
             $plan = SubscriptionPlan::findOrFail($id);
+            if ($this->isCatalogManagedPlan($plan)) {
+                return $this->catalogManagedPlanResponse();
+            }
 
             $validated = $request->validate([
                 'key' => 'sometimes|required|string|max:255|unique:subscription_plans,key,'.$id,
@@ -2267,6 +2364,9 @@ class TenantsController extends Controller
             }
 
             $plan = SubscriptionPlan::findOrFail($id);
+            if ($this->isCatalogManagedPlan($plan)) {
+                return $this->catalogManagedPlanResponse();
+            }
 
             // Inactive-plan policy: deactivate first; hard delete only when inactive + unused.
             if ($plan->active) {

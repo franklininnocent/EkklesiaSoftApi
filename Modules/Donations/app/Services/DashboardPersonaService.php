@@ -21,12 +21,24 @@ class DashboardPersonaService
             'emphasis' => $this->emphasisForPersona($persona),
             'sections' => $sections,
             'default_dashboard_view' => $persona === 'diocese_officer' ? 'rollup' : 'local',
+            'default_report' => $this->defaultReportKey($persona),
             'quick_actions' => $this->quickActionsForPersona($persona),
         ];
     }
 
+    public function defaultReportKey(string $persona): string
+    {
+        return match ($persona) {
+            'diocese_officer' => 'parish_comparison',
+            'treasurer' => 'payments',
+            'secretary' => 'receipts',
+            'priest' => 'outstanding',
+            default => 'payments',
+        };
+    }
+
     /**
-     * @param array<string, mixed>|null $tenantContext
+     * @param  array<string, mixed>|null  $tenantContext
      */
     private function detectPersona(User $user, ?array $tenantContext): string
     {
@@ -45,15 +57,20 @@ class DashboardPersonaService
             return 'treasurer';
         }
 
-        if ($this->matchesRole($roleName, ['secretary', 'administrator', 'church admin', 'parish secretary'])) {
+        // Protected tenant RBAC role is exactly "Administrator"; do not map it via secretary needles.
+        if ($roleName === 'administrator') {
+            return 'admin';
+        }
+
+        if ($this->matchesRole($roleName, ['secretary', 'church admin', 'parish secretary'])) {
             return 'secretary';
         }
 
-        if ($this->userCan($user, 'donations.reports') && !$this->userCan($user, 'donations.collect')) {
+        if ($this->userCan($user, 'donations.reports') && ! $this->userCan($user, 'donations.collect')) {
             return 'treasurer';
         }
 
-        if ($this->userCan($user, 'donations.collect') && !$this->userCan($user, 'donations.reports')) {
+        if ($this->userCan($user, 'donations.collect') && ! $this->userCan($user, 'donations.reports')) {
             return 'secretary';
         }
 
@@ -61,7 +78,7 @@ class DashboardPersonaService
     }
 
     /**
-     * @param array<int, string> $needles
+     * @param  array<int, string>  $needles
      */
     private function matchesRole(string $roleName, array $needles): bool
     {
@@ -167,7 +184,7 @@ class DashboardPersonaService
             'treasurer' => 'Collections, trends, and forecasts for financial stewardship.',
             'secretary' => 'Fast family follow-up, receipts, and daily collections.',
             'diocese_officer' => 'Parish comparisons and consolidated diocese performance.',
-            default => 'Full financial visibility across the parish.',
+            default => 'Collections, family follow-up, and parish operations in one place.',
         };
     }
 

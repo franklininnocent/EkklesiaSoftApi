@@ -5,11 +5,12 @@ namespace Modules\Donations\Services;
 use Illuminate\Support\Facades\DB;
 use Modules\Donations\Models\Donation;
 use Modules\Donations\Models\DonationPayment;
-use Modules\Donations\Models\DonationSetting;
 use Modules\Donations\Models\Donor;
 use Modules\Donations\Support\MoneyMath;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
+use Modules\Tenants\Services\ChurchCurrencyResolver;
+use Modules\Tenants\Services\ChurchFinancialPeriodResolver;
 
 class VoluntaryDonationService
 {
@@ -79,7 +80,8 @@ class VoluntaryDonationService
                 'payer_phone' => $isAnonymous ? null : ($payload['payer_phone'] ?? $donor?->phone),
                 'payment_date' => $payload['payment_date'] ?? now()->toDateString(),
                 'amount' => $amount,
-                'currency' => $payload['currency'] ?? 'INR',
+                'currency' => app(ChurchCurrencyResolver::class)
+                    ->currencyCodeForTenantId($tenantId) ?? 'INR',
                 'method' => $payload['method'] ?? 'cash',
                 'gateway_reference' => $payload['gateway_reference'] ?? null,
                 'status' => $payload['status'] ?? 'succeeded',
@@ -173,18 +175,8 @@ class VoluntaryDonationService
 
     private function resolveFinancialYear(int $tenantId): string
     {
-        $settings = DonationSetting::forTenant($tenantId)->first();
-        $month = (int) ($settings?->financial_year_start_month ?? 1);
-        $day = (int) ($settings?->financial_year_start_day ?? 1);
-        $now = now();
-
-        $fyStart = $now->copy()->setMonth($month)->setDay($day)->startOfDay();
-        if ($now->lt($fyStart)) {
-            $fyStart->subYear();
-        }
-
-        $fyEnd = $fyStart->copy()->addYear()->subDay();
-
-        return sprintf('%s-%s', $fyStart->format('Y'), $fyEnd->format('Y'));
+        return app(ChurchFinancialPeriodResolver::class)
+            ->currentFiscalYear($tenantId)
+            ->key;
     }
 }

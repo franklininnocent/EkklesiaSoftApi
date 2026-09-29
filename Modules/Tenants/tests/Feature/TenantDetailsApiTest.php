@@ -7,7 +7,6 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
-use Modules\Authentication\Models\Role;
 use Modules\Authentication\Models\User;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
@@ -116,7 +115,7 @@ class TenantDetailsApiTest extends TestCase
         config(['tenants.subscription.write_policy' => SubscriptionService::WRITE_POLICY_READ_ONLY_WHEN_EXPIRED]);
 
         $tenant = Tenant::factory()->active()->create([
-            'plan' => 'basic',
+            'plan' => 'starter',
             'trial_ends_at' => null,
             'subscription_ends_at' => Carbon::now()->subDays(30),
             'subscription_suspended_at' => null,
@@ -135,7 +134,7 @@ class TenantDetailsApiTest extends TestCase
         $this->asSuperAdmin();
 
         $tenant = Tenant::factory()->active()->create([
-            'plan' => 'basic',
+            'plan' => 'starter',
             'trial_ends_at' => null,
             'subscription_ends_at' => Carbon::now()->subDays(30),
             'subscription_suspended_at' => null,

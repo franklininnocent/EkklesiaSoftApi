@@ -186,18 +186,18 @@ Route::prefix('tenant/bishop-updates')->middleware(['auth:api'])->group(function
         ->middleware('tenant.permission:bishops.view_own_requests')
         ->name('tenant.bishop-updates.index');
     Route::post('/', [ChurchBishopUpdateRequestController::class, 'store'])
-        ->middleware('tenant.permission:bishops.submit_update_request')
+        ->middleware(['tenant.permission:bishops.submit_update_request', 'entitlement:DIOCESE_BISHOPS'])
         ->name('tenant.bishop-updates.store');
     Route::get('/{id}', [ChurchBishopUpdateRequestController::class, 'show'])
         ->middleware('tenant.permission:bishops.view_own_requests')
         ->name('tenant.bishop-updates.show');
     Route::put('/{id}', [ChurchBishopUpdateRequestController::class, 'update'])
-        ->middleware('tenant.permission:bishops.submit_update_request')
+        ->middleware(['tenant.permission:bishops.submit_update_request', 'entitlement:DIOCESE_BISHOPS'])
         ->name('tenant.bishop-updates.update');
     Route::post('/{id}/submit', [ChurchBishopUpdateRequestController::class, 'submit'])
-        ->middleware('tenant.permission:bishops.submit_update_request')
+        ->middleware(['tenant.permission:bishops.submit_update_request', 'entitlement:DIOCESE_BISHOPS'])
         ->name('tenant.bishop-updates.submit');
     Route::post('/{id}/photo', [ChurchBishopUpdateRequestController::class, 'uploadPhoto'])
-        ->middleware('tenant.permission:bishops.submit_update_request')
+        ->middleware(['tenant.permission:bishops.submit_update_request', 'entitlement:DIOCESE_BISHOPS'])
         ->name('tenant.bishop-updates.photo');
 });

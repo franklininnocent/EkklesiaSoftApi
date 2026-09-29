@@ -94,12 +94,45 @@ class SacramentRepository
 
         $perPage = max(1, min(100, (int) ($params['per_page'] ?? 20)));
         $page = max(1, (int) ($params['page'] ?? 1));
-        $sortBy = $params['sort_by'] ?? 'date_administered';
-        $sortDir = $params['sort_dir'] ?? 'desc';
+        [$sortBy, $sortDir] = $this->resolveSort(
+            $params['sort_by'] ?? null,
+            $params['sort_dir'] ?? ($params['sort_order'] ?? null),
+            [
+                'date_administered',
+                'created_at',
+                'updated_at',
+                'status',
+                'certificate_number',
+                'recipient_name',
+                'book_number',
+                'page_number',
+            ],
+            'date_administered',
+            'desc'
+        );
 
         $query->whereNull('deleted_at');
 
         return $query->orderBy($sortBy, $sortDir)->paginate($perPage, ['*'], 'page', $page);
+    }
+
+    /**
+     * @param  list<string>  $allowed
+     * @return array{0: string, 1: string}
+     */
+    private function resolveSort(mixed $column, mixed $direction, array $allowed, string $defaultColumn, string $defaultDirection): array
+    {
+        $column = is_string($column) ? $column : $defaultColumn;
+        if (! in_array($column, $allowed, true)) {
+            $column = $defaultColumn;
+        }
+
+        $direction = is_string($direction) ? strtolower($direction) : $defaultDirection;
+        if (! in_array($direction, ['asc', 'desc'], true)) {
+            $direction = $defaultDirection;
+        }
+
+        return [$column, $direction];
     }
 
     private function applyMarriageRegisterFilter($query, string $filter): void

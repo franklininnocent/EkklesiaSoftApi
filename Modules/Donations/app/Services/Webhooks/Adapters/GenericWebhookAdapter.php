@@ -17,10 +17,10 @@ class GenericWebhookAdapter implements PaymentWebhookAdapterInterface
 
     public function validateSignature(array $payload, ?string $signature, ?string $secret): bool
     {
-        if (empty($secret)) {
-            return true;
+        if (! is_string($secret) || $secret === '' || ! is_string($signature) || $signature === '') {
+            return false;
         }
 
-        return hash_equals($secret, (string) $signature);
+        return hash_equals($secret, $signature);
     }
 }

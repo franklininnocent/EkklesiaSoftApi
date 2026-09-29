@@ -3,8 +3,10 @@
 namespace Modules\Authentication\Tests\Feature;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Str;
 use Laravel\Passport\Passport;
 use Modules\Authentication\Mail\PasswordRecoveryTemporaryPasswordMail;
 use Modules\Authentication\Models\PasswordRecoveryRequest;
@@ -133,6 +135,74 @@ class PasswordRecoveryApiTest extends TestCase
 
         $this->assertTrue((bool) $staff->force_password_change);
         $this->assertSame(PasswordRecoveryRequest::STATUS_COMPLETED, $request->status);
+
+        $this->postJson("/api/auth/password-recovery-requests/{$request->id}/approve")
+            ->assertForbidden();
+    }
+
+    #[Test]
+    public function primary_admin_without_process_permission_cannot_approve(): void
+    {
+        $tenant = Tenant::factory()->create();
+        $adminRole = $this->makeTenantRole($tenant->id, Role::TENANT_ADMINISTRATOR, 1);
+        $staffRole = $this->makeTenantRole($tenant->id, 'Secretary', 3);
+        $this->seedRecoveryPermissions();
+        $view = Permission::query()->where('name', 'password.recovery.requests.view')->firstOrFail();
+        $adminRole->givePermissionTo($view);
+
+        $admin = $this->createUserWithRole($tenant->id, $adminRole, [
+            'email' => 'admin-view-only@test.local',
+            'is_primary_admin' => true,
+        ]);
+        $staff = $this->createUserWithRole($tenant->id, $staffRole, [
+            'email' => 'staff-view-only@test.local',
+        ]);
+
+        $request = $this->makeRecoveryRequest($staff, $tenant->id);
+
+        Passport::actingAs($admin, ['*']);
+
+        $this->postJson("/api/auth/password-recovery-requests/{$request->id}/approve")
+            ->assertForbidden();
+
+        $this->assertSame(PasswordRecoveryRequest::STATUS_PENDING_APPROVAL, $request->fresh()->status);
+    }
+
+    #[Test]
+    public function approver_cannot_approve_own_or_other_tenant_or_expired_request(): void
+    {
+        $tenantA = Tenant::factory()->create();
+        $tenantB = Tenant::factory()->create();
+        $adminRole = $this->makeTenantRole($tenantA->id, Role::TENANT_ADMINISTRATOR, 1);
+        $staffRoleA = $this->makeTenantRole($tenantA->id, 'Secretary', 3);
+        $staffRoleB = $this->makeTenantRole($tenantB->id, 'Secretary', 3);
+        $this->seedRecoveryPermissions();
+        $adminRole->givePermissionTo($this->recoveryPermissions());
+
+        $admin = $this->createUserWithRole($tenantA->id, $adminRole, [
+            'email' => 'admin-a@test.local',
+            'is_primary_admin' => true,
+        ]);
+        $staffA = $this->createUserWithRole($tenantA->id, $staffRoleA, [
+            'email' => 'staff-a@test.local',
+        ]);
+        $staffB = $this->createUserWithRole($tenantB->id, $staffRoleB, [
+            'email' => 'staff-b@test.local',
+        ]);
+
+        $own = $this->makeRecoveryRequest($admin, $tenantA->id);
+        $foreign = $this->makeRecoveryRequest($staffB, $tenantB->id);
+        $expired = $this->makeRecoveryRequest($staffA, $tenantA->id, now()->subHour());
+
+        Passport::actingAs($admin, ['*']);
+
+        $this->postJson("/api/auth/password-recovery-requests/{$own->id}/approve")->assertForbidden();
+        $this->postJson("/api/auth/password-recovery-requests/{$foreign->id}/approve")->assertForbidden();
+        $this->postJson("/api/auth/password-recovery-requests/{$expired->id}/approve")->assertForbidden();
+
+        $this->assertSame(PasswordRecoveryRequest::STATUS_PENDING_APPROVAL, $own->fresh()->status);
+        $this->assertSame(PasswordRecoveryRequest::STATUS_PENDING_APPROVAL, $foreign->fresh()->status);
+        $this->assertSame(PasswordRecoveryRequest::STATUS_PENDING_APPROVAL, $expired->fresh()->status);
     }
 
     #[Test]
@@ -184,18 +254,32 @@ class PasswordRecoveryApiTest extends TestCase
         ]);
     }
 
+    private function makeRecoveryRequest(User $user, int $tenantId, $expiresAt = null): PasswordRecoveryRequest
+    {
+        return PasswordRecoveryRequest::query()->create([
+            'id' => (string) Str::uuid(),
+            'user_id' => $user->id,
+            'tenant_id' => $tenantId,
+            'requester_email' => $user->email,
+            'requester_domain' => PasswordRecoveryRequest::DOMAIN_TENANT,
+            'requester_classification' => PasswordRecoveryRequest::CLASSIFICATION_TENANT_USER,
+            'status' => PasswordRecoveryRequest::STATUS_PENDING_APPROVAL,
+            'expires_at' => $expiresAt ?? now()->addDay(),
+        ]);
+    }
+
     private function seedPasswordGrantClient(): void
     {
-        if (\Illuminate\Support\Facades\DB::table('oauth_clients')->exists()) {
+        if (DB::table('oauth_clients')->exists()) {
             return;
         }
 
-        \Illuminate\Support\Facades\DB::table('oauth_clients')->insert([
-            'id' => (string) \Illuminate\Support\Str::uuid(),
+        DB::table('oauth_clients')->insert([
+            'id' => (string) Str::uuid(),
             'owner_type' => null,
             'owner_id' => null,
             'name' => 'Password Grant Client',
-            'secret' => \Illuminate\Support\Str::random(40),
+            'secret' => Str::random(40),
             'provider' => 'users',
             'redirect_uris' => json_encode([]),
             'grant_types' => json_encode(['password', 'refresh_token']),

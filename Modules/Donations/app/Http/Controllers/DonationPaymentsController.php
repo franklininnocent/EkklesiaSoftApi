@@ -4,16 +4,16 @@ namespace Modules\Donations\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Modules\Donations\Http\Controllers\Concerns\HandlesDonationIdempotency;
+use Modules\Donations\Http\Requests\IndexDonationPaymentsRequest;
 use Modules\Donations\Http\Requests\RequestRefundRequest;
 use Modules\Donations\Http\Requests\ReversePaymentRequest;
 use Modules\Donations\Http\Requests\StorePaymentRequest;
 use Modules\Donations\Models\DonationPayment;
 use Modules\Donations\Services\DonationIdempotencyService;
 use Modules\Donations\Services\DonationLedgerService;
-use Modules\Donations\Support\MoneyMath;
+use Modules\Donations\Services\DonationPaymentListService;
 use Modules\Tenants\Support\TenantContext;
 
 class DonationPaymentsController extends Controller
@@ -22,36 +22,19 @@ class DonationPaymentsController extends Controller
 
     public function __construct(
         private readonly DonationLedgerService $ledgerService,
-        private readonly DonationIdempotencyService $idempotency
+        private readonly DonationIdempotencyService $idempotency,
+        private readonly DonationPaymentListService $paymentList
     ) {}
 
-    public function index(Request $request): JsonResponse
+    public function index(IndexDonationPaymentsRequest $request): JsonResponse
     {
         $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
-        $query = DonationPayment::forTenant($tenantId)->with(['allocations', 'receipt', 'receipts'])->orderByDesc('payment_date');
-
-        if ($request->filled('status')) {
-            $query->where('status', $request->string('status'));
-        }
-        if ($request->filled('method')) {
-            $query->where('method', $request->string('method'));
-        }
-        if ($request->filled('family_id')) {
-            $query->where('family_id', $request->string('family_id'));
-        }
-
-        $paginator = $query->paginate((int) $request->input('per_page', 20));
-        $paginator->getCollection()->transform(function (DonationPayment $payment) {
-            $payment->setAttribute('refundable_remaining', MoneyMath::toApiNumber(
-                $this->ledgerService->refundableRemaining($payment)
-            ));
-
-            return $payment;
-        });
+        $result = $this->paymentList->paginate($tenantId, $request);
 
         return response()->json([
             'success' => true,
-            'data' => $paginator,
+            'data' => $result['paginator'],
+            'meta' => $result['meta'],
         ]);
     }
 

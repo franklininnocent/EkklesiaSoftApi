@@ -153,6 +153,30 @@ class DonationProjectService
         return $familyIds;
     }
 
+    /**
+     * Lightweight metrics for project list screens (avoids per-family dashboard aggregation).
+     *
+     * @return array{collection_percentage: float, families_enrolled: int}
+     */
+    public function getListSummary(int $tenantId, DonationProject $project): array
+    {
+        $asOfDate = now()->toDateString();
+        $enrolled = count($this->getEnrolledFamilyIds($project, $asOfDate));
+
+        $overallTarget = (float) $project->target_amount;
+        if ($overallTarget <= 0 && $project->default_family_target > 0 && $enrolled > 0) {
+            $overallTarget = (float) $project->default_family_target * $enrolled;
+        }
+
+        $collected = (float) $project->raised_amount;
+        $collectionPercentage = $overallTarget > 0 ? round(($collected / $overallTarget) * 100, 2) : 0.0;
+
+        return [
+            'collection_percentage' => $collectionPercentage,
+            'families_enrolled' => $enrolled,
+        ];
+    }
+
     public function getDashboard(int $tenantId, DonationProject $project): array
     {
         $asOfDate = now()->toDateString();

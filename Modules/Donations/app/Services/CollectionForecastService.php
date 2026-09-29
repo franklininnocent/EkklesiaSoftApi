@@ -2,11 +2,18 @@
 
 namespace Modules\Donations\Services;
 
+use Carbon\Carbon;
 use Modules\Donations\Models\DonationPayment;
+use Modules\Donations\Support\DonationBusinessDate;
 use Modules\Donations\Support\MoneyMath;
+use Modules\Tenants\Support\ChurchMoneyFormatter;
 
 class CollectionForecastService
 {
+    public function __construct(
+        private readonly ExecutiveReportMetricsService $metrics
+    ) {}
+
     /**
      * @return array<string, mixed>
      */
@@ -19,7 +26,9 @@ class CollectionForecastService
             ? MoneyMath::round(array_sum($recentValues) / count($recentValues))
             : 0.0;
 
-        $currentMonthKey = now()->format('Y-m');
+        $timezone = DonationBusinessDate::timezoneForTenant($tenantId);
+        $today = DonationBusinessDate::today($tenantId);
+        $currentMonthKey = Carbon::parse($today, $timezone)->format('Y-m');
         $currentMonthCollected = 0.0;
         foreach ($history as $row) {
             if ($row['period'] === $currentMonthKey) {
@@ -28,8 +37,9 @@ class CollectionForecastService
             }
         }
 
-        $dayOfMonth = max(1, (int) now()->day);
-        $daysInMonth = (int) now()->daysInMonth;
+        $todayCarbon = Carbon::parse($today, $timezone);
+        $dayOfMonth = max(1, (int) $todayCarbon->day);
+        $daysInMonth = (int) $todayCarbon->daysInMonth;
         $dailyPace = $currentMonthCollected / $dayOfMonth;
         $endOfMonthProjection = MoneyMath::round($dailyPace * $daysInMonth);
 
@@ -37,7 +47,7 @@ class CollectionForecastService
         $projections = [];
 
         for ($i = 1; $i <= max(1, min($horizonMonths, 6)); $i++) {
-            $month = now()->copy()->addMonths($i);
+            $month = $todayCarbon->copy()->addMonths($i);
             $seasonalFactor = 1 + ($growthPct / 100);
             $projected = MoneyMath::round($movingAverage * pow($seasonalFactor, $i));
 
@@ -58,12 +68,18 @@ class CollectionForecastService
                 'current_month_projection' => $endOfMonthProjection,
                 'collection_growth_pct' => $growthPct,
                 'daily_pace' => MoneyMath::round($dailyPace),
+                'elapsed_days' => $dayOfMonth,
+                'days_in_month' => $daysInMonth,
+                'moving_average_source_periods' => array_map(
+                    fn (array $row): string => (string) $row['period'],
+                    $recent
+                ),
             ],
             'projections' => $projections,
             'narrative' => sprintf(
                 'Based on the last 3 months, collections are averaging %s. At the current daily pace, this month may reach about %s.',
-                number_format($movingAverage, 2),
-                number_format($endOfMonthProjection, 2)
+                ChurchMoneyFormatter::formatForTenant($tenantId, $movingAverage),
+                ChurchMoneyFormatter::formatForTenant($tenantId, $endOfMonthProjection)
             ),
         ];
     }
@@ -73,39 +89,56 @@ class CollectionForecastService
      */
     private function monthlyHistory(int $tenantId, int $months): array
     {
-        $start = now()->subMonths($months - 1)->startOfMonth();
-        $payments = DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->whereDate('payment_date', '>=', $start->toDateString())
-            ->get();
-
-        $buckets = [];
-        for ($i = 0; $i < $months; $i++) {
-            $month = $start->copy()->addMonths($i);
-            $key = $month->format('Y-m');
-            $buckets[$key] = [
-                'period' => $key,
-                'label' => $month->format('M Y'),
-                'collected' => 0.0,
-            ];
+        $buckets = $this->metrics->trendMonthBuckets($tenantId);
+        if (count($buckets) > $months) {
+            $buckets = array_slice($buckets, -$months);
         }
 
-        foreach ($payments as $payment) {
-            $key = $payment->payment_date?->format('Y-m');
-            if ($key && isset($buckets[$key])) {
-                $buckets[$key]['collected'] += (float) $payment->amount;
+        $monthExpr = $this->metrics->sqlYearMonthExpression('payment_date');
+        $firstStart = $buckets[0]['start'];
+        $lastEnd = $buckets[count($buckets) - 1]['end'];
+
+        $rows = DonationPayment::forTenant($tenantId)
+            ->where('status', 'succeeded')
+            ->whereBetween('payment_date', [$firstStart, $lastEnd])
+            ->selectRaw("{$monthExpr} as period, COALESCE(SUM(amount), 0) as collected")
+            ->groupByRaw($monthExpr)
+            ->get();
+
+        $collectedByMonth = [];
+        foreach ($rows as $row) {
+            $key = trim((string) $row->period);
+            if ($key !== '') {
+                $collectedByMonth[$key] = MoneyMath::toApiNumber($row->collected);
             }
         }
 
-        return array_values(array_map(function (array $row): array {
-            $row['collected'] = MoneyMath::round((float) $row['collected']);
+        $currentRange = $this->metrics->currentMonthCollectionRange($tenantId);
+        $currentMtd = $this->metrics->sumSucceededPayments(
+            $tenantId,
+            $currentRange['start'],
+            $currentRange['end']
+        );
 
-            return $row;
-        }, $buckets));
+        $result = [];
+        foreach ($buckets as $bucket) {
+            $key = $bucket['period'];
+            $collected = $bucket['is_current']
+                ? $currentMtd
+                : (float) ($collectedByMonth[$key] ?? 0);
+
+            $result[] = [
+                'period' => $key,
+                'label' => $bucket['label'],
+                'collected' => MoneyMath::round($collected),
+            ];
+        }
+
+        return $result;
     }
 
     /**
-     * @param array<int, array<string, mixed>> $history
+     * @param  array<int, array<string, mixed>>  $history
      */
     private function growthPct(array $history): float
     {

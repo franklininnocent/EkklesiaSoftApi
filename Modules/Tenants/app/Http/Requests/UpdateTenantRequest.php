@@ -2,8 +2,10 @@
 
 namespace Modules\Tenants\Http\Requests;
 
+use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Modules\Tenants\Models\SubscriptionPlan;
 use Modules\Tenants\Models\Tenant;
 
 class UpdateTenantRequest extends FormRequest
@@ -20,7 +22,7 @@ class UpdateTenantRequest extends FormRequest
     /**
      * Get the validation rules that apply to the request.
      *
-     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
+     * @return array<string, ValidationRule|array<mixed>|string>
      */
     public function rules(): array
     {
@@ -41,7 +43,8 @@ class UpdateTenantRequest extends FormRequest
             'denomination_id' => 'nullable|integer|exists:denominations,id',
             'archdiocese_id' => 'nullable|integer|exists:archdioceses,id',
             'website' => 'nullable|url|max:255',
-            'plan' => 'nullable|string|in:free,basic,premium,enterprise',
+            // Ignored by the controller when the plan catalog is active (see TenantsController::update).
+            'plan' => ['nullable', 'string', Rule::in(SubscriptionPlan::withTrashed()->pluck('key')->map(static fn ($k) => (string) $k)->all() ?: ['free', 'starter', 'standard', 'professional', 'enterprise'])],
 
             // Tenant Official Address
             'tenant_official_address' => 'sometimes|required|array',

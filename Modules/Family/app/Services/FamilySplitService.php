@@ -9,6 +9,7 @@ use Illuminate\Validation\ValidationException;
 use Modules\Family\app\Repositories\FamilyRepository;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
+use Modules\Tenants\Contracts\TenantLimitGuard;
 
 class FamilySplitService
 {
@@ -73,6 +74,10 @@ class FamilySplitService
             $newFamilyData['updated_by'] = $userId;
             $targetBccId = $newFamilyData['bcc_id'] ?? null;
             unset($newFamilyData['members'], $newFamilyData['transition_id'], $newFamilyData['effective_date'], $newFamilyData['origin_successions']);
+
+            if (app()->bound(TenantLimitGuard::class)) {
+                app(TenantLimitGuard::class)->assertTenantCanAdd((int) $tenantId, 'FAMILY_LIMIT', 1, 'family_split');
+            }
 
             $newFamily = $this->familyRepository->create($newFamilyData);
 

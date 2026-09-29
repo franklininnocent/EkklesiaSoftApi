@@ -2,9 +2,9 @@
 
 namespace Modules\Tenants\Database\Factories;
 
+use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Modules\Tenants\Models\Tenant;
-use App\Models\User;
 
 class TenantFactory extends Factory
 {
@@ -13,18 +13,19 @@ class TenantFactory extends Factory
     public function definition(): array
     {
         return [
-            'name' => $this->faker->company() . ' Church',
+            'name' => $this->faker->company().' Church',
             'slogan' => $this->faker->optional()->sentence(),
             'slug' => $this->faker->unique()->slug(),
             'domain' => $this->faker->boolean(80)
                 ? $this->faker->unique()->slug().'-'.$this->faker->uuid().'.test'
                 : null,
-            'plan' => $this->faker->randomElement(['free', 'basic', 'premium', 'enterprise']),
+            'plan' => $this->faker->randomElement(['free', 'starter', 'standard', 'enterprise']),
             'max_users' => $this->faker->numberBetween(10, 500),
             'max_storage_mb' => $this->faker->numberBetween(100, 10000),
-            'trial_ends_at' => $this->faker->optional()->dateTime(),
-            'subscription_ends_at' => $this->faker->optional()->dateTime(),
-            'active' => $this->faker->boolean(80) ? 1 : 0,
+            // Keep lifecycle deterministic: any past date makes the tenant read-only.
+            'trial_ends_at' => null,
+            'subscription_ends_at' => null,
+            'active' => 1,
             'settings' => json_encode([
                 'timezone' => $this->faker->timezone(),
                 'language' => 'en',
@@ -52,4 +53,3 @@ class TenantFactory extends Factory
         ]);
     }
 }
-

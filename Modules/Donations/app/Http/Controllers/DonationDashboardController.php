@@ -5,13 +5,15 @@ namespace Modules\Donations\Http\Controllers;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
-use Modules\Donations\Services\DioceseRollupDashboardService;
+use Modules\Donations\Http\Requests\DashboardDateRangeRequest;
 use Modules\Donations\Services\DashboardPersonaService;
+use Modules\Donations\Services\DioceseRollupDashboardService;
 use Modules\Donations\Services\DonationDashboardService;
 use Modules\Donations\Services\DonationSavedViewService;
 use Modules\Donations\Services\FamilyFinancialProfileService;
 use Modules\Donations\Services\FamilyStatementPrintService;
 use Modules\Donations\Services\FinancialCommandCenterService;
+use Modules\Tenants\Support\TenantContext;
 
 class DonationDashboardController extends Controller
 {
@@ -23,14 +25,18 @@ class DonationDashboardController extends Controller
         private readonly DonationSavedViewService $savedViewService,
         private readonly FamilyStatementPrintService $familyStatementPrintService,
         private readonly FinancialCommandCenterService $commandCenterService
-    ) {
-    }
+    ) {}
 
-    public function summary(): JsonResponse
+    public function summary(DashboardDateRangeRequest $request): JsonResponse
     {
         $user = Auth::user();
-        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
-        $summary = $this->dashboardService->getSummary($tenantId);
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+        $summary = $this->dashboardService->getSummary(
+            $tenantId,
+            $request->resolvedRange(),
+            $request->resolvedBccFilter(),
+            $request->resolvedProjectFilter()
+        );
         $persona = $this->personaService->resolve($user, $summary['tenant_context'] ?? null);
 
         return response()->json([
@@ -45,7 +51,7 @@ class DonationDashboardController extends Controller
     public function commandCenter(): JsonResponse
     {
         $user = Auth::user();
-        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
         $period = (string) request()->query('period', 'month');
         $payload = $this->commandCenterService->build($tenantId, $user, $period);
         $persona = $this->personaService->resolve($user, $payload['tenant_context'] ?? null);
@@ -61,7 +67,7 @@ class DonationDashboardController extends Controller
 
     public function rollup(): JsonResponse
     {
-        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
 
         return response()->json([
             'success' => true,
@@ -72,7 +78,7 @@ class DonationDashboardController extends Controller
     public function familySummary(string $familyId): JsonResponse
     {
         try {
-            $profile = $this->profileService->build(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(), $familyId);
+            $profile = $this->profileService->build(app(TenantContext::class)->requireEffectiveTenantId(), $familyId);
         } catch (\RuntimeException $exception) {
             return response()->json([
                 'success' => false,
@@ -96,7 +102,7 @@ class DonationDashboardController extends Controller
     public function familyFinancialProfile(string $familyId): JsonResponse
     {
         try {
-            $profile = $this->profileService->build(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(), $familyId);
+            $profile = $this->profileService->build(app(TenantContext::class)->requireEffectiveTenantId(), $familyId);
         } catch (\RuntimeException $exception) {
             $status = str_contains($exception->getMessage(), 'does not belong') ? 404 : 422;
 
@@ -115,7 +121,7 @@ class DonationDashboardController extends Controller
     public function familyStatementPrint(string $familyId)
     {
         try {
-            $payload = $this->familyStatementPrintService->buildPayload(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(), $familyId);
+            $payload = $this->familyStatementPrintService->buildPayload(app(TenantContext::class)->requireEffectiveTenantId(), $familyId);
         } catch (\RuntimeException $exception) {
             return response()->json([
                 'success' => false,

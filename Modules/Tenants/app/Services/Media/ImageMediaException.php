@@ -24,6 +24,8 @@ final class ImageMediaException extends RuntimeException
 
     public const CODE_INVALID_PATH = 'invalid_path';
 
+    public const CODE_STORAGE_LIMIT = 'storage_limit_reached';
+
     public function __construct(
         private readonly string $errorCode,
         string $publicMessage,

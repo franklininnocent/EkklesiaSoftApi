@@ -157,11 +157,11 @@ Route::prefix('tenant/ministries')
         Route::get('/organizations/{organizationId}/leadership/current', [OrganizationLeadershipController::class, 'current']);
         Route::get('/organizations/{organizationId}/leadership/timeline', [OrganizationLeadershipController::class, 'timeline']);
         Route::post('/organizations/{organizationId}/leadership/assign', [OrganizationLeadershipController::class, 'assign'])
-            ->middleware('tenant.permission:ministries.manage_leadership');
+            ->middleware(['tenant.permission:ministries.manage_leadership', 'entitlement:ADVANCED_MINISTRY_MANAGEMENT']);
         Route::post('/organizations/{organizationId}/leadership/handover', [OrganizationLeadershipController::class, 'handover'])
-            ->middleware('tenant.permission:ministries.manage_leadership');
+            ->middleware(['tenant.permission:ministries.manage_leadership', 'entitlement:ADVANCED_MINISTRY_MANAGEMENT']);
         Route::post('/organizations/{organizationId}/leadership/{termId}/terminate', [OrganizationLeadershipController::class, 'terminate'])
-            ->middleware('tenant.permission:ministries.manage_leadership');
+            ->middleware(['tenant.permission:ministries.manage_leadership', 'entitlement:ADVANCED_MINISTRY_MANAGEMENT']);
 
         Route::get('/organizations/{organizationId}/audit-logs', [MinistriesAuditLogController::class, 'organizationIndex']);
 

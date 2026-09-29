@@ -11,7 +11,7 @@ use Modules\Family\Models\Family;
 
 class ProjectInstallmentDue extends Model
 {
-    use HasUuids, SoftDeletes, BelongsToTenant;
+    use BelongsToTenant, HasUuids, SoftDeletes;
 
     protected $table = 'project_installment_dues';
 
@@ -25,6 +25,7 @@ class ProjectInstallmentDue extends Model
         'amount_due',
         'amount_paid',
         'status',
+        'status_changed_at',
         'notes',
         'created_by',
         'updated_by',
@@ -32,6 +33,7 @@ class ProjectInstallmentDue extends Model
 
     protected $casts = [
         'due_date' => 'date',
+        'status_changed_at' => 'datetime',
         'amount_due' => 'decimal:2',
         'amount_paid' => 'decimal:2',
     ];

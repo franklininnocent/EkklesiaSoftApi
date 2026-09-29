@@ -4,6 +4,7 @@ namespace Modules\Donations\Services;
 
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
+use Modules\Authentication\Models\User;
 use Modules\Donations\Jobs\SendPaymentReceiptJob;
 use Modules\Donations\Models\ContributionDue;
 use Modules\Donations\Models\ContributionPlan;
@@ -20,6 +21,10 @@ use Modules\Donations\Models\ProjectInstallmentDue;
 use Modules\Donations\Support\ContributionBalance;
 use Modules\Donations\Support\MoneyMath;
 use Modules\Family\Models\Family;
+use Modules\Notifications\Contracts\NotificationPublisherContract;
+use Modules\Notifications\Support\InboxScope;
+use Modules\Notifications\Support\NotificationIntent;
+use Modules\Tenants\Services\ChurchCurrencyResolver;
 
 class DonationLedgerService
 {
@@ -70,7 +75,7 @@ class DonationLedgerService
                 'payment_date' => $payload['payment_date'],
                 'amount' => $amount,
                 'refunded_amount' => '0.00',
-                'currency' => $payload['currency'] ?? 'INR',
+                'currency' => $this->resolvePaymentCurrency($tenantId),
                 'method' => $payload['method'],
                 'gateway_reference' => $reference,
                 'status' => 'succeeded',
@@ -565,22 +570,22 @@ class DonationLedgerService
         DonationPayment $payment,
         string $amount,
     ): void {
-        if (! interface_exists(\Modules\Notifications\Contracts\NotificationPublisherContract::class)) {
+        if (! interface_exists(NotificationPublisherContract::class)) {
             return;
         }
 
         try {
-            $actor = \Modules\Authentication\Models\User::query()->find($userId);
+            $actor = User::query()->find($userId);
             $payment->loadMissing('family');
 
-            app(\Modules\Notifications\Contracts\NotificationPublisherContract::class)->publish(
-                new \Modules\Notifications\Support\NotificationIntent(
+            app(NotificationPublisherContract::class)->publish(
+                new NotificationIntent(
                     definitionCode: 'donations.refund.requested',
                     actor: $actor,
                     subjectType: 'donation_approval',
                     subjectId: (string) $approval->id,
                     tenantId: $tenantId,
-                    scope: \Modules\Notifications\Support\InboxScope::Tenant,
+                    scope: InboxScope::Tenant,
                     occurrenceId: (string) $approval->id,
                     data: [
                         'amount' => $amount,
@@ -594,5 +599,12 @@ class DonationLedgerService
         } catch (\Throwable) {
             // notification must not block refund request
         }
+    }
+
+    private function resolvePaymentCurrency(int $tenantId): string
+    {
+        $code = app(ChurchCurrencyResolver::class)->currencyCodeForTenantId($tenantId);
+
+        return $code ?? 'INR';
     }
 }

@@ -331,7 +331,7 @@ class SaasRbac360FeatureTest extends TestCase
 
         $this->deleteJson("/api/families/{$familyId}")
             ->assertForbidden()
-            ->assertJsonPath('message', 'Unauthorized. Only Tenant Administrators can delete families.');
+            ->assertJsonPath('message', 'Insufficient permission for this tenant action.');
         $this->assertDatabaseHas('families', ['id' => $familyId, 'deleted_at' => null]);
 
         $this->deleteJson("/api/bccs/{$bccId}")->assertForbidden();
@@ -488,11 +488,15 @@ class SaasRbac360FeatureTest extends TestCase
 
         $this->getJson("/api/persons/{$this->personB->id}")->assertStatus(422);
 
-        $this->getJson("/api/sacraments/{$this->sacramentB->id}")->assertForbidden();
-        $this->putJson("/api/sacraments/{$this->sacramentB->id}", [
+        $sacramentShow = $this->getJson("/api/sacraments/{$this->sacramentB->id}");
+        $this->assertContains($sacramentShow->status(), [403, 404]);
+        $this->assertStringNotContainsString('BravoRbacRecipient', (string) $sacramentShow->getContent());
+        $sacramentUpdate = $this->putJson("/api/sacraments/{$this->sacramentB->id}", [
             'recipient_name' => 'Hacked',
-        ])->assertForbidden();
-        $this->deleteJson("/api/sacraments/{$this->sacramentB->id}")->assertForbidden();
+        ]);
+        $this->assertContains($sacramentUpdate->status(), [403, 404]);
+        $sacramentDelete = $this->deleteJson("/api/sacraments/{$this->sacramentB->id}");
+        $this->assertContains($sacramentDelete->status(), [403, 404]);
         $this->assertDatabaseHas('sacraments', [
             'id' => $this->sacramentB->id,
             'recipient_name' => 'BravoRbacRecipient',

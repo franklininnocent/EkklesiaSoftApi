@@ -991,6 +991,14 @@ class FamilyApiTest extends TestCase
         $this->assertGreaterThanOrEqual(2, count($data));
     }
 
+    #[Test]
+    public function malicious_sort_input_does_not_change_the_query(): void
+    {
+        $response = $this->getJson('/api/families?sort_by='.urlencode('id);select pg_sleep(1)--').'&sort_order='.urlencode('desc;select 1'));
+
+        $response->assertOk()->assertJsonPath('success', true);
+    }
+
     // ==================== FAMILY MEMBER OPERATIONS ====================
 
     #[Test]

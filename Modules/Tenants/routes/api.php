@@ -1,22 +1,22 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use Modules\Tenants\Http\Controllers\TenantsController;
-use Modules\Tenants\Http\Controllers\GeographyController;
-use Modules\Tenants\Http\Controllers\MediaServeController;
-use Modules\Tenants\Http\Controllers\SecureFileController;
-use Modules\Tenants\Http\Controllers\DenominationsController;
 use Modules\Tenants\Http\Controllers\ArchdiocesesController;
-use Modules\Tenants\Http\Controllers\ChurchProfileController;
+use Modules\Tenants\Http\Controllers\ChurchDiocesanLeadershipController;
 use Modules\Tenants\Http\Controllers\ChurchLeadershipController;
 use Modules\Tenants\Http\Controllers\ChurchLeadershipGovernanceController;
-use Modules\Tenants\Http\Controllers\ChurchDiocesanLeadershipController;
-use Modules\Tenants\Http\Controllers\ChurchStatisticsController;
+use Modules\Tenants\Http\Controllers\ChurchProfileController;
 use Modules\Tenants\Http\Controllers\ChurchSocialMediaController;
-use Modules\Tenants\Http\Controllers\PopeDetailsController;
-use Modules\Tenants\Http\Controllers\PlatformHealthController;
-use Modules\Tenants\Http\Controllers\TenantDataExportController;
+use Modules\Tenants\Http\Controllers\ChurchStatisticsController;
 use Modules\Tenants\Http\Controllers\DefaultSeedsController;
+use Modules\Tenants\Http\Controllers\DenominationsController;
+use Modules\Tenants\Http\Controllers\GeographyController;
+use Modules\Tenants\Http\Controllers\MediaServeController;
+use Modules\Tenants\Http\Controllers\PlatformHealthController;
+use Modules\Tenants\Http\Controllers\PopeDetailsController;
+use Modules\Tenants\Http\Controllers\SecureFileController;
+use Modules\Tenants\Http\Controllers\TenantDataExportController;
+use Modules\Tenants\Http\Controllers\TenantsController;
 use Modules\Tenants\Http\Middleware\VerifyPlatformHealthToken;
 
 /*
@@ -34,7 +34,7 @@ Route::get('/platform/health', [PlatformHealthController::class, 'show'])
     ->name('platform.health');
 
 Route::middleware('auth:api')->group(function () {
-    
+
     // Geography endpoints (for cascading dropdowns)
     Route::prefix('geography')->group(function () {
         Route::get('/countries', [GeographyController::class, 'getCountries']);
@@ -45,21 +45,21 @@ Route::middleware('auth:api')->group(function () {
             ->where('countryId', '[0-9]+');
         Route::post('/clear-cache', [GeographyController::class, 'clearCache']);
     });
-    
+
     // List all tenants
     Route::get('/tenant/list', [TenantsController::class, 'list']);
-    
+
     // Get tenant statistics
     Route::get('/tenant/statistics', [TenantsController::class, 'statistics']);
-    
+
     // Church Profile endpoints - for tenant users to view/edit their own church
     Route::get('/tenant/church-profile', [TenantsController::class, 'getChurchProfile']);
     Route::put('/tenant/church-profile', [TenantsController::class, 'updateChurchProfile'])
         ->middleware('tenant.permission:church.settings.edit');
-    
+
     // Create a new tenant
     Route::post('/tenant', [TenantsController::class, 'store']);
-    
+
     // Get a specific tenant
     Route::get('/tenant/{id}', [TenantsController::class, 'show'])
         ->where('id', '[0-9]+');
@@ -67,19 +67,19 @@ Route::middleware('auth:api')->group(function () {
     // Platform-admin 360° tenant snapshot
     Route::get('/tenant/{id}/details', [TenantsController::class, 'details'])
         ->where('id', '[0-9]+');
-    
+
     // Update a tenant
     Route::put('/tenant/{id}', [TenantsController::class, 'update'])
         ->where('id', '[0-9]+');
-    
+
     // Delete a tenant (soft delete)
     Route::delete('/tenant/{id}', [TenantsController::class, 'destroy'])
         ->where('id', '[0-9]+');
-    
+
     // Update tenant status (activate/deactivate)
     Route::patch('/tenant/{id}/status', [TenantsController::class, 'updateStatus'])
         ->where('id', '[0-9]+');
-    
+
     // Logo management
     Route::post('/tenant/{id}/logo', [TenantsController::class, 'uploadLogo'])
         ->where('id', '[0-9]+')
@@ -87,7 +87,7 @@ Route::middleware('auth:api')->group(function () {
     Route::delete('/tenant/{id}/logo', [TenantsController::class, 'deleteLogo'])
         ->where('id', '[0-9]+')
         ->middleware('api.throttle:uploads');
-    
+
     // Subscription management
     Route::get('/tenant/subscription/plans', [TenantsController::class, 'getSubscriptionPlans']);
     Route::get('/tenant/subscription-access', [TenantsController::class, 'subscriptionAccess']);
@@ -102,11 +102,11 @@ Route::middleware('auth:api')->group(function () {
         ->where('id', '[0-9]+');
     Route::get('/tenant/{id}/subscription/audits', [TenantsController::class, 'subscriptionAudits'])
         ->where('id', '[0-9]+');
-    
+
     // Platform subscription settings (SuperAdmin/EkklesiaAdmin) — includes configurable grace days
     Route::get('/subscription/settings', [TenantsController::class, 'getSubscriptionSettings']);
     Route::put('/subscription/settings', [TenantsController::class, 'updateSubscriptionSettings']);
-    
+
     // Subscription duration options management (SuperAdmin/EkklesiaAdmin only)
     Route::get('/subscription/duration-options', [TenantsController::class, 'getDurationOptions']);
     Route::post('/subscription/duration-options', [TenantsController::class, 'createDurationOption']);
@@ -114,7 +114,7 @@ Route::middleware('auth:api')->group(function () {
         ->where('id', '[0-9]+');
     Route::delete('/subscription/duration-options/{id}', [TenantsController::class, 'deleteDurationOption'])
         ->where('id', '[0-9]+');
-    
+
     // Subscription plans management (SuperAdmin/EkklesiaAdmin only)
     Route::get('/subscription/plans', [TenantsController::class, 'getPlans']);
     Route::post('/subscription/plans', [TenantsController::class, 'createPlan']);
@@ -122,39 +122,39 @@ Route::middleware('auth:api')->group(function () {
         ->where('id', '[0-9]+');
     Route::delete('/subscription/plans/{id}', [TenantsController::class, 'deletePlan'])
         ->where('id', '[0-9]+');
-    
+
     // Secure file access with signed URLs
     Route::post('/tenant/files/signed-url', [SecureFileController::class, 'generateSignedUrl'])
         ->name('tenants.files.signed-url');
-    
+
     // ================================================================
     // CHURCH MANAGEMENT ENDPOINTS - For Tenant Administrators
     // ================================================================
-    
+
     // Lookup Tables (Read-Only)
     Route::prefix('denominations')->group(function () {
         Route::get('/', [DenominationsController::class, 'index']);
         Route::get('/{id}', [DenominationsController::class, 'show'])->where('id', '[0-9]+');
     });
-    
+
     Route::prefix('archdioceses')->group(function () {
         Route::get('/', [ArchdiocesesController::class, 'index']);
         Route::get('/countries', [ArchdiocesesController::class, 'countries']);
         Route::get('/{id}', [ArchdiocesesController::class, 'show'])->where('id', '[0-9]+');
     });
-    
+
     // Church Profile Management
     Route::prefix('church-profile')->group(function () {
         Route::get('/', [ChurchProfileController::class, 'show']);
         Route::get('/status-metrics', [ChurchProfileController::class, 'statusMetrics']);
         Route::put('/', [ChurchProfileController::class, 'update'])->middleware('tenant.permission:church.settings.edit');
-        
+
         // Patron Image Management (tenant-specific)
         Route::post('/upload-patron-image', [ChurchProfileController::class, 'uploadPatronImage'])
             ->middleware(['tenant.permission:church.settings.edit', 'api.throttle:uploads']);
         Route::delete('/patron-image', [ChurchProfileController::class, 'deletePatronImage'])
             ->middleware(['tenant.permission:church.settings.delete', 'api.throttle:uploads']);
-        
+
         // Pope Details Management (requires manage_pope_details permission)
         Route::prefix('pope')->group(function () {
             Route::get('/', [PopeDetailsController::class, 'show']);
@@ -171,33 +171,37 @@ Route::middleware('auth:api')->group(function () {
             Route::get('/current', [ChurchLeadershipGovernanceController::class, 'current']);
             Route::get('/history', [ChurchLeadershipGovernanceController::class, 'history']);
             Route::get('/roles', [ChurchLeadershipGovernanceController::class, 'roles']);
-            Route::post('/roles', [ChurchLeadershipGovernanceController::class, 'storeRole']);
-            Route::put('/roles/{id}', [ChurchLeadershipGovernanceController::class, 'updateRole'])
-                ->whereUuid('id');
-            Route::post('/assign', [ChurchLeadershipGovernanceController::class, 'assign']);
-            Route::post('/handover', [ChurchLeadershipGovernanceController::class, 'handover']);
-            Route::put('/assignments/{id}', [ChurchLeadershipGovernanceController::class, 'update'])
-                ->whereUuid('id');
-            Route::put('/assignments/{id}/terminate', [ChurchLeadershipGovernanceController::class, 'terminate'])
-                ->whereUuid('id');
-            Route::post('/assignments/{id}/photo', [ChurchLeadershipGovernanceController::class, 'uploadPhoto'])
-                ->whereUuid('id')
-                ->middleware('api.throttle:uploads');
+
+            // Records stay readable on any plan; changes need the Church Leadership feature.
+            Route::middleware('entitlement:CHURCH_LEADERSHIP')->group(function () {
+                Route::post('/roles', [ChurchLeadershipGovernanceController::class, 'storeRole']);
+                Route::put('/roles/{id}', [ChurchLeadershipGovernanceController::class, 'updateRole'])
+                    ->whereUuid('id');
+                Route::post('/assign', [ChurchLeadershipGovernanceController::class, 'assign']);
+                Route::post('/handover', [ChurchLeadershipGovernanceController::class, 'handover']);
+                Route::put('/assignments/{id}', [ChurchLeadershipGovernanceController::class, 'update'])
+                    ->whereUuid('id');
+                Route::put('/assignments/{id}/terminate', [ChurchLeadershipGovernanceController::class, 'terminate'])
+                    ->whereUuid('id');
+                Route::post('/assignments/{id}/photo', [ChurchLeadershipGovernanceController::class, 'uploadPhoto'])
+                    ->whereUuid('id')
+                    ->middleware('api.throttle:uploads');
+            });
         });
     });
-    
+
     // Church Leadership Management (Full CRUD)
     Route::prefix('church-leadership')->group(function () {
         Route::get('/', [ChurchLeadershipController::class, 'index']);
-        Route::post('/', [ChurchLeadershipController::class, 'store'])->middleware('tenant.permission:church.settings.create');
+        Route::post('/', [ChurchLeadershipController::class, 'store'])->middleware(['tenant.permission:church.settings.create', 'entitlement:CHURCH_LEADERSHIP']);
         Route::get('/{id}', [ChurchLeadershipController::class, 'show'])->where('id', '[0-9]+');
         Route::post('/{id}/upload-photo', [ChurchLeadershipController::class, 'uploadPhoto'])
             ->where('id', '[0-9]+')
-            ->middleware(['tenant.permission:church.settings.edit', 'api.throttle:uploads']);
-        Route::put('/{id}', [ChurchLeadershipController::class, 'update'])->where('id', '[0-9]+')->middleware('tenant.permission:church.settings.edit');
-        Route::delete('/{id}', [ChurchLeadershipController::class, 'destroy'])->where('id', '[0-9]+')->middleware('tenant.permission:church.settings.delete');
+            ->middleware(['tenant.permission:church.settings.edit', 'entitlement:CHURCH_LEADERSHIP', 'api.throttle:uploads']);
+        Route::put('/{id}', [ChurchLeadershipController::class, 'update'])->where('id', '[0-9]+')->middleware(['tenant.permission:church.settings.edit', 'entitlement:CHURCH_LEADERSHIP']);
+        Route::delete('/{id}', [ChurchLeadershipController::class, 'destroy'])->where('id', '[0-9]+')->middleware(['tenant.permission:church.settings.delete', 'entitlement:CHURCH_LEADERSHIP']);
     });
-    
+
     // Church Statistics Management (Full CRUD)
     Route::prefix('church-statistics')->group(function () {
         Route::get('/', [ChurchStatisticsController::class, 'index']);
@@ -206,7 +210,7 @@ Route::middleware('auth:api')->group(function () {
         Route::put('/{id}', [ChurchStatisticsController::class, 'update'])->where('id', '[0-9]+')->middleware('tenant.permission:church.settings.edit');
         Route::delete('/{id}', [ChurchStatisticsController::class, 'destroy'])->where('id', '[0-9]+')->middleware('tenant.permission:church.settings.delete');
     });
-    
+
     // Church Social Media Management (Full CRUD)
     Route::prefix('church-social-media')->group(function () {
         Route::get('/', [ChurchSocialMediaController::class, 'index']);
@@ -217,7 +221,7 @@ Route::middleware('auth:api')->group(function () {
     });
 
     // Tenant Data Export (Settings → Data Export)
-    Route::prefix('tenant/export')->middleware('tenant.permission:tenant.data.export')->group(function () {
+    Route::prefix('tenant/export')->middleware(['tenant.permission:tenant.data.export', 'entitlement:IMPORT_EXPORT'])->group(function () {
         Route::get('/modules', [TenantDataExportController::class, 'modules']);
         Route::prefix('bulk')->group(function () {
             Route::get('/', [TenantDataExportController::class, 'index']);

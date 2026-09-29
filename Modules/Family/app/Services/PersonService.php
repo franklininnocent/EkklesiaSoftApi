@@ -4,6 +4,7 @@ namespace Modules\Family\app\Services;
 
 use App\Support\CaseInsensitiveSearch;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Modules\Family\Models\FamilyMember;
 use Modules\Family\Models\Person;
@@ -28,6 +29,38 @@ class PersonService
         }
 
         return $person;
+    }
+
+    /**
+     * Current BCC from the person's active family (live families.bcc_id pointer).
+     *
+     * @return array{id: string, name: string}|null
+     */
+    public function currentFamilyBccSnapshot(Person $person, int|string $tenantId): ?array
+    {
+        $person->loadMissing([
+            'activeFamilyMember.family:id,bcc_id,tenant_id',
+            'activeFamilyMember.family.bcc:id,tenant_id,name',
+        ]);
+
+        $bcc = $person->activeFamilyMember?->family?->bcc;
+        if ($bcc === null) {
+            return null;
+        }
+
+        if ((int) $bcc->tenant_id !== (int) $tenantId) {
+            return null;
+        }
+
+        $name = trim((string) $bcc->name);
+        if ($name === '') {
+            return null;
+        }
+
+        return [
+            'id' => (string) $bcc->id,
+            'name' => $name,
+        ];
     }
 
     /**
@@ -135,7 +168,7 @@ class PersonService
      * Normalize optional contact fields from request payload (blank → null).
      *
      * @param  array<string, mixed>  $payload
-     * @return array{email: ?string, phone: ?string}|null  null when neither key is present
+     * @return array{email: ?string, phone: ?string}|null null when neither key is present
      */
     public function contactFromPayload(array $payload): ?array
     {
@@ -178,7 +211,7 @@ class PersonService
 
         $search = trim((string) ($filters['search'] ?? ''));
         if ($search !== '') {
-            if (\Illuminate\Support\Str::isUuid($search)) {
+            if (Str::isUuid($search)) {
                 $query->where('id', $search);
             } else {
                 $pattern = '%'.$search.'%';
@@ -187,7 +220,7 @@ class PersonService
                     CaseInsensitiveSearch::applyColumnLike($q, 'last_name', $pattern, 'or');
                     CaseInsensitiveSearch::applyMemberFullNameLike($q, $pattern, 'or');
                     $q->orWhereHas('activeFamilyMember.family', function ($familyQuery) use ($search) {
-                        $familyQuery->where('family_code', 'ilike', '%'.$search.'%');
+                        CaseInsensitiveSearch::applyColumnLike($familyQuery, 'family_code', '%'.$search.'%');
                     });
                 });
             }

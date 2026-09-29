@@ -82,9 +82,9 @@ class TenantListSearchFilterTest extends TestCase
     public function it_filters_tenants_by_plan_tier_and_active_status(): void
     {
         Tenant::factory()->create([
-            'name' => 'Premium Parish',
-            'slug' => 'premium-parish',
-            'plan' => 'premium',
+            'name' => 'Standard Parish',
+            'slug' => 'standard-parish',
+            'plan' => 'standard',
             'tenant_tier' => 'parish',
             'active' => 1,
         ]);
@@ -96,10 +96,10 @@ class TenantListSearchFilterTest extends TestCase
             'active' => 0,
         ]);
 
-        $this->getJson('/api/tenant/list?plan=premium&per_page=all')
+        $this->getJson('/api/tenant/list?plan=standard&per_page=all')
             ->assertOk()
             ->assertJsonPath('total', 1)
-            ->assertJsonPath('data.0.plan', 'premium');
+            ->assertJsonPath('data.0.plan', 'standard');
 
         $this->getJson('/api/tenant/list?tenant_tier=diocese&per_page=all')
             ->assertOk()
@@ -204,23 +204,23 @@ class TenantListSearchFilterTest extends TestCase
         Tenant::factory()
             ->count(3)
             ->sequence(fn ($sequence) => [
-                'plan' => 'basic',
+                'plan' => 'starter',
                 'active' => 1,
-                'name' => 'Searchable Basic Tenant '.$sequence->index,
-                'slug' => 'searchable-basic-'.$sequence->index,
+                'name' => 'Searchable Starter Tenant '.$sequence->index,
+                'slug' => 'searchable-starter-'.$sequence->index,
             ])
             ->create();
         Tenant::factory()
             ->count(2)
             ->sequence(fn ($sequence) => [
-                'plan' => 'premium',
+                'plan' => 'standard',
                 'active' => 1,
-                'name' => 'Searchable Premium Tenant '.$sequence->index,
-                'slug' => 'searchable-premium-'.$sequence->index,
+                'name' => 'Searchable Standard Tenant '.$sequence->index,
+                'slug' => 'searchable-standard-'.$sequence->index,
             ])
             ->create();
 
-        $response = $this->getJson('/api/tenant/list?search=Searchable&plan=basic&per_page=2&page=1&sort_by=name&sort_order=asc');
+        $response = $this->getJson('/api/tenant/list?search=Searchable&plan=starter&per_page=2&page=1&sort_by=name&sort_order=asc');
         $response->assertOk()
             ->assertJsonPath('pagination.total', 3)
             ->assertJsonPath('pagination.per_page', 2)

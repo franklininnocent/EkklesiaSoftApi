@@ -5,12 +5,12 @@ namespace Modules\EcclesiasticalData\Services;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Modules\EcclesiasticalData\Models\BishopManagement;
 use Modules\EcclesiasticalData\Support\BishopPhotoAuthorization;
 use Modules\Tenants\Services\Media\ImageMediaException;
 use Modules\Tenants\Services\Media\ImageMediaPolicy;
 use Modules\Tenants\Services\Media\ImageMediaService;
-use Modules\Tenants\Services\Media\ImageMediaStoreResult;
 use Modules\Tenants\Services\Media\ImageMediaUrlSigner;
 
 class BishopFileUploadService
@@ -160,30 +160,30 @@ class BishopFileUploadService
 
     public function uploadCoatOfArms(BishopManagement $bishop, UploadedFile $file): string
     {
-        $validation = $this->validateFile($file);
-        if (! $validation['valid']) {
-            throw new ImageMediaException(
-                ImageMediaException::CODE_INVALID_IMAGE,
-                $validation['error'] ?? 'Invalid image file'
-            );
-        }
+        $previousPath = $bishop->coat_of_arms_path;
 
-        $this->deleteCoatOfArmsFile($bishop->coat_of_arms_path);
-
-        $extension = strtolower((string) $file->getClientOriginalExtension()) ?: 'jpg';
-        $filename = sprintf('coat-of-arms-%s.%s', \Illuminate\Support\Str::uuid()->toString(), $extension);
-        $directory = "ecclesiastical/bishops/{$bishop->id}";
-
-        $path = \Illuminate\Support\Facades\Storage::disk('public')->putFileAs(
-            $directory,
+        $result = $this->imageMediaService->store(
             $file,
-            $filename,
-            ['visibility' => 'public']
+            self::PLATFORM_TENANT_ID,
+            ImageMediaPolicy::CATEGORY_BISHOPS,
         );
 
-        $bishop->update(['coat_of_arms_path' => $path]);
+        DB::transaction(function () use ($bishop, $result): void {
+            $locked = BishopManagement::query()->whereKey($bishop->id)->lockForUpdate()->firstOrFail();
+            $locked->coat_of_arms_path = $result->storageKey;
+            $locked->save();
+        });
 
-        return $path;
+        if ($previousPath !== null && $previousPath !== '' && $previousPath !== $result->storageKey) {
+            $this->deleteCoatOfArmsFile($previousPath);
+        }
+
+        Log::info('Bishop coat of arms stored', [
+            'bishop_id' => $bishop->id,
+            'uploaded_by' => auth()->id(),
+        ]);
+
+        return $result->storageKey;
     }
 
     public function deleteCoatOfArms(BishopManagement $bishop): void
@@ -202,13 +202,23 @@ class BishopFileUploadService
             return $this->signedPhotoUrl($path);
         }
 
-        return \Illuminate\Support\Facades\Storage::disk('public')->url($path);
+        return Storage::disk('public')->url($path);
     }
 
     private function deleteCoatOfArmsFile(?string $path): void
     {
-        if ($path && \Illuminate\Support\Facades\Storage::disk('public')->exists($path)) {
-            \Illuminate\Support\Facades\Storage::disk('public')->delete($path);
+        if ($path === null || $path === '') {
+            return;
+        }
+
+        if (str_starts_with($path, 'platform/')) {
+            $this->imageMediaService->deletePair($path, self::PLATFORM_TENANT_ID);
+
+            return;
+        }
+
+        if (Storage::disk('public')->exists($path)) {
+            Storage::disk('public')->delete($path);
         }
     }
 }

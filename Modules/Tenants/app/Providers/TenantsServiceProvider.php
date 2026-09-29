@@ -6,6 +6,23 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\ServiceProvider;
+use Modules\Tenants\Console\Commands\AssignPermissionsToAdministrators;
+use Modules\Tenants\Console\Commands\BackfillTenantRbac;
+use Modules\Tenants\Console\Commands\CleanupAuditLogs;
+use Modules\Tenants\Console\Commands\CleanupExpiredTenantDataExports;
+use Modules\Tenants\Console\Commands\CleanupLoadTestData;
+use Modules\Tenants\Console\Commands\CleanupOrphanMedia;
+use Modules\Tenants\Console\Commands\ExportCrossTenantPenetrationManifest;
+use Modules\Tenants\Console\Commands\PlatformProductionCheck;
+use Modules\Tenants\Console\Commands\ProcessSubscriptionLifecycle;
+use Modules\Tenants\Console\Commands\PromotePublicImagesToPrivate;
+use Modules\Tenants\Console\Commands\RunLoadTestBenchmark;
+use Modules\Tenants\Console\Commands\SeedLoadTestData;
+use Modules\Tenants\Console\Commands\SeedTenantDemoDataCommand;
+use Modules\Tenants\Console\Commands\SyncChurchCurrencyCommand;
+use Modules\Tenants\Console\Commands\SyncCountryFiscalYearCatalogCommand;
+use Modules\Tenants\Contracts\SupportSessionResolver;
+use Modules\Tenants\DefaultSeeds\DefaultSeedRegistry;
 use Modules\Tenants\Export\Contributors\BccDataExportContributor;
 use Modules\Tenants\Export\Contributors\ChurchProfileDataExportContributor;
 use Modules\Tenants\Export\Contributors\DonationsDataExportContributor;
@@ -14,15 +31,26 @@ use Modules\Tenants\Export\Contributors\MinistriesDataExportContributor;
 use Modules\Tenants\Export\Contributors\SacramentsDataExportContributor;
 use Modules\Tenants\Export\Contributors\UsersDataExportContributor;
 use Modules\Tenants\Export\TenantDataExportContributorRegistry;
-use Modules\Tenants\DefaultSeeds\DefaultSeedRegistry;
+use Modules\Tenants\Services\ChurchCurrencyResolver;
+use Modules\Tenants\Services\ChurchFinancialPeriodResolver;
 use Modules\Tenants\Services\DefaultSeedAuthorizationService;
 use Modules\Tenants\Services\DefaultSeedCatalogService;
 use Modules\Tenants\Services\DefaultSeedExecutionService;
-use Modules\Tenants\Support\SlowQueryLogger;
-use Modules\Tenants\Support\TenantRlsManager;
-use Modules\Tenants\Contracts\SupportSessionResolver;
+use Modules\Tenants\Services\Media\ImageMediaPolicy;
+use Modules\Tenants\Services\Media\ImageMediaService;
+use Modules\Tenants\Services\Media\ImageMediaStorageResolver;
+use Modules\Tenants\Services\Media\ImageMediaUrlSigner;
+use Modules\Tenants\Services\PlatformAuditLogger;
+use Modules\Tenants\Services\SupportSessionAuthorizationService;
+use Modules\Tenants\Services\TenantAuthorizationService;
+use Modules\Tenants\Support\AuditPiiRedactor;
 use Modules\Tenants\Support\NullSupportSessionResolver;
+use Modules\Tenants\Support\SlowQueryLogger;
+use Modules\Tenants\Support\SubscriptionRouteAllowlist;
 use Modules\Tenants\Support\TenantContext;
+use Modules\Tenants\Support\TenantRlsManager;
+use Modules\Tenants\Support\Usage\StorageUsageProvider;
+use Modules\Tenants\Support\UsageMetricRegistry;
 use Nwidart\Modules\Traits\PathNamespace;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -45,7 +73,7 @@ class TenantsServiceProvider extends ServiceProvider
         $this->registerTranslations();
         $this->registerConfig();
         $this->registerViews();
-        
+
         // Load module migrations
         $this->loadMigrationsFrom(module_path($this->name, 'database/migrations'));
 
@@ -78,14 +106,22 @@ class TenantsServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(SupportSessionResolver::class, NullSupportSessionResolver::class);
+        $this->app->singleton(UsageMetricRegistry::class, static function () {
+            $registry = new UsageMetricRegistry;
+            $registry->register(new StorageUsageProvider);
+
+            return $registry;
+        });
         $this->app->scoped(TenantContext::class, static fn () => TenantContext::empty());
-        $this->app->singleton(\Modules\Tenants\Services\TenantAuthorizationService::class);
-        $this->app->singleton(\Modules\Tenants\Services\SupportSessionAuthorizationService::class);
-        $this->app->singleton(\Modules\Tenants\Services\PlatformAuditLogger::class);
-        $this->app->singleton(\Modules\Tenants\Support\AuditPiiRedactor::class);
+        $this->app->scoped(ChurchCurrencyResolver::class);
+        $this->app->scoped(ChurchFinancialPeriodResolver::class);
+        $this->app->singleton(TenantAuthorizationService::class);
+        $this->app->singleton(SupportSessionAuthorizationService::class);
+        $this->app->singleton(PlatformAuditLogger::class);
+        $this->app->singleton(AuditPiiRedactor::class);
         $this->app->singleton(
-            \Modules\Tenants\Support\SubscriptionRouteAllowlist::class,
-            static fn () => \Modules\Tenants\Support\SubscriptionRouteAllowlist::fromConfig()
+            SubscriptionRouteAllowlist::class,
+            static fn () => SubscriptionRouteAllowlist::fromConfig()
         );
 
         $this->app->singleton(TenantDataExportContributorRegistry::class, static function () {
@@ -110,10 +146,10 @@ class TenantsServiceProvider extends ServiceProvider
         $this->app->singleton(DefaultSeedCatalogService::class);
         $this->app->singleton(DefaultSeedExecutionService::class);
 
-        $this->app->singleton(\Modules\Tenants\Services\Media\ImageMediaPolicy::class);
-        $this->app->singleton(\Modules\Tenants\Services\Media\ImageMediaService::class);
-        $this->app->singleton(\Modules\Tenants\Services\Media\ImageMediaStorageResolver::class);
-        $this->app->singleton(\Modules\Tenants\Services\Media\ImageMediaUrlSigner::class);
+        $this->app->singleton(ImageMediaPolicy::class);
+        $this->app->singleton(ImageMediaService::class);
+        $this->app->singleton(ImageMediaStorageResolver::class);
+        $this->app->singleton(ImageMediaUrlSigner::class);
 
         $this->app->register(EventServiceProvider::class);
         $this->app->register(RouteServiceProvider::class);
@@ -125,18 +161,21 @@ class TenantsServiceProvider extends ServiceProvider
     protected function registerCommands(): void
     {
         $this->commands([
-            \Modules\Tenants\Console\Commands\CleanupAuditLogs::class,
-            \Modules\Tenants\Console\Commands\CleanupOrphanMedia::class,
-            \Modules\Tenants\Console\Commands\PromotePublicImagesToPrivate::class,
-            \Modules\Tenants\Console\Commands\AssignPermissionsToAdministrators::class,
-            \Modules\Tenants\Console\Commands\BackfillTenantRbac::class,
-            \Modules\Tenants\Console\Commands\CleanupExpiredTenantDataExports::class,
-            \Modules\Tenants\Console\Commands\SeedLoadTestData::class,
-            \Modules\Tenants\Console\Commands\RunLoadTestBenchmark::class,
-            \Modules\Tenants\Console\Commands\CleanupLoadTestData::class,
-            \Modules\Tenants\Console\Commands\ExportCrossTenantPenetrationManifest::class,
-            \Modules\Tenants\Console\Commands\PlatformProductionCheck::class,
-            \Modules\Tenants\Console\Commands\ProcessSubscriptionLifecycle::class,
+            CleanupAuditLogs::class,
+            CleanupOrphanMedia::class,
+            PromotePublicImagesToPrivate::class,
+            AssignPermissionsToAdministrators::class,
+            BackfillTenantRbac::class,
+            CleanupExpiredTenantDataExports::class,
+            SeedLoadTestData::class,
+            RunLoadTestBenchmark::class,
+            CleanupLoadTestData::class,
+            ExportCrossTenantPenetrationManifest::class,
+            PlatformProductionCheck::class,
+            ProcessSubscriptionLifecycle::class,
+            SyncChurchCurrencyCommand::class,
+            SyncCountryFiscalYearCatalogCommand::class,
+            SeedTenantDemoDataCommand::class,
         ]);
     }
 
@@ -257,7 +296,7 @@ class TenantsServiceProvider extends ServiceProvider
 
         $this->loadViewsFrom(array_merge($this->getPublishableViewPaths(), [$sourcePath]), $this->nameLower);
 
-        Blade::componentNamespace(config('modules.namespace').'\\' . $this->name . '\\View\\Components', $this->nameLower);
+        Blade::componentNamespace(config('modules.namespace').'\\'.$this->name.'\\View\\Components', $this->nameLower);
     }
 
     /**

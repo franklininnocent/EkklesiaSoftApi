@@ -12,14 +12,15 @@ class SupportGrantController extends Controller
 {
     public function __construct(
         private readonly SupportGrantService $grants,
-    ) {
-    }
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
         $filters = $request->validate([
             'status' => ['nullable', 'in:active,revoked,expired'],
             'tenant_id' => ['nullable', 'integer'],
+            'allowed_mode' => ['nullable', 'in:readonly,standard,emergency,any'],
+            'q' => ['nullable', 'string', 'max:100'],
         ]);
 
         $perPage = min(100, max(1, (int) $request->query('per_page', 30)));

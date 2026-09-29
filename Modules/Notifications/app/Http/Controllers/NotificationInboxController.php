@@ -17,6 +17,7 @@ use Modules\Notifications\Services\NotificationPreferenceService;
 use Modules\Notifications\Services\UnreadCounter;
 use Modules\Notifications\Support\InboxContext;
 use Modules\Tenants\Support\ApiPagination;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 class NotificationInboxController extends Controller
 {
@@ -27,8 +28,7 @@ class NotificationInboxController extends Controller
         private readonly UnreadCounter $unreadCounter,
         private readonly DeepLinkAuthorizer $deepLink,
         private readonly NotificationPreferenceService $preferences,
-    ) {
-    }
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -151,7 +151,7 @@ class NotificationInboxController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $this->preferences->listForUser((int) $user->id)->values(),
+            'data' => $this->preferences->listForUser($user)->values(),
         ]);
     }
 
@@ -160,7 +160,7 @@ class NotificationInboxController extends Controller
         $user = $this->user();
         $this->contextFor($request);
 
-        $this->preferences->updateForUser((int) $user->id, $request->validated('preferences'));
+        $this->preferences->updateForUser($user, $request->validated('preferences'));
 
         return response()->json(['success' => true, 'message' => 'Preferences saved.']);
     }
@@ -171,7 +171,7 @@ class NotificationInboxController extends Controller
 
         try {
             $row = $action($context);
-        } catch (\Symfony\Component\HttpKernel\Exception\NotFoundHttpException) {
+        } catch (NotFoundHttpException) {
             return response()->json(['success' => false, 'message' => 'Notification not found.'], 404);
         }
 

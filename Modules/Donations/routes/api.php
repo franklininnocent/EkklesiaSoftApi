@@ -36,16 +36,16 @@ use Modules\Donations\Http\Controllers\WhatsAppOutreachController;
 
 Route::prefix('tenant/donations')->middleware(['donations.security.log', 'auth:api', 'tenant.feature.donations', 'tenant.permission:donations.view'])->group(function () {
     Route::get('/dashboard/summary', [DonationDashboardController::class, 'summary']);
-    Route::get('/dashboard/command-center', [DonationDashboardController::class, 'commandCenter']);
+    Route::get('/dashboard/command-center', [DonationDashboardController::class, 'commandCenter'])->middleware('entitlement:FINANCIAL_DASHBOARD');
     Route::get('/dashboard/operations', [OperationsDashboardController::class, 'summary']);
     Route::get('/activity/timeline', [OperationsDashboardController::class, 'timeline']);
-    Route::get('/dashboard/rollup', [DonationDashboardController::class, 'rollup']);
+    Route::get('/dashboard/rollup', [DonationDashboardController::class, 'rollup'])->middleware('entitlement:FINANCIAL_DASHBOARD');
     Route::get('/dashboard/families/{familyId}/summary', [DonationDashboardController::class, 'familySummary']);
     Route::get('/families/{familyId}/financial-profile', [DonationDashboardController::class, 'familyFinancialProfile']);
     Route::get('/families/{familyId}/financial-profile/print', [DonationDashboardController::class, 'familyStatementPrint']);
     Route::post('/ai/ask', [FinancialAiController::class, 'ask']);
     Route::get('/ai/status', [FinancialAiController::class, 'status']);
-    Route::get('/dashboard/forecast', [CollectionForecastController::class, 'show']);
+    Route::get('/dashboard/forecast', [CollectionForecastController::class, 'show'])->middleware('entitlement:FINANCIAL_DASHBOARD');
     Route::get('/upi/intent', [UpiPaymentController::class, 'intent']);
     Route::post('/payments/ocr-scan', [PaymentOcrController::class, 'scan'])->middleware('tenant.permission:donations.collect');
     Route::get('/outreach/whatsapp/preview', [WhatsAppOutreachController::class, 'preview'])->middleware('tenant.permission:donations.notifications');
@@ -80,16 +80,16 @@ Route::prefix('tenant/donations')->middleware(['donations.security.log', 'auth:a
     Route::get('/funds', [FundsController::class, 'index']);
     Route::post('/funds', [FundsController::class, 'store'])->middleware('tenant.permission:donations.manage');
 
-    Route::get('/plans', [ContributionPlansController::class, 'index']);
-    Route::get('/plans/{id}', [ContributionPlansController::class, 'show']);
-    Route::post('/plans', [ContributionPlansController::class, 'store'])->middleware('tenant.permission:donations.manage');
-    Route::put('/plans/{id}', [ContributionPlansController::class, 'update'])->middleware('tenant.permission:donations.manage');
-    Route::get('/plans/{id}/revision-history', [ContributionPlansController::class, 'revisionHistory']);
-    Route::get('/plans/{id}/generation-preview', [ContributionPlansController::class, 'generationPreview'])->middleware('tenant.permission:donations.manage');
-    Route::post('/plans/{id}/generate-dues', [ContributionPlansController::class, 'generateDues'])->middleware('tenant.permission:donations.manage');
-    Route::get('/plans/{planId}/assignments', [ContributionPlanAssignmentsController::class, 'index']);
-    Route::post('/plans/{planId}/assignments', [ContributionPlanAssignmentsController::class, 'store'])->middleware('tenant.permission:donations.manage');
-    Route::post('/contributions/generate-scheduled', [ContributionScheduleController::class, 'generateScheduled'])->middleware('tenant.permission:donations.manage');
+    Route::get('/plans', [ContributionPlansController::class, 'index'])->middleware('entitlement:CONTRIBUTION_PLANS');
+    Route::get('/plans/{id}', [ContributionPlansController::class, 'show'])->middleware('entitlement:CONTRIBUTION_PLANS');
+    Route::post('/plans', [ContributionPlansController::class, 'store'])->middleware(['tenant.permission:donations.manage', 'entitlement:CONTRIBUTION_PLANS']);
+    Route::put('/plans/{id}', [ContributionPlansController::class, 'update'])->middleware(['tenant.permission:donations.manage', 'entitlement:CONTRIBUTION_PLANS']);
+    Route::get('/plans/{id}/revision-history', [ContributionPlansController::class, 'revisionHistory'])->middleware('entitlement:CONTRIBUTION_PLANS');
+    Route::get('/plans/{id}/generation-preview', [ContributionPlansController::class, 'generationPreview'])->middleware(['tenant.permission:donations.manage', 'entitlement:CONTRIBUTION_PLANS']);
+    Route::post('/plans/{id}/generate-dues', [ContributionPlansController::class, 'generateDues'])->middleware(['tenant.permission:donations.manage', 'entitlement:CONTRIBUTION_PLANS']);
+    Route::get('/plans/{planId}/assignments', [ContributionPlanAssignmentsController::class, 'index'])->middleware('entitlement:CONTRIBUTION_PLANS');
+    Route::post('/plans/{planId}/assignments', [ContributionPlanAssignmentsController::class, 'store'])->middleware(['tenant.permission:donations.manage', 'entitlement:CONTRIBUTION_PLANS']);
+    Route::post('/contributions/generate-scheduled', [ContributionScheduleController::class, 'generateScheduled'])->middleware(['tenant.permission:donations.manage', 'entitlement:CONTRIBUTION_PLANS']);
 
     Route::get('/projects', [DonationProjectsController::class, 'index']);
     Route::get('/projects/{id}', [DonationProjectsController::class, 'show']);
@@ -131,7 +131,7 @@ Route::prefix('tenant/donations')->middleware(['donations.security.log', 'auth:a
     Route::post('/recurring-schedules/run-due', [RecurringDonationSchedulesController::class, 'runDue'])->middleware('tenant.permission:donations.collect');
     Route::post('/recurring-schedules/queue-run-due', [RecurringDonationSchedulesController::class, 'queueRunDue'])->middleware('tenant.permission:donations.collect');
 
-    Route::get('/audit-logs', [DonationAuditLogsController::class, 'index']);
+    Route::get('/audit-logs', [DonationAuditLogsController::class, 'index'])->middleware('entitlement:AUDIT_LOG');
 
     Route::get('/payments/{paymentId}/receipt', [DonationReceiptsController::class, 'showByPayment']);
     Route::get('/payments/{paymentId}/receipt/print', [DonationReceiptsController::class, 'printByPayment']);
@@ -143,11 +143,16 @@ Route::prefix('tenant/donations')->middleware(['donations.security.log', 'auth:a
     Route::get('/approvals', [DonationApprovalsController::class, 'index'])->middleware('tenant.permission:donations.approvals');
     Route::post('/approvals/{id}/decision', [DonationApprovalsController::class, 'decide'])->middleware('tenant.permission:donations.approvals');
 
+    Route::get('/reports/catalog', [DonationReportsController::class, 'catalog'])->middleware('tenant.permission:donations.reports');
+    Route::get('/reports/preview', [DonationReportsController::class, 'preview'])->middleware('tenant.permission:donations.reports');
+    Route::get('/reports/print', [DonationReportsController::class, 'operationalPrint'])->middleware('tenant.permission:donations.reports');
     Route::get('/reports/exports', [DonationReportsController::class, 'exports'])->middleware('tenant.permission:donations.reports');
-    Route::get('/reports/executive-summary', [DonationReportsController::class, 'executiveSummary'])->middleware('tenant.permission:donations.reports');
-    Route::get('/reports/parish-comparison', [DonationReportsController::class, 'parishComparison'])->middleware('tenant.permission:donations.reports');
+    Route::get('/reports/exports/{id}/download', [DonationReportsController::class, 'downloadExport'])->middleware('tenant.permission:donations.reports');
+    Route::get('/reports/executive-summary', [DonationReportsController::class, 'executiveSummary'])->middleware(['tenant.permission:donations.reports', 'entitlement:ADVANCED_FINANCIAL_REPORTING']);
+    Route::get('/reports/drill-down', [DonationReportsController::class, 'drillDown'])->middleware(['tenant.permission:donations.reports', 'entitlement:ADVANCED_FINANCIAL_REPORTING']);
+    Route::get('/reports/parish-comparison', [DonationReportsController::class, 'parishComparison'])->middleware(['tenant.permission:donations.reports', 'entitlement:ADVANCED_FINANCIAL_REPORTING']);
     Route::get('/reports/stewardship/print', [DonationReportsController::class, 'stewardshipPrint'])->middleware('tenant.permission:donations.reports');
-    Route::get('/reports/executive-board/print', [DonationReportsController::class, 'executiveBoardPrint'])->middleware('tenant.permission:donations.reports');
+    Route::get('/reports/executive-board/print', [DonationReportsController::class, 'executiveBoardPrint'])->middleware(['tenant.permission:donations.reports', 'entitlement:ADVANCED_FINANCIAL_REPORTING']);
     Route::post('/reports/export', [DonationReportsController::class, 'export'])->middleware('tenant.permission:donations.reports');
 
     Route::get('/notifications', [DonationNotificationsController::class, 'index'])->middleware('tenant.permission:donations.notifications');

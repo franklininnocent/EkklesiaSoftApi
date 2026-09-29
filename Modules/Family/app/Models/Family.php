@@ -111,8 +111,9 @@ class Family extends Model
      */
     protected static function generateFamilyCode(string $tenantId): string
     {
-        // Get all family codes for this tenant and find the highest number
-        $codes = static::where('tenant_id', $tenantId)
+        // Include soft-deleted rows: (tenant_id, family_code) is unique at the DB level.
+        $codes = static::withTrashed()
+            ->where('tenant_id', $tenantId)
             ->pluck('family_code')
             ->filter(function ($code) {
                 return preg_match('/^FAM(\d+)$/', $code);

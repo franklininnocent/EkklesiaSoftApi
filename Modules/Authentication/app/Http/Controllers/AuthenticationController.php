@@ -2,77 +2,39 @@
 
 namespace Modules\Authentication\Http\Controllers;
 
+use App\Events\Auth\LoginFailed;
+use App\Services\TokenService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
-use Modules\Authentication\Models\User;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
-use App\Events\Auth\LoginFailed;
-use App\Services\TokenService;
 use Modules\Authentication\Http\Requests\UploadSelfProfileImageRequest;
+use Modules\Authentication\Models\Role;
+use Modules\Authentication\Models\User;
 use Modules\Authentication\Services\UserProfileImageService;
-use Modules\Tenants\Services\Media\ImageMediaException;
 use Modules\Tenants\Models\Country;
-use Modules\Authentication\Support\PasswordPolicy;
-use Modules\Tenants\Support\TenantContext;
+use Modules\Tenants\Services\ChurchCurrencyResolver;
+use Modules\Tenants\Services\Media\ImageMediaException;
 
 class AuthenticationController extends Controller
 {
     public function __construct(
         protected TokenService $tokenService,
         protected UserProfileImageService $userProfileImageService,
-    ) {
-    }
+    ) {}
 
     /**
-     * Register a new user.
+     * Public self-registration is disabled.
+     * Parish and platform accounts are created by an authenticated administrator.
      */
     public function register(Request $request)
     {
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users,email',
-            'password' => PasswordPolicy::validationRules(true),
-            'role_id' => 'nullable|exists:roles,id',
-            'tenant_id' => 'nullable|integer',
-        ]);
-
-        // Default to EkklesiaUser role if not specified
-        $roleId = $request->role_id ?? 4; // 4 = EkklesiaUser
-
-        $user = User::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'password' => Hash::make($request->password),
-            'role_id' => $roleId,
-            'tenant_id' => $request->tenant_id,
-            'active' => 1, // Active by default
-        ]);
-
-        // Load role relationship
-        $user->load('role');
-
-        // Generate OAuth2 tokens with refresh token
-        try {
-            $tokens = $this->tokenService->createTokens($user, null, [], null, 'register');
-
-            return response()->json([
-                'access_token' => $tokens['access_token_string'],
-                'refresh_token' => $tokens['refresh_token_string'],
-                'expiry_time' => $tokens['access_token']->expires_at->toDateTimeString(),
-                'user_id' => $user->id,
-                'role_id' => $user->role_id,
-                'token_type' => 'Bearer',
-                'message' => 'Registration successful',
-            ], 201);
-        } catch (\Exception $e) {
-            return response()->json([
-                'message' => 'Token generation failed: ' . $e->getMessage(),
-            ], 500);
-        }
+        return response()->json([
+            'message' => 'Self-registration is not available. Ask your parish administrator to create an account.',
+        ], 403);
     }
 
     /**
@@ -136,7 +98,7 @@ class AuthenticationController extends Controller
             ]);
         } catch (\Exception $e) {
             return response()->json([
-                'message' => 'Token generation failed: ' . $e->getMessage(),
+                'message' => 'Token generation failed: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -159,7 +121,7 @@ class AuthenticationController extends Controller
                 'refresh_token' => $tokens['refresh_token_string'],
                 'expiry_time' => $tokens['access_token']->expires_at->toDateTimeString(),
                 'user_id' => $tokens['access_token']->user_id,
-                'role_id' => \Modules\Authentication\Models\User::find($tokens['access_token']->user_id)->role_id,
+                'role_id' => User::find($tokens['access_token']->user_id)->role_id,
                 'token_type' => 'Bearer',
                 'message' => 'Token refreshed successfully',
             ]);
@@ -190,21 +152,21 @@ class AuthenticationController extends Controller
     public function user(Request $request)
     {
         $user = Auth::guard('api')->user();
-        
+
         if ($user) {
             // Load role relationship
             $user->load('role');
-            
+
             // Prepare user response with role information
             $userResponse = $user->toArray();
             $userResponse['role_name'] = $user->role ? $user->role->name : null;
             $userResponse['role_level'] = $user->role ? $user->role->level : null;
             $userResponse['is_super_admin'] = $user->isSuperAdmin();
             $userResponse['is_admin'] = $user->isAdmin();
-            
+
             return response()->json($userResponse);
         }
-        
+
         return response()->json(['message' => 'Unauthenticated'], 401);
     }
 
@@ -215,20 +177,20 @@ class AuthenticationController extends Controller
     public function getUser(Request $request)
     {
         $user = Auth::guard('api')->user();
-        
-        if (!$user) {
+
+        if (! $user) {
             return response()->json([
                 'success' => false,
-                'message' => 'Unauthenticated'
+                'message' => 'Unauthenticated',
             ], 401);
         }
 
         // Load relationships: role, roles (multi-role), permissions, tenant with addresses
         $user->load([
-            'role', 
-            'roles.permissions', 
-            'permissions', 
-            'tenant'
+            'role',
+            'roles.permissions',
+            'permissions',
+            'tenant',
         ]);
 
         // Get tenant's country information from addresses
@@ -237,10 +199,10 @@ class AuthenticationController extends Controller
         if ($user->tenant) {
             // Load tenant addresses with country relationship
             $user->tenant->load(['addresses.country']);
-            
+
             // Use the tenant's addresses relationship
             $addresses = $user->tenant->addresses()->where('active', 1)->whereNotNull('country_id')->with('country')->get();
-            
+
             // Try to get country from official address first
             $officialAddress = $addresses->firstWhere('address_type', 'official');
             if ($officialAddress) {
@@ -249,9 +211,9 @@ class AuthenticationController extends Controller
                     $tenantCountry = $country;
                     $tenantCountryId = $officialAddress->country_id;
                 }
-            } 
+            }
             // Fallback to primary address
-            if (!$tenantCountry && $addresses->isNotEmpty()) {
+            if (! $tenantCountry && $addresses->isNotEmpty()) {
                 $primaryAddress = $addresses->firstWhere('address_type', 'primary');
                 if ($primaryAddress) {
                     $country = $primaryAddress->getRelation('country');
@@ -262,7 +224,7 @@ class AuthenticationController extends Controller
                 }
             }
             // Fallback to first active address with country
-            if (!$tenantCountry && $addresses->isNotEmpty()) {
+            if (! $tenantCountry && $addresses->isNotEmpty()) {
                 $anyAddress = $addresses->first();
                 if ($anyAddress) {
                     $country = $anyAddress->getRelation('country');
@@ -310,40 +272,16 @@ class AuthenticationController extends Controller
                     'phone_code' => $tenantCountry->phone_code,
                     'emoji' => $tenantCountry->emoji,
                 ] : null,
+                'currency' => app(ChurchCurrencyResolver::class)
+                    ->forTenantId((int) $user->tenant_id)
+                    ?->toArray(),
             ]) : null,
         ];
-
-        // #region agent log
-        $leadershipPhotoPath = null;
-        if ($user->person_id && $user->tenant_id) {
-            $leadershipPhotoPath = \Modules\Tenants\Models\LeadershipAssignment::query()
-                ->where('tenant_id', $user->tenant_id)
-                ->where('person_id', $user->person_id)
-                ->where('status', 'active')
-                ->whereNotNull('photo_url')
-                ->value('photo_url');
-        }
-        @file_put_contents('/var/www/html/EkklesiaSoft/.cursor/debug-4fbd99.log', json_encode([
-            'sessionId' => '4fbd99',
-            'location' => 'AuthenticationController.php:getUser',
-            'message' => 'get-user profile image fields',
-            'data' => [
-                'userId' => $user->id,
-                'personId' => $user->person_id,
-                'profile_image_path' => $user->profile_image_path,
-                'profile_image_full_url' => $userData['profile_image_full_url'],
-                'leadership_photo_path' => $leadershipPhotoPath,
-            ],
-            'timestamp' => (int) round(microtime(true) * 1000),
-            'hypothesisId' => 'H1',
-            'runId' => 'post-fix',
-        ]).PHP_EOL, FILE_APPEND);
-        // #endregion
 
         return response()->json([
             'success' => true,
             'data' => $userData,
-            'message' => 'User details retrieved successfully'
+            'message' => 'User details retrieved successfully',
         ]);
     }
 
@@ -480,7 +418,7 @@ class AuthenticationController extends Controller
         $legacyRole = $user->relationLoaded('role') ? $user->role : $user->role()->first();
 
         return $legacyRole !== null
-            && $legacyRole->name === \Modules\Authentication\Models\Role::TENANT_ADMINISTRATOR
+            && $legacyRole->name === Role::TENANT_ADMINISTRATOR
             && (int) $legacyRole->tenant_id === (int) $user->tenant_id;
     }
 

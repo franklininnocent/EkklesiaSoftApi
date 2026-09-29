@@ -12,5 +12,7 @@
     "PastoralCare": true,
     "SupportTickets": true,
     "ApplicationAccess": true,
-    "Notifications": true
+    "Notifications": true,
+    "Subscriptions": true,
+    "MassIntentions": true
 }

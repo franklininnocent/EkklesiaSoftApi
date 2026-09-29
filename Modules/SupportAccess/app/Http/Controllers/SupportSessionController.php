@@ -5,7 +5,9 @@ namespace Modules\SupportAccess\Http\Controllers;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Modules\SupportAccess\Models\SupportSession;
 use Modules\SupportAccess\Services\SupportSessionService;
+use Modules\SupportAccess\Support\SupportSessionPresenter;
 use Modules\Tenants\Support\AuditLogViewerAuthorization;
 use RuntimeException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -14,8 +16,7 @@ class SupportSessionController extends Controller
 {
     public function __construct(
         private readonly SupportSessionService $sessions,
-    ) {
-    }
+    ) {}
 
     public function active(Request $request): JsonResponse
     {
@@ -23,7 +24,7 @@ class SupportSessionController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $session,
+            'data' => $this->presentSession($session),
         ]);
     }
 
@@ -98,7 +99,7 @@ class SupportSessionController extends Controller
             return response()->json(['success' => false, 'message' => $e->getMessage()], 404);
         }
 
-        return response()->json(['success' => true, 'data' => $session]);
+        return response()->json(['success' => true, 'data' => $this->presentSession($session)]);
     }
 
     public function start(Request $request): JsonResponse
@@ -141,7 +142,7 @@ class SupportSessionController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Support session started.',
-            'data' => $session,
+            'data' => $this->presentSession($session),
         ], 201);
     }
 
@@ -156,7 +157,7 @@ class SupportSessionController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Support session ended.',
-            'data' => $session,
+            'data' => $this->presentSession($session),
         ]);
     }
 
@@ -171,7 +172,7 @@ class SupportSessionController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Support session force-ended.',
-            'data' => $session,
+            'data' => $this->presentSession($session),
         ]);
     }
 
@@ -197,7 +198,7 @@ class SupportSessionController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Support session renewed.',
-            'data' => $session,
+            'data' => $this->presentSession($session),
         ]);
     }
 
@@ -231,5 +232,13 @@ class SupportSessionController extends Controller
             'success' => true,
             'data' => $event,
         ], 201);
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function presentSession(?SupportSession $session): ?array
+    {
+        return $session !== null ? SupportSessionPresenter::present($session) : null;
     }
 }

@@ -3,6 +3,7 @@
 namespace Modules\SupportTickets\Tests\Feature;
 
 use Laravel\Passport\Passport;
+use Modules\Authentication\Models\Role;
 use Modules\Authentication\Models\User;
 use Modules\RolesAndPermissions\Models\Permission;
 use Modules\SupportTickets\Database\Seeders\SupportTicketsDatabaseSeeder;
@@ -152,6 +153,103 @@ class SupportTicketCatalogTest extends TestCase
             ->assertJsonValidationErrors(['category_id']);
     }
 
+    #[Test]
+    public function parish_home_ekklesia_admin_can_list_catalog_without_support_session(): void
+    {
+        // Legacy / edge case: platform role linked while tenant_id is set (syncRoles blocks this).
+        $admin = $this->makePlatformOperator(
+            Role::EKKLESIA_ADMIN,
+            Role::LEVEL_EKKLESIA_ADMIN,
+            Role::ROLE_TYPE_PLATFORM,
+            ['support.configuration.manage'],
+            null,
+        );
+        $admin->forceFill(['tenant_id' => $this->tenant->id])->save();
+
+        Passport::actingAs($admin->fresh());
+
+        $this->assertFalse(
+            $admin->fresh()->hasPermission('support.configuration.manage'),
+            'hasPermission stays session-gated for parish-home operators'
+        );
+
+        $this->getJson('/api/support/ticket-catalog/request-types')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonStructure(['data' => [['id', 'name', 'active', 'categories']]]);
+
+        $this->getJson('/api/support/settings')
+            ->assertOk()
+            ->assertJsonPath('success', true);
+    }
+
+    #[Test]
+    public function null_tenant_ekklesia_admin_can_list_catalog(): void
+    {
+        $admin = $this->makePlatformOperator(
+            Role::EKKLESIA_ADMIN,
+            Role::LEVEL_EKKLESIA_ADMIN,
+            Role::ROLE_TYPE_PLATFORM,
+            ['support.configuration.manage'],
+            null,
+        );
+
+        Passport::actingAs($admin);
+
+        $this->getJson('/api/support/ticket-catalog/request-types')
+            ->assertOk()
+            ->assertJsonPath('success', true);
+    }
+
+    #[Test]
+    public function support_admin_without_configuration_permission_cannot_list_catalog(): void
+    {
+        $operator = $this->makePlatformOperator(
+            Role::SUPPORT_ADMIN,
+            Role::LEVEL_SUPPORT_ADMIN,
+            Role::ROLE_TYPE_SUPPORT,
+            ['support.sessions.view', 'support.sessions.start'],
+            null,
+        );
+
+        Passport::actingAs($operator);
+
+        $this->getJson('/api/support/ticket-catalog/request-types')
+            ->assertForbidden()
+            ->assertJsonPath('missing_permissions.0', 'support.configuration.manage');
+    }
+
+    #[Test]
+    public function ekklesia_manager_without_configuration_permission_cannot_list_catalog(): void
+    {
+        $manager = $this->makePlatformOperator(
+            Role::EKKLESIA_MANAGER,
+            Role::LEVEL_EKKLESIA_MANAGER,
+            Role::ROLE_TYPE_PLATFORM,
+            ['support.sessions.view'],
+            null,
+        );
+
+        Passport::actingAs($manager);
+
+        $this->getJson('/api/support/ticket-catalog/request-types')
+            ->assertForbidden()
+            ->assertJsonPath('missing_permissions.0', 'support.configuration.manage');
+    }
+
+    #[Test]
+    public function tenant_admin_cannot_list_ops_catalog_but_can_use_tenant_lookups(): void
+    {
+        $this->asTenantAdmin($this->tenant);
+
+        $this->getJson('/api/support/ticket-catalog/request-types')->assertForbidden();
+
+        Passport::actingAs($this->tenantUser);
+        $this->getJson('/api/tenant/support/lookups')
+            ->assertOk()
+            ->assertJsonStructure(['data' => ['request_types']]);
+    }
+
     private function seedSupportConfigurationPermission(): void
     {
         Permission::query()->firstOrCreate(
@@ -166,6 +264,64 @@ class SupportTicketCatalogTest extends TestCase
                 'is_custom' => false,
             ]
         );
+    }
+
+    /**
+     * @param  list<string>  $permissionNames
+     */
+    private function makePlatformOperator(
+        string $roleName,
+        int $level,
+        string $roleType,
+        array $permissionNames,
+        ?int $tenantId,
+    ): User {
+        $role = Role::query()->firstOrCreate(
+            [
+                'name' => $roleName,
+                'tenant_id' => null,
+            ],
+            [
+                'description' => $roleName.' catalog test role',
+                'level' => $level,
+                'active' => 1,
+                'is_custom' => false,
+                'role_type' => $roleType,
+            ]
+        );
+
+        $permissionIds = [];
+        foreach ($permissionNames as $name) {
+            $permission = Permission::query()->firstOrCreate(
+                ['name' => $name],
+                [
+                    'display_name' => $name,
+                    'module' => 'SupportAccess',
+                    'category' => 'support',
+                    'scope' => Permission::SCOPE_PLATFORM,
+                    'active' => 1,
+                    'tenant_id' => null,
+                    'is_custom' => false,
+                ]
+            );
+            $permissionIds[] = $permission->id;
+        }
+        $role->permissions()->syncWithoutDetaching($permissionIds);
+
+        $user = User::factory()->create([
+            'tenant_id' => $tenantId,
+            'role_id' => $role->id,
+            'active' => 1,
+        ]);
+        $user->syncRoles([$role->id]);
+        if (method_exists($user, 'clearPermissionsCache')) {
+            $user->clearPermissionsCache();
+        }
+        if (method_exists($user, 'clearRequestPermissionCache')) {
+            $user->clearRequestPermissionCache();
+        }
+
+        return $user->fresh();
     }
 
     /**

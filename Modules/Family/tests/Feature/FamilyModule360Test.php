@@ -684,4 +684,31 @@ class FamilyModule360Test extends FamilyCertificationTestCase
             'family_code' => $code,
         ]);
     }
+
+    #[Test]
+    public function it_should_not_reissue_family_code_held_by_soft_deleted_family(): void
+    {
+        $ctx = $this->authenticateAsStaff();
+
+        $first = $this->postJson('/api/families', [
+            'family_name' => 'First Family',
+        ])->assertCreated()->json('data.family_code');
+
+        $second = $this->postJson('/api/families', [
+            'family_name' => 'Second Family',
+        ])->assertCreated()->json('data.family_code');
+
+        Family::query()->where('tenant_id', $ctx['tenant']->id)->where('family_code', $second)->first()?->delete();
+
+        $third = $this->postJson('/api/families', [
+            'family_name' => 'Third Family',
+        ])->assertCreated()->json('data.family_code');
+
+        $this->assertNotSame($second, $third);
+        $this->assertGreaterThan(
+            (int) preg_replace('/\D/', '', $second),
+            (int) preg_replace('/\D/', '', $third),
+        );
+        $this->assertSame($first, Family::query()->where('tenant_id', $ctx['tenant']->id)->where('family_name', 'First Family')->value('family_code'));
+    }
 }

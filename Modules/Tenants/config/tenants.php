@@ -28,20 +28,6 @@ return [
             'features' => ['events', 'donations', 'ministries_associations'],
             'price' => 0,
         ],
-        'basic' => [
-            'name' => 'Basic Plan',
-            'max_users' => 50,
-            'max_storage_mb' => 1000,
-            'features' => ['events', 'donations', 'ministries_associations'],
-            'price' => 29.99,
-        ],
-        'premium' => [
-            'name' => 'Premium Plan',
-            'max_users' => 100,
-            'max_storage_mb' => 5000,
-            'features' => ['events', 'donations', 'groups', 'messaging', 'ministries_associations'],
-            'price' => 99.99,
-        ],
         'enterprise' => [
             'name' => 'Enterprise Plan',
             'max_users' => 999999,
@@ -63,6 +49,7 @@ return [
         'events' => 'Event Management',
         'donations' => 'Donation Tracking',
         'ministries_associations' => 'Ministries & Associations',
+        'mass_intentions' => 'Mass Intentions',
         'groups' => 'Group Management',
         'messaging' => 'Messaging & Notifications',
         'custom_branding' => 'Custom Branding',
@@ -138,6 +125,7 @@ return [
             'api/users/*/password/reset',
             'api/tenant/subscription-access',
             'api/tenant/my-subscription',
+            'api/tenant/subscription/upgrade-requests',
             'api/tenant/support/*',
             'api/tenant/export/bulk',
             'api/tenant/export/bulk/*/download',
@@ -440,4 +428,3 @@ return [
     ],
 
 ];
-

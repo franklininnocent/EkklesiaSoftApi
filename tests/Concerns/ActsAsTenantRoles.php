@@ -24,6 +24,9 @@ trait ActsAsTenantRoles
     protected function staffPermissionNames(): array
     {
         return [
+            'families.view',
+            'families.create',
+            'families.edit',
             'sacraments.view',
             'sacraments.create',
             'sacraments.edit',

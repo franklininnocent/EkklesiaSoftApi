@@ -2,6 +2,9 @@
 
 return [
     'name' => 'Donations',
+    'reports' => [
+        'export_ttl_days' => (int) env('DONATIONS_REPORT_EXPORT_TTL_DAYS', 7),
+    ],
     'webhooks' => [
         'secret' => env('DONATIONS_WEBHOOK_SECRET'),
         'providers' => [

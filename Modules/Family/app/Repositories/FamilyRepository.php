@@ -101,17 +101,19 @@ class FamilyRepository
             }
         }
 
-        // Sorting
-        $sortBy = $filters['sort_by'] ?? 'created_at';
-        $sortOrder = $filters['sort_order'] ?? 'desc';
+        [$sortBy, $sortOrder] = $this->resolveSort(
+            $filters['sort_by'] ?? null,
+            $filters['sort_order'] ?? null,
+            ['created_at', 'updated_at', 'family_name', 'family_code', 'head_of_family', 'bcc_name', 'status'],
+            'family_code',
+            'asc'
+        );
 
-        // Handle sorting by BCC name (requires subquery to avoid join conflicts)
         if ($sortBy === 'bcc_name') {
             $query->orderByRaw(
                 "(SELECT name FROM bccs WHERE bccs.id = families.bcc_id LIMIT 1) {$sortOrder}"
             );
         } else {
-            // Direct column sorting (head_of_family, family_code, created_at, etc.)
             $query->orderBy($sortBy, $sortOrder);
         }
 
@@ -442,9 +444,13 @@ class FamilyRepository
             }
         }
 
-        // Sorting — default to full name (last_name, then first_name) ascending
-        $sortBy = ! empty($filters['sort_by']) ? $filters['sort_by'] : 'name';
-        $sortOrder = ! empty($filters['sort_order']) ? $filters['sort_order'] : 'asc';
+        [$sortBy, $sortOrder] = $this->resolveSort(
+            $filters['sort_by'] ?? null,
+            $filters['sort_order'] ?? null,
+            ['name', 'first_name', 'last_name', 'address', 'bcc', 'father_name', 'created_at', 'status', 'gender'],
+            'name',
+            'asc'
+        );
 
         // Handle special sorting cases
         if ($sortBy === 'name' || $sortBy === 'first_name') {
@@ -467,9 +473,10 @@ class FamilyRepository
             // We'll need to implement a subquery or handle it differently
             // For simplicity, we'll sort by last_name as a fallback
             $query->orderBy('last_name', $sortOrder);
-        } else {
-            // Direct column sorting (last_name, first_name, etc.)
+        } elseif (in_array($sortBy, ['last_name', 'created_at', 'status', 'gender'], true)) {
             $query->orderBy($sortBy, $sortOrder);
+        } else {
+            $this->applyMemberNameOrder($query, $sortOrder);
         }
 
         // Use paginate with explicit page number
@@ -496,6 +503,25 @@ class FamilyRepository
                     $query->where('bcc_id', $bccId);
                 }
             });
+    }
+
+    /**
+     * @param  list<string>  $allowed
+     * @return array{0: string, 1: string}
+     */
+    private function resolveSort(mixed $column, mixed $direction, array $allowed, string $defaultColumn, string $defaultDirection): array
+    {
+        $column = is_string($column) ? $column : $defaultColumn;
+        if (! in_array($column, $allowed, true)) {
+            $column = $defaultColumn;
+        }
+
+        $direction = is_string($direction) ? strtolower($direction) : $defaultDirection;
+        if (! in_array($direction, ['asc', 'desc'], true)) {
+            $direction = $defaultDirection;
+        }
+
+        return [$column, $direction];
     }
 
     /**

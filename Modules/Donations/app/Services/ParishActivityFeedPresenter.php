@@ -4,6 +4,7 @@ namespace Modules\Donations\Services;
 
 use Illuminate\Support\Collection;
 use Modules\Donations\Models\DonationAuditLog;
+use Modules\Tenants\Support\ChurchMoneyFormatter;
 use Modules\Tenants\Support\TenantFacingAuditActor;
 
 class ParishActivityFeedPresenter
@@ -30,7 +31,7 @@ class ParishActivityFeedPresenter
         $oldValues = is_array($log->old_values) ? $log->old_values : [];
         $metadata = is_array($log->metadata) ? $log->metadata : [];
         $subjectName = $this->resolveSubjectName($event, $targetType, $newValues, $oldValues, $metadata);
-        $copy = $this->resolveCopy($event, $subjectName, $newValues, $oldValues, $metadata);
+        $copy = $this->resolveCopy($event, $subjectName, $newValues, $oldValues, $metadata, (int) $log->tenant_id);
         $action = $this->resolveAction($event, $targetType, $log->target_id, $newValues, $oldValues);
 
         return [
@@ -101,7 +102,7 @@ class ParishActivityFeedPresenter
     /**
      * @return array{category: string, icon: string, title: string, description: string, requires_attention: bool}
      */
-    private function resolveCopy(string $event, ?string $subjectName, array $newValues, array $oldValues, array $metadata): array
+    private function resolveCopy(string $event, ?string $subjectName, array $newValues, array $oldValues, array $metadata, int $tenantId): array
     {
         $name = $subjectName ?: 'this item';
 
@@ -180,7 +181,7 @@ class ParishActivityFeedPresenter
                 'category' => 'offerings',
                 'icon' => 'offering',
                 'title' => 'Offering Recorded',
-                'description' => $this->donationDescription($name, $newValues),
+                'description' => $this->donationDescription($name, $newValues, $tenantId),
                 'requires_attention' => false,
             ],
             'donation.updated' => [
@@ -194,21 +195,21 @@ class ParishActivityFeedPresenter
                 'category' => 'payments',
                 'icon' => 'payment',
                 'title' => 'Payment Collected',
-                'description' => $this->paymentDescription($name, $newValues),
+                'description' => $this->paymentDescription($name, $newValues, false, $tenantId),
                 'requires_attention' => false,
             ],
             'payment.reversed' => [
                 'category' => 'payments',
                 'icon' => 'payment',
                 'title' => 'Payment Reversed',
-                'description' => $this->paymentDescription($name, $newValues, true),
+                'description' => $this->paymentDescription($name, $newValues, true, $tenantId),
                 'requires_attention' => true,
             ],
             'refund.requested' => [
                 'category' => 'payments',
                 'icon' => 'payment',
                 'title' => 'Refund Requested',
-                'description' => $this->refundDescription($newValues),
+                'description' => $this->refundDescription($newValues, $tenantId),
                 'requires_attention' => true,
             ],
             'project.created' => [
@@ -401,10 +402,10 @@ class ParishActivityFeedPresenter
             : 'Default offering categories were added.';
     }
 
-    private function donationDescription(string $name, array $newValues): string
+    private function donationDescription(string $name, array $newValues, int $tenantId): string
     {
         $amount = isset($newValues['collected_amount']) && is_numeric($newValues['collected_amount'])
-            ? number_format((float) $newValues['collected_amount'], 2)
+            ? ChurchMoneyFormatter::formatForTenant($tenantId, (float) $newValues['collected_amount'])
             : null;
 
         return $amount
@@ -412,10 +413,10 @@ class ParishActivityFeedPresenter
             : "{$name} offering was recorded.";
     }
 
-    private function paymentDescription(string $name, array $newValues, bool $reversed = false): string
+    private function paymentDescription(string $name, array $newValues, bool $reversed = false, int $tenantId = 0): string
     {
         $amount = isset($newValues['amount']) && is_numeric($newValues['amount'])
-            ? number_format((float) $newValues['amount'], 2)
+            ? ChurchMoneyFormatter::formatForTenant($tenantId, (float) $newValues['amount'])
             : null;
         $verb = $reversed ? 'was reversed for' : 'was collected from';
 
@@ -428,10 +429,10 @@ class ParishActivityFeedPresenter
             : "A payment was collected from {$name}.";
     }
 
-    private function refundDescription(array $newValues): string
+    private function refundDescription(array $newValues, int $tenantId): string
     {
         $amount = isset($newValues['amount']) && is_numeric($newValues['amount'])
-            ? number_format((float) $newValues['amount'], 2)
+            ? ChurchMoneyFormatter::formatForTenant($tenantId, (float) $newValues['amount'])
             : null;
 
         return $amount

@@ -30,6 +30,9 @@ final class TenantCacheVersion
             return 0;
         }
 
+        // The database store does not increment a missing key, so seed it first.
+        Cache::add(self::key($tenantId), 0);
+
         return (int) Cache::increment(self::key($tenantId));
     }
 

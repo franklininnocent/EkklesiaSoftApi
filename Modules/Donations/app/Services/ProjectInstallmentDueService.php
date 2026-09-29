@@ -77,6 +77,7 @@ class ProjectInstallmentDueService
     {
         $oldStatus = $due->status;
         $due->status = 'waived';
+        $due->status_changed_at = now();
         $due->notes = trim(($due->notes ? $due->notes.' ' : '').($reason ?? 'Waived'));
         $due->updated_by = $userId;
         $due->save();
@@ -97,6 +98,7 @@ class ProjectInstallmentDueService
     {
         $oldStatus = $due->status;
         $due->status = 'cancelled';
+        $due->status_changed_at = now();
         $due->notes = trim(($due->notes ? $due->notes.' ' : '').($reason ?? 'Cancelled'));
         $due->updated_by = $userId;
         $due->save();

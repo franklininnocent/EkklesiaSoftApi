@@ -96,6 +96,10 @@ class PasswordRecoveryAuthorizationService
         }
 
         if ($actor->is_primary_admin && $actor->tenant_id !== null) {
+            if (! $actor->hasPermission(self::PERMISSION_PROCESS)) {
+                return false;
+            }
+
             return $request->requester_classification === PasswordRecoveryRequest::CLASSIFICATION_TENANT_USER
                 && (int) $request->tenant_id === (int) $actor->tenant_id
                 && (int) $target->tenant_id === (int) $actor->tenant_id;

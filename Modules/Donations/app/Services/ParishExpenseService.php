@@ -3,24 +3,37 @@
 namespace Modules\Donations\Services;
 
 use Modules\Donations\Models\ParishExpense;
+use Modules\Donations\Support\DonationBusinessDate;
 
 class ParishExpenseService
 {
     public function monthTotal(int $tenantId, ?string $monthStart = null, ?string $monthEnd = null): float
     {
-        $start = $monthStart ?? now()->startOfMonth()->toDateString();
-        $end = $monthEnd ?? now()->endOfMonth()->toDateString();
+        $start = $monthStart ?? DonationBusinessDate::monthStart($tenantId);
+        $end = $monthEnd ?? DonationBusinessDate::today($tenantId);
 
         return round((float) ParishExpense::forTenant($tenantId)
-            ->whereBetween('expense_date', [$start, $end])
+            ->whereDate('expense_date', '>=', $start)
+            ->whereDate('expense_date', '<=', $end)
             ->sum('amount'), 2);
     }
 
-    public function yearTotal(int $tenantId, string $fyStart): float
+    public function yearTotal(int $tenantId, string $fyStart, ?string $fyEnd = null): float
     {
+        $end = $fyEnd ?? DonationBusinessDate::today($tenantId);
+        $effectiveEnd = $end > $fyStart ? $end : $fyStart;
+
         return round((float) ParishExpense::forTenant($tenantId)
             ->whereDate('expense_date', '>=', $fyStart)
+            ->whereDate('expense_date', '<=', $effectiveEnd)
             ->sum('amount'), 2);
+    }
+
+    public function hasAnySince(int $tenantId, string $startDate): bool
+    {
+        return ParishExpense::forTenant($tenantId)
+            ->whereDate('expense_date', '>=', $startDate)
+            ->exists();
     }
 
     /**
@@ -37,10 +50,7 @@ class ParishExpenseService
                 'category' => $expense->category,
                 'amount' => (float) $expense->amount,
                 'expense_date' => $expense->expense_date?->toDateString(),
-                'payee' => $expense->payee,
-                'method' => $expense->method,
             ])
-            ->values()
             ->all();
     }
 }

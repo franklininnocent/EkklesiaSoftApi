@@ -5,6 +5,7 @@ namespace Modules\Donations\Services;
 use Carbon\Carbon;
 use Modules\Donations\Models\DonationNumberSequence;
 use Modules\Donations\Models\DonationSetting;
+use Modules\Tenants\Services\ChurchFinancialPeriodResolver;
 
 class DonationNumberSequenceService
 {
@@ -30,19 +31,14 @@ class DonationNumberSequenceService
 
     public function financialYearLabel(?DonationSetting $settings): string
     {
-        $month = (int) ($settings?->financial_year_start_month ?? 1);
-        $day = (int) ($settings?->financial_year_start_day ?? 1);
-        $now = Carbon::now();
-        $fyStart = $now->copy()->setMonth(max(1, $month))->setDay(max(1, $day))->startOfDay();
-        if ($now->lt($fyStart)) {
-            $fyStart->subYear();
+        $tenantId = (int) ($settings?->tenant_id ?? 0);
+        if ($tenantId <= 0) {
+            return (string) Carbon::now()->year;
         }
 
-        if ($month === 1 && $day === 1) {
-            return (string) $fyStart->year;
-        }
-
-        return $fyStart->format('Y').'-'.$fyStart->copy()->addYear()->format('y');
+        return app(ChurchFinancialPeriodResolver::class)
+            ->currentFiscalYear($tenantId)
+            ->key;
     }
 
     private function next(int $tenantId, string $kind, string $period): int

@@ -3,6 +3,7 @@
 namespace Modules\Notifications\Services;
 
 use Illuminate\Support\Collection;
+use Modules\Authentication\Models\Role;
 use Modules\Authentication\Models\User;
 use Modules\Notifications\Models\NotificationDefinition;
 use Modules\Notifications\Support\InboxScope;
@@ -75,9 +76,14 @@ class RecipientResolver
         return User::query()
             ->where('tenant_id', $intent->tenantId)
             ->where('active', 1)
-            ->where(function ($q) {
+            ->where(function ($q) use ($intent) {
                 $q->where('is_primary_admin', 1)
-                    ->orWhereHas('roles', fn ($r) => $r->where('name', 'Administrator'));
+                    ->orWhereHas('roles', function ($roles) use ($intent) {
+                        $roles->where('name', Role::TENANT_ADMINISTRATOR)
+                            ->where('tenant_id', $intent->tenantId)
+                            ->where('active', 1)
+                            ->whereNull('deleted_at');
+                    });
             })
             ->get();
     }
@@ -113,6 +119,27 @@ class RecipientResolver
             $query->whereNull('tenant_id');
         }
 
-        return $query->whereHas('permissions', fn ($q) => $q->where('name', $permission))->get();
+        return $query->where(function ($outer) use ($permission, $intent) {
+            $outer->whereHas('permissions', fn ($q) => $q->where('name', $permission))
+                ->orWhereHas('roles', function ($roles) use ($permission) {
+                    $roles->where('roles.active', 1)
+                        ->whereNull('roles.deleted_at')
+                        ->whereHas('permissions', fn ($q) => $q->where('name', $permission));
+                });
+
+            if ($intent->scope === InboxScope::Platform) {
+                $outer->orWhere(function ($superAdmin) {
+                    $superAdmin->whereHas('roles', function ($roles) {
+                        $roles->where('name', Role::SUPER_ADMIN)
+                            ->where('active', 1)
+                            ->whereNull('deleted_at');
+                    })->orWhereHas('role', function ($role) {
+                        $role->where('name', Role::SUPER_ADMIN)
+                            ->where('active', 1)
+                            ->whereNull('deleted_at');
+                    });
+                });
+            }
+        })->get();
     }
 }

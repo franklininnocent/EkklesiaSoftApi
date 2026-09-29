@@ -3,8 +3,8 @@
 namespace Modules\Donations\Support;
 
 use Carbon\Carbon;
-use Modules\Donations\Models\DonationSetting;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Services\ChurchFinancialPeriodResolver;
 
 final class DonationBusinessDate
 {
@@ -53,41 +53,6 @@ final class DonationBusinessDate
      */
     public static function currentFinancialYearBounds(int $tenantId, ?string $referenceDate = null): array
     {
-        $timezone = self::timezoneForTenant($tenantId);
-        $reference = $referenceDate
-            ? Carbon::parse($referenceDate, $timezone)->startOfDay()
-            : Carbon::now($timezone)->startOfDay();
-
-        $settings = DonationSetting::forTenant($tenantId)->first();
-        $month = (int) ($settings?->financial_year_start_month ?? 1);
-        $day = (int) ($settings?->financial_year_start_day ?? 1);
-
-        $fyStart = self::financialYearStartOnOrBefore($reference, $month, $day, $timezone);
-        $fyEnd = $fyStart->copy()->addYear()->subDay();
-
-        if ($reference->gt($fyEnd)) {
-            $fyStart = $fyStart->copy()->addYear();
-            $fyEnd = $fyStart->copy()->addYear()->subDay();
-        }
-
-        return [
-            'start' => $fyStart->toDateString(),
-            'end' => $fyEnd->toDateString(),
-        ];
-    }
-
-    private static function financialYearStartOnOrBefore(Carbon $reference, int $month, int $day, string $timezone): Carbon
-    {
-        $year = (int) $reference->year;
-        $safeDay = min($day, Carbon::create($year, $month, 1)->daysInMonth);
-        $candidate = Carbon::create($year, $month, $safeDay, 0, 0, 0, $timezone)->startOfDay();
-
-        if ($reference->lt($candidate)) {
-            $year--;
-            $safeDay = min($day, Carbon::create($year, $month, 1)->daysInMonth);
-            $candidate = Carbon::create($year, $month, $safeDay, 0, 0, 0, $timezone)->startOfDay();
-        }
-
-        return $candidate;
+        return app(ChurchFinancialPeriodResolver::class)->currentFinancialYearBounds($tenantId, $referenceDate);
     }
 }

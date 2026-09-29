@@ -38,6 +38,10 @@ class RolesAndPermissionsDatabaseSeeder extends Seeder
             $this->call(PastoralCarePermissionSeeder::class);
         }
 
+        if (class_exists(\Modules\MassIntentions\Database\Seeders\MassIntentionsPermissionSeeder::class)) {
+            $this->call(\Modules\MassIntentions\Database\Seeders\MassIntentionsPermissionSeeder::class);
+        }
+
         if (class_exists(\Modules\SupportTickets\Database\Seeders\SupportTicketsPermissionSeeder::class)) {
             $this->call(\Modules\SupportTickets\Database\Seeders\SupportTicketsPermissionSeeder::class);
         }

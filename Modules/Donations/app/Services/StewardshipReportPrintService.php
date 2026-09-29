@@ -3,12 +3,11 @@
 namespace Modules\Donations\Services;
 
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Support\ChurchMoneyFormatter;
 
 class StewardshipReportPrintService
 {
-    public function __construct(private readonly DonationReportService $reportService)
-    {
-    }
+    public function __construct(private readonly DonationReportService $reportService) {}
 
     /**
      * @return array<string, mixed>
@@ -19,6 +18,7 @@ class StewardshipReportPrintService
         $report = $this->reportService->buildExecutiveNarrative($tenantId);
 
         return array_merge($report, [
+            'tenant_id' => $tenantId,
             'organization' => [
                 'name' => $tenant?->name ?? 'Parish',
                 'printed_at' => now()->toDateTimeString(),
@@ -27,10 +27,11 @@ class StewardshipReportPrintService
     }
 
     /**
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $payload
      */
     public function renderHtml(array $payload): string
     {
+        $tenantId = (int) ($payload['tenant_id'] ?? 0);
         $orgName = htmlspecialchars((string) ($payload['organization']['name'] ?? 'Parish'));
         $printedAt = htmlspecialchars((string) ($payload['organization']['printed_at'] ?? now()->toDateTimeString()));
         $title = htmlspecialchars((string) ($payload['title'] ?? 'Stewardship Summary'));
@@ -39,18 +40,36 @@ class StewardshipReportPrintService
 
         $highlightsHtml = '';
         foreach ($payload['highlights'] ?? [] as $highlight) {
-            $highlightsHtml .= '<li>' . htmlspecialchars((string) $highlight) . '</li>';
+            $highlightsHtml .= '<li>'.htmlspecialchars((string) $highlight).'</li>';
         }
 
         $actionsHtml = '';
         foreach ($payload['recommended_actions'] ?? [] as $action) {
-            $actionsHtml .= '<li>' . htmlspecialchars((string) $action) . '</li>';
+            $actionsHtml .= '<li>'.htmlspecialchars((string) $action).'</li>';
         }
+
+        $moneyMetricKeys = [
+            'current_month_collected',
+            'pending_dues',
+            'forecast_projection',
+            'overdue_amount',
+            'previous_month_collected',
+        ];
+        $percentMetricKeys = ['participation_rate', 'collection_growth_pct'];
 
         $metricsHtml = '';
         foreach ($payload['metrics'] ?? [] as $key => $value) {
             $label = htmlspecialchars(str_replace('_', ' ', (string) $key));
-            $display = $value === null ? '—' : htmlspecialchars((string) $value);
+            if ($value === null) {
+                $display = '—';
+            } elseif ($tenantId > 0 && in_array((string) $key, $moneyMetricKeys, true) && is_numeric($value)) {
+                $display = ChurchMoneyFormatter::formatForTenant($tenantId, (float) $value);
+            } elseif (in_array((string) $key, $percentMetricKeys, true) && is_numeric($value)) {
+                $display = round((float) $value, 1).'%';
+            } else {
+                $display = (string) $value;
+            }
+            $display = htmlspecialchars($display);
             $metricsHtml .= "<tr><td>{$label}</td><td style=\"text-align:right\">{$display}</td></tr>";
         }
 

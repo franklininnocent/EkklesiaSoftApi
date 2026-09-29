@@ -2,7 +2,9 @@
 
 namespace Modules\Donations\Support;
 
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 use Modules\Donations\Models\ContributionDue;
 
 class ContributionBalance
@@ -55,11 +57,39 @@ class ContributionBalance
         return 'partially_paid';
     }
 
+    /**
+     * Raw line outstanding per due (matches sumOutstanding / sumCollectable).
+     */
+    public static function rawOutstandingSumSqlExpression(): string
+    {
+        return 'COALESCE(SUM(amount_due - amount_paid), 0)';
+    }
+
+    /**
+     * Floored line outstanding per due (matches overdue attention aggregates).
+     */
+    public static function flooredOutstandingSumSqlExpression(): string
+    {
+        return DB::connection()->getDriverName() === 'pgsql'
+            ? 'COALESCE(SUM(GREATEST(amount_due - amount_paid, 0)), 0)'
+            : 'COALESCE(SUM(CASE WHEN amount_due > amount_paid THEN amount_due - amount_paid ELSE 0 END), 0)';
+    }
+
     public static function sumOutstanding(Builder $query): float
     {
         $value = $query
             ->whereIn('status', ['pending', 'partially_paid'])
-            ->selectRaw('COALESCE(SUM(amount_due - amount_paid), 0) as outstanding')
+            ->selectRaw(self::rawOutstandingSumSqlExpression().' as outstanding')
+            ->value('outstanding');
+
+        return MoneyMath::toApiNumber($value ?? 0);
+    }
+
+    public static function sumFlooredOutstanding(Builder $query): float
+    {
+        $value = $query
+            ->whereIn('status', ['pending', 'partially_paid'])
+            ->selectRaw(self::flooredOutstandingSumSqlExpression().' as outstanding')
             ->value('outstanding');
 
         return MoneyMath::toApiNumber($value ?? 0);
@@ -94,9 +124,37 @@ class ContributionBalance
             ->whereDate('due_date', '<', $businessDate);
     }
 
+    public static function scopeRemainingCollectable(Builder $query, string $businessDate): Builder
+    {
+        return self::scopeCollectable($query, $businessDate)
+            ->whereDate('due_date', '>=', $businessDate);
+    }
+
+    /**
+     * Collectable dues due on or before business date + N days (inclusive), not yet overdue.
+     */
+    public static function scopeDueNextDays(Builder $query, string $businessDate, int $days): Builder
+    {
+        $end = Carbon::parse($businessDate)->addDays($days)->toDateString();
+
+        return self::scopeRemainingCollectable($query, $businessDate)
+            ->whereDate('due_date', '<=', $end);
+    }
+
+    /**
+     * Collectable dues with due date after business date + N days.
+     */
+    public static function scopeDueAfterDays(Builder $query, string $businessDate, int $days): Builder
+    {
+        $after = Carbon::parse($businessDate)->addDays($days)->toDateString();
+
+        return self::scopeRemainingCollectable($query, $businessDate)
+            ->whereDate('due_date', '>', $after);
+    }
+
     public static function scheduleState(ContributionDue $due, string $businessDate): string
     {
-        if (!in_array($due->status, ['pending', 'partially_paid'], true)) {
+        if (! in_array($due->status, ['pending', 'partially_paid'], true)) {
             return $due->status;
         }
 
@@ -141,7 +199,7 @@ class ContributionBalance
 
     public static function isCollectable(ContributionDue $due, string $businessDate): bool
     {
-        if (!in_array($due->status, ['pending', 'partially_paid'], true)) {
+        if (! in_array($due->status, ['pending', 'partially_paid'], true)) {
             return false;
         }
 

@@ -2,17 +2,18 @@
 
 namespace Modules\Donations\Services;
 
+use Illuminate\Support\Collection;
 use Modules\Donations\Models\ContributionDue;
+use Modules\Donations\Models\DonationPayment;
 use Modules\Donations\Support\ContributionBalance;
 use Modules\Donations\Support\DonationBusinessDate;
-use Modules\Donations\Models\DonationPayment;
 use Modules\Family\Models\Family;
 
 class FamilyFinancialAnalyticsService
 {
     /**
-     * @param array<string, mixed> $mandatory
-     * @param array{total_paid: float, mandatory_paid: float, project_paid: float, voluntary_paid: float} $paymentBreakdown
+     * @param  array<string, mixed>  $mandatory
+     * @param  array{total_paid: float, mandatory_paid: float, project_paid: float, voluntary_paid: float}  $paymentBreakdown
      * @return array<string, mixed>
      */
     public function build(int $tenantId, string $familyId, array $mandatory, array $paymentBreakdown): array
@@ -54,7 +55,7 @@ class FamilyFinancialAnalyticsService
 
         foreach ($payments as $payment) {
             $key = $payment->payment_date?->format('Y-m');
-            if (!$key || !isset($buckets[$key])) {
+            if (! $key || ! isset($buckets[$key])) {
                 continue;
             }
 
@@ -106,8 +107,8 @@ class FamilyFinancialAnalyticsService
 
         $evaluated = $dues->count();
         $paidOnTime = $dues->where('status', 'paid')->count();
-        $overdue = $dues->filter(function (ContributionDue $due): bool {
-            if (!in_array($due->status, ['pending', 'partially_paid'], true)) {
+        $overdue = $dues->filter(function (ContributionDue $due) use ($businessDate): bool {
+            if (! in_array($due->status, ['pending', 'partially_paid'], true)) {
                 return false;
             }
 
@@ -166,7 +167,7 @@ class FamilyFinancialAnalyticsService
             $index++;
         }
 
-        if (!$found && $familyTotalPaid <= 0) {
+        if (! $found && $familyTotalPaid <= 0) {
             $rankByGiving = $activeFamilies > 0 ? $activeFamilies : 1;
         }
 
@@ -183,7 +184,7 @@ class FamilyFinancialAnalyticsService
     }
 
     /**
-     * @param array<string, mixed> $mandatory
+     * @param  array<string, mixed>  $mandatory
      * @return array<string, mixed>
      */
     private function buildComparison(int $tenantId, string $familyId, float $familyTotalPaid, array $mandatory): array
@@ -229,7 +230,7 @@ class FamilyFinancialAnalyticsService
     }
 
     /**
-     * @param \Illuminate\Support\Collection<int, float> $values
+     * @param  Collection<int, float>  $values
      */
     private function medianFromCollection($values): float
     {

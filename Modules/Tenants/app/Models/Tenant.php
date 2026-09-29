@@ -2,19 +2,16 @@
 
 namespace Modules\Tenants\Models;
 
-use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Authentication\Models\User;
-use Modules\Tenants\Models\Address;
-use Modules\Tenants\Models\ChurchProfile;
-use Modules\Tenants\Models\ChurchLeadership;
-use Modules\Tenants\Models\ChurchStatistic;
-use Modules\Tenants\Models\ChurchSocialMedia;
+use Modules\Tenants\Contracts\TenantEntitlementGate;
 use Modules\Tenants\Database\Factories\TenantFactory;
 
 class Tenant extends Model
@@ -24,7 +21,7 @@ class Tenant extends Model
     /**
      * Create a new factory instance for the model.
      *
-     * @return \Illuminate\Database\Eloquent\Factories\Factory
+     * @return Factory
      */
     protected static function newFactory()
     {
@@ -288,7 +285,7 @@ class Tenant extends Model
     {
         return $query->where(function ($q) {
             $q->whereNull('subscription_ends_at')
-              ->orWhere('subscription_ends_at', '>', now());
+                ->orWhere('subscription_ends_at', '>', now());
         });
     }
 
@@ -387,7 +384,7 @@ class Tenant extends Model
      */
     public function hasFeature(string $feature): bool
     {
-        return in_array($feature, $this->effectiveFeatures(), true);
+        return $this->decideFeature($feature, $this->legacyFeatureDecision($feature));
     }
 
     /**
@@ -395,14 +392,7 @@ class Tenant extends Model
      */
     public function supportsDonations(): bool
     {
-        $features = $this->features;
-
-        // Backward-compatible default: allow when feature list is not configured.
-        if (!is_array($features) || count($features) === 0) {
-            return true;
-        }
-
-        return in_array('donations', $features, true);
+        return $this->decideFeature('donations', $this->legacyFeatureDecision('donations'));
     }
 
     /**
@@ -410,7 +400,43 @@ class Tenant extends Model
      */
     public function supportsMinistriesAssociations(): bool
     {
-        return in_array('ministries_associations', $this->effectiveFeatures(), true);
+        return $this->decideFeature('ministries_associations', $this->legacyFeatureDecision('ministries_associations'));
+    }
+
+    /**
+     * Whether Mass Intention Management is enabled for this tenant.
+     */
+    public function supportsMassIntentions(): bool
+    {
+        return $this->decideFeature('mass_intentions', $this->legacyFeatureDecision('mass_intentions'));
+    }
+
+    /**
+     * Pre-plan-entitlement decision for a legacy feature key (tenants.features / plan key).
+     */
+    public function legacyFeatureDecision(string $feature): bool
+    {
+        if ($feature === 'donations') {
+            $features = $this->features;
+
+            // Backward-compatible default: allow when feature list is not configured.
+            if (! is_array($features) || count($features) === 0) {
+                return true;
+            }
+
+            return in_array('donations', $features, true);
+        }
+
+        return in_array($feature, $this->effectiveFeatures(), true);
+    }
+
+    private function decideFeature(string $feature, bool $legacyDecision): bool
+    {
+        if (! app()->bound(TenantEntitlementGate::class)) {
+            return $legacyDecision;
+        }
+
+        return app(TenantEntitlementGate::class)->decideLegacyFeature($this, $feature, $legacyDecision);
     }
 
     /**
@@ -518,14 +544,14 @@ class Tenant extends Model
         });
 
         static::created(function (Tenant $tenant): void {
-            if (!empty($tenant->hierarchy_path)) {
+            if (! empty($tenant->hierarchy_path)) {
                 return;
             }
 
             if ($tenant->parent_tenant_id) {
                 $parent = self::query()->find($tenant->parent_tenant_id);
                 $prefix = $parent?->hierarchy_path ?: (string) $tenant->parent_tenant_id;
-                $path = $prefix . '.' . $tenant->id;
+                $path = $prefix.'.'.$tenant->id;
             } else {
                 $path = (string) $tenant->id;
             }
@@ -548,4 +574,3 @@ class Tenant extends Model
         });
     }
 }
-

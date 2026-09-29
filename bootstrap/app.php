@@ -65,6 +65,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'tenant.feature.donations' => EnsureDonationFeatureEnabled::class,
             'donations.security.log' => LogDonationSecurityResponse::class,
             'tenant.feature.ministries' => EnsureMinistriesFeatureEnabled::class,
+            'tenant.feature.mass_intentions' => \Modules\MassIntentions\Http\Middleware\EnsureMassIntentionsFeatureEnabled::class,
             'tenant.subscription' => EnsureSubscriptionAccess::class,
             'support.permission' => EnsureSupportPermission::class,
             'support.mode' => EnforceSupportSessionMode::class,

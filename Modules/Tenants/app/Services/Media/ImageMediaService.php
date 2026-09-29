@@ -2,16 +2,39 @@
 
 namespace Modules\Tenants\Services\Media;
 
+use Illuminate\Contracts\Support\Responsable;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Modules\Tenants\Contracts\TenantLimitGuard;
 use Modules\Tenants\Support\TenantPrivateStorage;
+use RuntimeException;
 
 class ImageMediaService
 {
     public function __construct(
         private readonly ImageMediaPolicy $policy = new ImageMediaPolicy,
     ) {}
+
+    private function assertWithinStorageLimit(UploadedFile $file, int $tenantId): void
+    {
+        if ($tenantId <= 0 || ! app()->bound(TenantLimitGuard::class)) {
+            return;
+        }
+
+        $addingMb = max(1, (int) ceil(((int) $file->getSize()) / 1048576));
+        try {
+            app(TenantLimitGuard::class)->assertTenantCanAdd($tenantId, 'STORAGE_MB', $addingMb);
+        } catch (RuntimeException $e) {
+            if ($e instanceof Responsable) {
+                throw new ImageMediaException(
+                    ImageMediaException::CODE_STORAGE_LIMIT,
+                    'Your parish has reached its storage limit. Remove unused files or contact EkklesiaSoft to upgrade.'
+                );
+            }
+            throw $e;
+        }
+    }
 
     public function store(UploadedFile $file, int $tenantId, string $category): ImageMediaStoreResult
     {
@@ -23,6 +46,7 @@ class ImageMediaService
         }
 
         $this->policy->assertPreUpload($file, $category);
+        $this->assertWithinStorageLimit($file, $tenantId);
 
         $realPath = $file->getRealPath();
         if ($realPath === false) {
@@ -62,7 +86,7 @@ class ImageMediaService
         try {
             $image = $this->applyExifOrientation($image, $realPath, $detectedMime);
             [$displayBytes, $width, $height] = $this->encodeVariant($image, $this->policy->displayMaxEdgePx());
-            [$thumbBytes, , ] = $this->encodeVariant($image, $this->policy->thumbMaxEdgePx());
+            [$thumbBytes] = $this->encodeVariant($image, $this->policy->thumbMaxEdgePx());
         } finally {
             imagedestroy($image);
         }
@@ -183,7 +207,7 @@ class ImageMediaService
     }
 
     /**
-     * @param \GdImage|resource $image
+     * @param  \GdImage|resource  $image
      * @return \GdImage|resource
      */
     private function applyExifOrientation($image, string $realPath, string $detectedMime)
@@ -210,7 +234,7 @@ class ImageMediaService
     }
 
     /**
-     * @param \GdImage|resource $source
+     * @param  \GdImage|resource  $source
      * @return array{0: string, 1: int, 2: int}
      */
     private function encodeVariant($source, int $maxEdge): array

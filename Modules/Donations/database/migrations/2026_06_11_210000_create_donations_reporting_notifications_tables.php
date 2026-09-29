@@ -14,7 +14,7 @@ return new class extends Migration
             $table->string('report_type', 60);
             $table->json('filters')->nullable();
             $table->string('file_path')->nullable();
-            $table->enum('status', ['queued', 'processing', 'completed', 'failed'])->default('queued');
+            $table->enum('status', ['queued', 'processing', 'completed', 'failed', 'expired'])->default('queued');
             $table->text('error_message')->nullable();
             $table->unsignedBigInteger('requested_by')->nullable();
             $table->unsignedBigInteger('created_by')->nullable();

@@ -9,7 +9,7 @@ use Modules\Donations\Models\Concerns\BelongsToTenant;
 
 class DonationSetting extends Model
 {
-    use HasUuids, SoftDeletes, BelongsToTenant;
+    use BelongsToTenant, HasUuids, SoftDeletes;
 
     protected $table = 'donation_settings';
 
@@ -18,6 +18,7 @@ class DonationSetting extends Model
         'default_currency',
         'financial_year_start_month',
         'financial_year_start_day',
+        'financial_year_source',
         'tax_registration_number',
         'tax_acknowledgement_note',
         'receipt_prefix_enabled',

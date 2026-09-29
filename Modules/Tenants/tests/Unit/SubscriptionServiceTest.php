@@ -3,8 +3,10 @@
 namespace Modules\Tenants\Tests\Unit;
 
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Schema;
 use Modules\Tenants\Models\SubscriptionSettings;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Models\TenantSubscriptionAudit;
 use Modules\Tenants\Services\SubscriptionService;
 use Tests\TestCase;
 
@@ -20,7 +22,7 @@ class SubscriptionServiceTest extends TestCase
 
     public function test_resolve_status_uses_configurable_grace_days(): void
     {
-        if (! \Illuminate\Support\Facades\Schema::hasTable('subscription_settings')) {
+        if (! Schema::hasTable('subscription_settings')) {
             $this->markTestSkipped('subscription_settings table not migrated');
         }
 
@@ -31,7 +33,7 @@ class SubscriptionServiceTest extends TestCase
         ]);
 
         $tenant = new Tenant([
-            'plan' => 'basic',
+            'plan' => 'starter',
             'active' => 1,
             'trial_ends_at' => null,
             'subscription_ends_at' => Carbon::now()->subDays(3),
@@ -48,7 +50,7 @@ class SubscriptionServiceTest extends TestCase
     public function test_suspended_takes_priority_over_active_dates(): void
     {
         $tenant = new Tenant([
-            'plan' => 'basic',
+            'plan' => 'starter',
             'active' => 1,
             'trial_ends_at' => null,
             'subscription_ends_at' => Carbon::now()->addYear(),
@@ -68,7 +70,7 @@ class SubscriptionServiceTest extends TestCase
 
     public function test_grace_period_allows_writes_under_read_only_policy(): void
     {
-        if (! \Illuminate\Support\Facades\Schema::hasTable('subscription_settings')) {
+        if (! Schema::hasTable('subscription_settings')) {
             $this->markTestSkipped('subscription_settings table not migrated');
         }
 
@@ -77,7 +79,7 @@ class SubscriptionServiceTest extends TestCase
         SubscriptionSettings::current()->update(['grace_period_days' => 7]);
 
         $tenant = new Tenant([
-            'plan' => 'basic',
+            'plan' => 'starter',
             'active' => 1,
             'trial_ends_at' => null,
             'subscription_ends_at' => Carbon::now()->subDays(2),
@@ -92,7 +94,7 @@ class SubscriptionServiceTest extends TestCase
 
     public function test_expired_is_read_only_and_blocks_writes(): void
     {
-        if (! \Illuminate\Support\Facades\Schema::hasTable('subscription_settings')) {
+        if (! Schema::hasTable('subscription_settings')) {
             $this->markTestSkipped('subscription_settings table not migrated');
         }
 
@@ -101,7 +103,7 @@ class SubscriptionServiceTest extends TestCase
         SubscriptionSettings::current()->update(['grace_period_days' => 7]);
 
         $tenant = new Tenant([
-            'plan' => 'basic',
+            'plan' => 'starter',
             'active' => 1,
             'trial_ends_at' => null,
             'subscription_ends_at' => Carbon::now()->subDays(10),
@@ -120,7 +122,7 @@ class SubscriptionServiceTest extends TestCase
         config(['tenants.subscription.write_policy' => SubscriptionService::WRITE_POLICY_READ_ONLY_WHEN_EXPIRED]);
 
         $tenant = new Tenant([
-            'plan' => 'basic',
+            'plan' => 'starter',
             'active' => 1,
             'trial_ends_at' => null,
             'subscription_ends_at' => Carbon::now()->subDays(10),
@@ -136,7 +138,7 @@ class SubscriptionServiceTest extends TestCase
 
     public function test_expiring_status_within_warning_window(): void
     {
-        if (! \Illuminate\Support\Facades\Schema::hasTable('subscription_settings')) {
+        if (! Schema::hasTable('subscription_settings')) {
             $this->markTestSkipped('subscription_settings table not migrated');
         }
 
@@ -146,7 +148,7 @@ class SubscriptionServiceTest extends TestCase
         ]);
 
         $tenant = new Tenant([
-            'plan' => 'basic',
+            'plan' => 'starter',
             'active' => 1,
             'trial_ends_at' => null,
             'subscription_ends_at' => Carbon::now()->addDays(5),
@@ -175,7 +177,7 @@ class SubscriptionServiceTest extends TestCase
 
     public function test_update_settings_persists_grace_days(): void
     {
-        if (! \Illuminate\Support\Facades\Schema::hasTable('subscription_settings')) {
+        if (! Schema::hasTable('subscription_settings')) {
             $this->markTestSkipped('subscription_settings table not migrated');
         }
 
@@ -201,24 +203,24 @@ class SubscriptionServiceTest extends TestCase
 
     public function test_list_audits_for_tenant_returns_paginated_envelope(): void
     {
-        if (! \Illuminate\Support\Facades\Schema::hasTable('tenant_subscription_audits')) {
+        if (! Schema::hasTable('tenant_subscription_audits')) {
             $this->markTestSkipped('tenant_subscription_audits table not migrated');
         }
-        if (! \Illuminate\Support\Facades\Schema::hasTable('tenants')) {
+        if (! Schema::hasTable('tenants')) {
             $this->markTestSkipped('tenants table not available');
         }
 
         $tenant = Tenant::query()->create([
             'name' => 'Audit Test Church',
-            'slug' => 'audit-test-church-' . uniqid(),
-            'plan' => 'basic',
+            'slug' => 'audit-test-church-'.uniqid(),
+            'plan' => 'starter',
             'active' => 1,
             'max_users' => 10,
             'max_storage_mb' => 100,
             'features' => ['donations'],
         ]);
 
-        \Modules\Tenants\Models\TenantSubscriptionAudit::query()->create([
+        TenantSubscriptionAudit::query()->create([
             'tenant_id' => $tenant->id,
             'actor_id' => null,
             'actor_role' => 'SuperAdmin',
@@ -226,7 +228,7 @@ class SubscriptionServiceTest extends TestCase
             'source' => 'admin_ui',
             'reason' => 'Ops upgrade',
             'before_state' => ['plan' => 'free', 'status' => 'ACTIVE'],
-            'after_state' => ['plan' => 'basic', 'status' => 'ACTIVE'],
+            'after_state' => ['plan' => 'starter', 'status' => 'ACTIVE'],
             'correlation_id' => null,
             'created_at' => now(),
         ]);
@@ -239,7 +241,7 @@ class SubscriptionServiceTest extends TestCase
         $this->assertSame('plan_changed', $result['data'][0]['operation']);
         $this->assertSame('Plan changed', $result['data'][0]['operation_label']);
         $this->assertStringContainsString('free', $result['data'][0]['summary']);
-        $this->assertStringContainsString('basic', $result['data'][0]['summary']);
+        $this->assertStringContainsString('starter', $result['data'][0]['summary']);
     }
 
     public function test_default_plans_entitle_ministries_associations(): void

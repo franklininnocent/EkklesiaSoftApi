@@ -5,6 +5,8 @@ namespace Modules\Donations\Services;
 use Modules\Donations\Models\DonationPayment;
 use Modules\Donations\Models\DonationReceipt;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Services\ChurchCurrencyResolver;
+use Modules\Tenants\Support\ChurchMoneyFormatter;
 
 class DonationReceiptPrintService
 {
@@ -19,6 +21,7 @@ class DonationReceiptPrintService
         $tenant = Tenant::query()->whereKey($tenantId)->first();
 
         return array_merge($payload, [
+            'tenant_id' => $tenantId,
             'organization' => [
                 'name' => $tenant?->name ?? 'Parish',
                 'printed_at' => now()->toDateTimeString(),
@@ -38,9 +41,13 @@ class DonationReceiptPrintService
         $organization = $payload['organization'] ?? [];
         $tax = $payload['tax_acknowledgement'] ?? [];
         $lineItems = $payload['line_items'] ?? [];
+        $tenantId = (int) ($payload['tenant_id'] ?? $payment['tenant_id'] ?? 0);
+        $churchCurrency = $tenantId > 0
+            ? app(ChurchCurrencyResolver::class)->forTenantId($tenantId)
+            : null;
 
-        $amount = number_format((float) ($totals['amount'] ?? 0), 2);
-        $currency = htmlspecialchars((string) ($totals['currency'] ?? 'INR'));
+        $amount = htmlspecialchars(ChurchMoneyFormatter::format($totals['amount'] ?? 0, $churchCurrency));
+        $currency = htmlspecialchars((string) ($churchCurrency?->currencyCodeOrNull() ?? $totals['currency'] ?? ''));
         $receiptNumber = htmlspecialchars((string) ($receipt['receipt_number'] ?? ''));
         $issuedOn = htmlspecialchars((string) ($receipt['issued_on'] ?? ''));
         $payerName = htmlspecialchars((string) ($payer['name'] ?? 'Donor'));
@@ -52,7 +59,7 @@ class DonationReceiptPrintService
         if (! empty($lineItems)) {
             foreach ($lineItems as $item) {
                 $label = htmlspecialchars((string) ($item['description'] ?? 'Contribution'));
-                $lineAmount = number_format((float) ($item['amount'] ?? 0), 2);
+                $lineAmount = htmlspecialchars(ChurchMoneyFormatter::format($item['amount'] ?? 0, $churchCurrency));
                 $linesHtml .= "<tr><td>{$label}</td><td style=\"text-align:right\">{$lineAmount}</td></tr>";
             }
         } else {
@@ -101,7 +108,7 @@ class DonationReceiptPrintService
       <thead><tr><th>Description</th><th style="text-align:right">Amount</th></tr></thead>
       <tbody>{$linesHtml}</tbody>
     </table>
-    <div class="total">Total: {$amount} {$currency}</div>
+    <div class="total">Total: {$amount}</div>
     {$taxNote}
   </div>
 </body>

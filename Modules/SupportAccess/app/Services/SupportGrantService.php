@@ -2,8 +2,11 @@
 
 namespace Modules\SupportAccess\Services;
 
+use App\Support\CaseInsensitiveSearch;
+use Carbon\Carbon;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Str;
 use Modules\SupportAccess\Models\SupportAccessGrant;
 use Modules\Tenants\Models\Tenant;
@@ -86,6 +89,27 @@ class SupportGrantService
             $query->where('tenant_id', (int) $filters['tenant_id']);
         }
 
+        if (! empty($filters['allowed_mode'])) {
+            $query->where('allowed_mode', $filters['allowed_mode']);
+        }
+
+        if (! empty($filters['q'])) {
+            $q = '%'.trim((string) $filters['q']).'%';
+            $query->where(function (Builder $builder) use ($q): void {
+                $builder->whereHas('tenant', function (Builder $tenantQuery) use ($q): void {
+                    $tenantQuery->where(function (Builder $inner) use ($q): void {
+                        CaseInsensitiveSearch::applyColumnLike($inner, 'name', $q);
+                        CaseInsensitiveSearch::applyColumnLike($inner, 'slug', $q, 'or');
+                    });
+                })->orWhereHas('grantedBy', function (Builder $userQuery) use ($q): void {
+                    $userQuery->where(function (Builder $inner) use ($q): void {
+                        CaseInsensitiveSearch::applyColumnLike($inner, 'email', $q);
+                        CaseInsensitiveSearch::applyColumnLike($inner, 'name', $q, 'or');
+                    });
+                });
+            });
+        }
+
         return $query->paginate($perPage);
     }
 
@@ -139,8 +163,8 @@ class SupportGrantService
             throw new RuntimeException('Target tenant is not available for a support grant.');
         }
 
-        $starts = \Carbon\Carbon::parse($payload['starts_at']);
-        $ends = \Carbon\Carbon::parse($payload['ends_at']);
+        $starts = Carbon::parse($payload['starts_at']);
+        $ends = Carbon::parse($payload['ends_at']);
         if ($ends->lte($starts)) {
             throw new RuntimeException('Grant end time must be after start time.');
         }

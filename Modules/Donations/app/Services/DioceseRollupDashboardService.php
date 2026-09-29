@@ -2,6 +2,7 @@
 
 namespace Modules\Donations\Services;
 
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Modules\Donations\Models\ContributionDue;
 use Modules\Donations\Models\DonationPayment;
@@ -11,15 +12,17 @@ use Modules\Donations\Support\DonationBusinessDate;
 use Modules\Donations\Support\MoneyMath;
 use Modules\Family\Models\Family;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Services\ChurchCurrencyResolver;
 use Modules\Tenants\Services\TenantHierarchyService;
 
 class DioceseRollupDashboardService
 {
     public function __construct(
         private readonly TenantHierarchyService $hierarchyService,
-        private readonly FinancialHealthService $healthService
-    ) {
-    }
+        private readonly FinancialHealthService $healthService,
+        private readonly ChurchCurrencyResolver $currencyResolver,
+        private readonly ExecutiveReportMetricsService $executiveMetrics,
+    ) {}
 
     /**
      * @return array<string, mixed>
@@ -28,7 +31,7 @@ class DioceseRollupDashboardService
     {
         $root = Tenant::query()->findOrFail($rootTenantId);
 
-        if (!$this->hierarchyService->supportsHierarchy()) {
+        if (! $this->hierarchyService->supportsHierarchy()) {
             return [
                 'available' => false,
                 'message' => 'Diocese rollup requires the tenant hierarchy migration. Run php artisan migrate.',
@@ -65,22 +68,29 @@ class DioceseRollupDashboardService
         $metricTenantIds = array_values(array_unique(array_map('intval', $metricTenantIds)));
         $byTenant = $this->metricsByTenant($metricTenantIds);
 
-        $consolidated = $this->composeMetrics($scopeTenantIds, $byTenant);
+        $currencyCodes = $this->distinctCurrencyCodes($metricTenantIds);
+        $moneyComparable = count($currencyCodes) <= 1;
+        $consolidated = $this->composeMetrics($scopeTenantIds, $byTenant, $moneyComparable);
         $parishRows = $parishNodes->map(function (Tenant $parish) use ($parishScopes, $byTenant): array {
             return $this->buildParishRow($parish, $parishScopes[(int) $parish->id] ?? [], $byTenant);
         })->values()->all();
-        $trend = $this->buildConsolidatedTrend($scopeTenantIds);
+        $trend = $moneyComparable ? $this->buildConsolidatedTrend($scopeTenantIds) : [];
 
         $participationRate = $consolidated['active_families'] > 0
             ? round(($consolidated['participating_families'] / $consolidated['active_families']) * 100, 1)
             : 0.0;
 
+        $growthAnalysis = $this->executiveMetrics->consolidatedCollectionGrowthAnalysis($scopeTenantIds);
+        $projectApplicable = (int) ($consolidated['active_projects'] ?? 0) > 0;
         $financialHealth = $this->healthService->buildChurchScore([
             'participation_rate' => $participationRate,
             'overdue_ratio_pct' => $consolidated['overdue_ratio_pct'],
             'project_momentum_pct' => $consolidated['project_momentum_pct'],
-            'collection_growth_pct' => $consolidated['collection_growth_pct'],
+            'project_applicable' => $projectApplicable,
+            'collection_growth_pct' => (float) $growthAnalysis['growth_pct'],
+            'growth_health_score' => (float) $growthAnalysis['growth_health_score'],
             'overdue_family_count' => $consolidated['overdue_family_count'],
+            'current_month_collected' => (float) ($consolidated['current_month_collected'] ?? $growthAnalysis['current_collected'] ?? 0),
         ]);
 
         return [
@@ -92,6 +102,8 @@ class DioceseRollupDashboardService
                 'tenant_ids' => $scopeTenantIds,
             ],
             'financial_health' => $financialHealth,
+            'money_comparable' => $moneyComparable,
+            'currencies' => $currencyCodes,
             'consolidated' => $consolidated,
             'collection_trend' => $trend,
             'parishes' => $parishRows,
@@ -99,7 +111,24 @@ class DioceseRollupDashboardService
     }
 
     /**
-     * @return \Illuminate\Support\Collection<int, Tenant>
+     * @param  array<int>  $tenantIds
+     * @return array<int, string>
+     */
+    private function distinctCurrencyCodes(array $tenantIds): array
+    {
+        $codes = [];
+        foreach (array_unique(array_map('intval', $tenantIds)) as $tenantId) {
+            $code = $this->currencyResolver->currencyCodeForTenantId($tenantId);
+            if ($code !== null && $code !== '') {
+                $codes[$code] = true;
+            }
+        }
+
+        return array_keys($codes);
+    }
+
+    /**
+     * @return Collection<int, Tenant>
      */
     private function resolveParishNodes(Tenant $root)
     {
@@ -116,7 +145,7 @@ class DioceseRollupDashboardService
 
         return Tenant::query()
             ->where('id', '!=', $root->id)
-            ->where('hierarchy_path', 'like', $prefix . '.%')
+            ->where('hierarchy_path', 'like', $prefix.'.%')
             ->where('tenant_tier', TenantHierarchyService::TIER_PARISH)
             ->orderBy('name')
             ->get();
@@ -246,13 +275,13 @@ class DioceseRollupDashboardService
      * @param  array<int, array<string, float|int>>  $byTenant
      * @return array<string, mixed>
      */
-    private function composeMetrics(array $tenantIds, array $byTenant): array
+    private function composeMetrics(array $tenantIds, array $byTenant, bool $moneyComparable = true): array
     {
-        $totalCollected = 0.0;
-        $pendingDues = 0.0;
-        $overdueAmount = 0.0;
-        $currentMonth = 0.0;
-        $previousMonth = 0.0;
+        $totalCollected = '0.00';
+        $pendingDues = '0.00';
+        $overdueAmount = '0.00';
+        $currentMonth = '0.00';
+        $previousMonth = '0.00';
         $activeFamilies = 0;
         $participatingFamilies = 0;
         $overdueFamilies = 0;
@@ -266,11 +295,13 @@ class DioceseRollupDashboardService
                 continue;
             }
 
-            $totalCollected += (float) $row['total_collected'];
-            $pendingDues += (float) $row['pending_dues'];
-            $overdueAmount += (float) $row['overdue_amount'];
-            $currentMonth += (float) $row['current_month_collected'];
-            $previousMonth += (float) $row['previous_month_collected'];
+            if ($moneyComparable) {
+                $totalCollected = MoneyMath::add($totalCollected, (string) $row['total_collected']);
+                $pendingDues = MoneyMath::add($pendingDues, (string) $row['pending_dues']);
+                $overdueAmount = MoneyMath::add($overdueAmount, (string) $row['overdue_amount']);
+                $currentMonth = MoneyMath::add($currentMonth, (string) $row['current_month_collected']);
+                $previousMonth = MoneyMath::add($previousMonth, (string) $row['previous_month_collected']);
+            }
             $activeFamilies += (int) $row['active_families'];
             $participatingFamilies += (int) $row['participating_families'];
             $overdueFamilies += (int) $row['overdue_family_count'];
@@ -279,19 +310,29 @@ class DioceseRollupDashboardService
             $progressCount += (int) $row['project_count_for_avg'];
         }
 
-        $growthPct = $previousMonth > 0
-            ? round((($currentMonth - $previousMonth) / $previousMonth) * 100, 1)
-            : ($currentMonth > 0 ? 100.0 : 0.0);
+        $currentMonthFloat = (float) $currentMonth;
+        $previousMonthFloat = (float) $previousMonth;
+        $pendingFloat = (float) $pendingDues;
+        $overdueFloat = (float) $overdueAmount;
+
+        $growthPct = 0.0;
+        if ($moneyComparable) {
+            $growthPct = (float) $this->executiveMetrics->consolidatedCollectionGrowthAnalysis(
+                array_unique(array_map('intval', $tenantIds))
+            )['growth_pct'];
+        }
 
         $projectMomentum = $progressCount > 0 ? $progressSum / $progressCount : 0.0;
-        $overdueRatioPct = $pendingDues > 0 ? min(100, round(($overdueAmount / $pendingDues) * 100, 1)) : 0.0;
+        $overdueRatioPct = $moneyComparable && $pendingFloat > 0
+            ? min(100, round(($overdueFloat / $pendingFloat) * 100, 1))
+            : 0.0;
 
         return [
-            'total_collected' => round($totalCollected, 2),
-            'pending_dues' => round($pendingDues, 2),
-            'overdue_amount' => round($overdueAmount, 2),
-            'current_month_collected' => round($currentMonth, 2),
-            'previous_month_collected' => round($previousMonth, 2),
+            'total_collected' => $moneyComparable ? MoneyMath::toApiNumber($totalCollected) : null,
+            'pending_dues' => $moneyComparable ? MoneyMath::toApiNumber($pendingDues) : null,
+            'overdue_amount' => $moneyComparable ? MoneyMath::toApiNumber($overdueAmount) : null,
+            'current_month_collected' => $moneyComparable ? MoneyMath::toApiNumber($currentMonth) : null,
+            'previous_month_collected' => $moneyComparable ? MoneyMath::toApiNumber($previousMonth) : null,
             'collection_growth_pct' => $growthPct,
             'active_families' => $activeFamilies,
             'participating_families' => $participatingFamilies,
@@ -309,18 +350,23 @@ class DioceseRollupDashboardService
      */
     private function buildParishRow(Tenant $parish, array $scopeIds, array $byTenant): array
     {
-        $metrics = $this->composeMetrics($scopeIds, $byTenant);
+        $metrics = $this->composeMetrics($scopeIds, $byTenant, true);
 
         $participationRate = $metrics['active_families'] > 0
             ? round(($metrics['participating_families'] / $metrics['active_families']) * 100, 1)
             : 0.0;
 
+        $growthAnalysis = $this->executiveMetrics->consolidatedCollectionGrowthAnalysis($scopeIds);
+        $projectApplicable = (int) ($metrics['active_projects'] ?? 0) > 0;
         $health = $this->healthService->buildChurchScore([
             'participation_rate' => $participationRate,
             'overdue_ratio_pct' => $metrics['overdue_ratio_pct'],
             'project_momentum_pct' => $metrics['project_momentum_pct'],
-            'collection_growth_pct' => $metrics['collection_growth_pct'],
+            'project_applicable' => $projectApplicable,
+            'collection_growth_pct' => (float) $growthAnalysis['growth_pct'],
+            'growth_health_score' => (float) $growthAnalysis['growth_health_score'],
             'overdue_family_count' => $metrics['overdue_family_count'],
+            'current_month_collected' => (float) ($metrics['current_month_collected'] ?? $growthAnalysis['current_collected'] ?? 0),
         ]);
 
         return array_merge($this->hierarchyService->summarizeNode($parish), [
@@ -333,7 +379,7 @@ class DioceseRollupDashboardService
     }
 
     /**
-     * @param array<int> $tenantIds
+     * @param  array<int>  $tenantIds
      * @return array<int, array<string, mixed>>
      */
     private function buildConsolidatedTrend(array $tenantIds): array

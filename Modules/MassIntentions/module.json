@@ -1,0 +1,11 @@
+{
+    "name": "MassIntentions",
+    "alias": "massintentions",
+    "description": "",
+    "keywords": [],
+    "priority": 0,
+    "providers": [
+        "Modules\\MassIntentions\\Providers\\MassIntentionsServiceProvider"
+    ],
+    "files": []
+}

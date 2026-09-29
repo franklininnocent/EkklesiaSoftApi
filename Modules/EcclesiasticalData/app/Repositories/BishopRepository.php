@@ -2,10 +2,9 @@
 
 namespace Modules\EcclesiasticalData\Repositories;
 
-use Modules\EcclesiasticalData\Models\BishopAppointment;
-use Modules\EcclesiasticalData\Models\BishopManagement;
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Model;
+use Modules\EcclesiasticalData\Models\BishopManagement;
 
 class BishopRepository extends BaseRepository
 {
@@ -39,7 +38,7 @@ class BishopRepository extends BaseRepository
 
     protected function makeModel(): Model
     {
-        return new BishopManagement();
+        return new BishopManagement;
     }
 
     /**
@@ -55,16 +54,16 @@ class BishopRepository extends BaseRepository
             ]);
 
         // Apply search
-        if (!empty($params['search'])) {
+        if (! empty($params['search'])) {
             $query->search($params['search']);
         }
 
         // Apply filters
-        if (!empty($params['diocese_id'])) {
+        if (! empty($params['diocese_id'])) {
             $query->byDiocese($params['diocese_id']);
         }
 
-        if (!empty($params['title_id'])) {
+        if (! empty($params['title_id'])) {
             $query->byTitle($params['title_id']);
         }
 
@@ -80,14 +79,18 @@ class BishopRepository extends BaseRepository
             $query->where('is_current', filter_var($params['is_current'], FILTER_VALIDATE_BOOLEAN));
         }
 
-        // Apply sorting
-        $sortBy = $params['sort_by'] ?? 'full_name';
-        $sortDir = $params['sort_dir'] ?? 'asc';
+        $allowedSorts = ['full_name', 'ordained_bishop_date', 'created_at', 'updated_at', 'status'];
+        $sortBy = is_string($params['sort_by'] ?? null) && in_array($params['sort_by'], $allowedSorts, true)
+            ? $params['sort_by']
+            : 'full_name';
+        $sortDir = is_string($params['sort_dir'] ?? null) && in_array(strtolower($params['sort_dir']), ['asc', 'desc'], true)
+            ? strtolower($params['sort_dir'])
+            : 'asc';
         $query->orderBy($sortBy, $sortDir);
 
         $perPage = min(max((int) ($params['per_page'] ?? 15), 1), 100);
         $page = $params['page'] ?? null;
-        
+
         return $query->paginate($perPage, self::LIST_COLUMNS, 'page', $page);
     }
 
@@ -172,7 +175,7 @@ class BishopRepository extends BaseRepository
                 ->map(function ($item) {
                     return [
                         'title' => $item->ecclesiasticalTitle->title ?? 'Unknown',
-                        'total' => $item->total
+                        'total' => $item->total,
                     ];
                 })
                 ->values()
@@ -186,7 +189,7 @@ class BishopRepository extends BaseRepository
                 ->map(function ($item) {
                     return [
                         'diocese' => $item->archdiocese->name ?? 'Unknown',
-                        'total' => $item->total
+                        'total' => $item->total,
                     ];
                 })
                 ->sortByDesc('total')

@@ -54,6 +54,16 @@ class ContributionBalanceTest extends TestCase
         $this->assertSame('overdue', ContributionBalance::scheduleState($due, '2026-09-19'));
     }
 
+    #[Test]
+    public function current_period_due_is_collectable_and_not_overdue_before_due_date(): void
+    {
+        $current = $this->makeDue('2026-09-01', '2026-09-30', '2026-09-30', 100, 0);
+
+        $this->assertTrue(ContributionBalance::isCollectable($current, '2026-09-19'));
+        $this->assertSame('current', ContributionBalance::scheduleState($current, '2026-09-19'));
+        $this->assertNotSame('overdue', ContributionBalance::scheduleState($current, '2026-09-19'));
+    }
+
     private function makeDue(
         ?string $periodStart,
         ?string $periodEnd,

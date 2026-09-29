@@ -134,13 +134,50 @@ class SupportGrantServiceTest extends TestCase
         $this->assertSame(SupportAccessGrant::STATUS_ACTIVE, $grant->status);
     }
 
+    #[Test]
+    public function list_filters_by_search_status_and_allowed_mode(): void
+    {
+        $tenantA = Tenant::factory()->create(['active' => 1, 'name' => 'Alpha Parish', 'slug' => 'alpha']);
+        $tenantB = Tenant::factory()->create(['active' => 1, 'name' => 'Beta Parish', 'slug' => 'beta']);
+        $grantor = User::factory()->create(['name' => 'Grant Manager', 'email' => 'grants@ekklesia.test']);
+        $actor = $this->platformActor((int) $grantor->id);
+        $service = app(SupportGrantService::class);
+
+        $service->create($actor, [
+            'tenant_id' => $tenantA->id,
+            'allowed_mode' => 'standard',
+            'starts_at' => now()->subHour()->toIso8601String(),
+            'ends_at' => now()->addHour()->toIso8601String(),
+        ]);
+        $revoked = $service->create($actor, [
+            'tenant_id' => $tenantB->id,
+            'allowed_mode' => 'emergency',
+            'starts_at' => now()->subHour()->toIso8601String(),
+            'ends_at' => now()->addHour()->toIso8601String(),
+        ]);
+        $service->revoke($actor, $revoked->id);
+
+        $byTenant = $service->list(['q' => 'alpha'], 50);
+        $this->assertCount(1, $byTenant->items());
+        $this->assertSame((int) $tenantA->id, (int) $byTenant->items()[0]->tenant_id);
+
+        $byGrantor = $service->list(['q' => 'grants@ekklesia'], 50);
+        $this->assertCount(2, $byGrantor->items());
+
+        $byMode = $service->list(['allowed_mode' => 'emergency'], 50);
+        $this->assertCount(1, $byMode->items());
+        $this->assertSame('emergency', $byMode->items()[0]->allowed_mode);
+
+        $byStatus = $service->list(['status' => SupportAccessGrant::STATUS_REVOKED], 50);
+        $this->assertCount(1, $byStatus->items());
+        $this->assertSame(SupportAccessGrant::STATUS_REVOKED, $byStatus->items()[0]->status);
+    }
+
     private function platformActor(int $id): Authenticatable
     {
         return new class($id) implements Authenticatable
         {
-            public function __construct(private readonly int $id)
-            {
-            }
+            public function __construct(private readonly int $id) {}
 
             public function getAuthIdentifierName(): string
             {
@@ -167,9 +204,7 @@ class SupportGrantServiceTest extends TestCase
                 return null;
             }
 
-            public function setRememberToken($value): void
-            {
-            }
+            public function setRememberToken($value): void {}
 
             public function getRememberTokenName(): string
             {

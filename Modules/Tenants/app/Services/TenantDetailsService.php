@@ -331,6 +331,9 @@ class TenantDetailsService
         if ($key === 'ministries_associations') {
             return $tenant->supportsMinistriesAssociations();
         }
+        if ($key === 'mass_intentions') {
+            return $tenant->supportsMassIntentions();
+        }
 
         return $tenant->hasFeature($key);
     }

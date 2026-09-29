@@ -5,27 +5,31 @@ namespace Modules\RolesAndPermissions\Http\Controllers;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
-use Modules\RolesAndPermissions\Http\Requests\SyncTenantRolePermissionsRequest;
-use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Authentication\Models\Role;
 use Modules\Authentication\Models\User;
+use Modules\Authentication\Services\PasswordAuthorizationService;
+use Modules\RolesAndPermissions\Http\Requests\SyncTenantRolePermissionsRequest;
+use Modules\RolesAndPermissions\Models\Permission;
 use Modules\RolesAndPermissions\Services\PermissionAuditService;
-use Modules\RolesAndPermissions\Services\TenantPermissionCrudService;
 use Modules\RolesAndPermissions\Services\TenantPermissionCatalogService;
+use Modules\RolesAndPermissions\Services\TenantPermissionCrudService;
 use Modules\RolesAndPermissions\Services\TenantPermissionService;
 use Modules\RolesAndPermissions\Traits\EnforcesTenantIsolation;
-use Modules\Authentication\Services\PasswordAuthorizationService;
-use Illuminate\Support\Facades\Log;
 
 class PermissionsController extends Controller
 {
     use EnforcesTenantIsolation;
 
     protected PermissionAuditService $auditService;
+
     protected TenantPermissionCatalogService $tenantPermissionCatalogService;
+
     protected TenantPermissionService $tenantPermissionService;
+
     protected TenantPermissionCrudService $tenantPermissionCrudService;
+
     protected PasswordAuthorizationService $passwordAuthorization;
 
     public function __construct(
@@ -34,8 +38,7 @@ class PermissionsController extends Controller
         TenantPermissionCatalogService $tenantPermissionCatalogService,
         TenantPermissionCrudService $tenantPermissionCrudService,
         PasswordAuthorizationService $passwordAuthorization,
-    )
-    {
+    ) {
         $this->auditService = $auditService;
         $this->tenantPermissionService = $tenantPermissionService;
         $this->tenantPermissionCatalogService = $tenantPermissionCatalogService;
@@ -49,7 +52,7 @@ class PermissionsController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            if (!auth()->check()) {
+            if (! auth()->check()) {
                 return response()->json(['message' => 'Unauthorized'], 401);
             }
 
@@ -88,13 +91,13 @@ class PermissionsController extends Controller
                 $search = $request->search;
                 $query->where(function ($q) use ($search) {
                     $q->where('name', 'like', "%{$search}%")
-                      ->orWhere('display_name', 'like', "%{$search}%")
-                      ->orWhere('description', 'like', "%{$search}%");
+                        ->orWhere('display_name', 'like', "%{$search}%")
+                        ->orWhere('description', 'like', "%{$search}%");
                 });
             }
 
             $perPage = $request->get('per_page', 15);
-            
+
             // Handle 'all' case to return all records without pagination
             if ($perPage === 'all') {
                 $permissions = $query->with('tenant')
@@ -102,14 +105,14 @@ class PermissionsController extends Controller
                     ->orderBy('category')
                     ->orderBy('name')
                     ->get();
-                
+
                 return response()->json([
                     'success' => true,
                     'data' => $permissions,
                     'total' => $permissions->count(),
                 ]);
             }
-            
+
             $permissions = $query->with('tenant')
                 ->orderBy('module')
                 ->orderBy('category')
@@ -129,7 +132,8 @@ class PermissionsController extends Controller
                 ],
             ]);
         } catch (\Exception $e) {
-            Log::error('Error fetching permissions: ' . $e->getMessage());
+            Log::error('Error fetching permissions: '.$e->getMessage());
+
             return response()->json([
                 'message' => 'Error fetching permissions',
                 'error' => $e->getMessage(),
@@ -153,12 +157,14 @@ class PermissionsController extends Controller
             ]);
         } catch (\RuntimeException $e) {
             $status = in_array($e->getCode(), [403, 422], true) ? $e->getCode() : 422;
+
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),
             ], $status);
         } catch (\Exception $e) {
-            Log::error('Error fetching tenant permission catalog: ' . $e->getMessage());
+            Log::error('Error fetching tenant permission catalog: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error fetching tenant permission catalog',
@@ -173,13 +179,13 @@ class PermissionsController extends Controller
     public function show($id): JsonResponse
     {
         try {
-            if (!auth()->check()) {
+            if (! auth()->check()) {
                 return response()->json(['message' => 'Unauthorized'], 401);
             }
 
             $permission = Permission::with(['tenant', 'roles', 'users'])->findOrFail($id);
 
-            if (!$this->canViewPermission($permission)) {
+            if (! $this->canViewPermission($permission)) {
                 return response()->json(['message' => 'Unauthorized'], 403);
             }
 
@@ -191,7 +197,8 @@ class PermissionsController extends Controller
                 ],
             ]);
         } catch (\Exception $e) {
-            Log::error('Error fetching permission: ' . $e->getMessage());
+            Log::error('Error fetching permission: '.$e->getMessage());
+
             return response()->json([
                 'message' => 'Permission not found',
                 'error' => $e->getMessage(),
@@ -205,7 +212,7 @@ class PermissionsController extends Controller
     public function store(Request $request): JsonResponse
     {
         try {
-            if (!$this->canManagePermissions()) {
+            if (! $this->canManagePermissions()) {
                 return response()->json(['message' => 'Unauthorized'], 403);
             }
 
@@ -228,17 +235,16 @@ class PermissionsController extends Controller
                 ], 422);
             }
 
-            $data = $request->all();
+            $validated = $validator->validated();
 
             // Tenant-context path uses dedicated service guardrails.
             if ($this->isTenantScopedActor($user)) {
                 $permission = $this->tenantPermissionCrudService->createTenantPermission($user, [
-                    'name' => $data['name'],
-                    'display_name' => $data['display_name'] ?? $data['name'],
-                    'description' => $data['description'] ?? null,
-                    'module' => $data['module'] ?? null,
-                    'category' => $data['category'] ?? null,
-                    'active' => $data['active'] ?? true,
+                    'name' => $validated['name'],
+                    'display_name' => $validated['display_name'],
+                    'description' => $validated['description'] ?? null,
+                    'module' => $validated['module'] ?? null,
+                    'category' => $validated['category'] ?? null,
                 ]);
 
                 return response()->json([
@@ -247,22 +253,22 @@ class PermissionsController extends Controller
                 ], 201);
             }
 
-            // Authorization checks
-            if (!$user->isSuperAdmin()) {
-                // Non-SuperAdmins can only create custom permissions for their tenant
-                $data['tenant_id'] = $user->tenant_id;
-                $data['is_custom'] = true;
-
-                if (!$user->tenant_id) {
-                    return response()->json([
-                        'message' => 'You must belong to a tenant to create permissions',
-                    ], 403);
-                }
-            } else {
-                $data['is_custom'] = $request->get('is_custom', false);
+            if (! $user->isSuperAdmin() && ! $user->tenant_id) {
+                return response()->json([
+                    'message' => 'You must belong to a tenant to create permissions',
+                ], 403);
             }
 
-            $permission = Permission::create($data);
+            $permission = Permission::create([
+                'name' => $validated['name'],
+                'display_name' => $validated['display_name'],
+                'description' => $validated['description'] ?? null,
+                'module' => $validated['module'] ?? null,
+                'category' => $validated['category'] ?? null,
+                'tenant_id' => $user->isSuperAdmin() ? ($validated['tenant_id'] ?? null) : $user->tenant_id,
+                'is_custom' => $user->isSuperAdmin() ? (bool) ($validated['is_custom'] ?? false) : true,
+                'active' => 1,
+            ]);
 
             Log::info('Permission created', ['permission_id' => $permission->id, 'created_by' => auth()->id()]);
 
@@ -272,14 +278,15 @@ class PermissionsController extends Controller
             ], 201);
         } catch (\RuntimeException $e) {
             $status = in_array($e->getCode(), [403, 422], true) ? $e->getCode() : 422;
+
             return response()->json([
                 'message' => $e->getMessage(),
             ], $status);
         } catch (\Exception $e) {
-            Log::error('Error creating permission: ' . $e->getMessage());
+            Log::error('Error creating permission: '.$e->getMessage());
+
             return response()->json([
                 'message' => 'Error creating permission',
-                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -290,7 +297,7 @@ class PermissionsController extends Controller
     public function update(Request $request, $id): JsonResponse
     {
         try {
-            if (!$this->canManagePermissions()) {
+            if (! $this->canManagePermissions()) {
                 return response()->json(['message' => 'Unauthorized'], 403);
             }
 
@@ -300,12 +307,12 @@ class PermissionsController extends Controller
             // Tenant-context path uses dedicated service guardrails.
             if (
                 $user->tenant_id &&
-                !$user->isSuperAdmin() &&
-                !$user->isEkklesiaAdmin() &&
-                !$user->isEkklesiaManager()
+                ! $user->isSuperAdmin() &&
+                ! $user->isEkklesiaAdmin() &&
+                ! $user->isEkklesiaManager()
             ) {
                 $validator = Validator::make($request->all(), [
-                    'name' => 'sometimes|required|string|max:255|unique:permissions,name,' . $id,
+                    'name' => 'sometimes|required|string|max:255|unique:permissions,name,'.$id,
                     'display_name' => 'sometimes|required|string|max:255',
                     'description' => 'nullable|string',
                     'module' => 'nullable|string|max:255',
@@ -329,27 +336,27 @@ class PermissionsController extends Controller
             }
 
             // Check if permission can be modified
-            if ($permission->isGlobal() && !$user->isSuperAdmin()) {
+            if ($permission->isGlobal() && ! $user->isSuperAdmin()) {
                 return response()->json([
                     'message' => 'Only SuperAdmin can modify global permissions',
                 ], 403);
             }
 
-            if ($permission->tenant_id && $permission->tenant_id !== $user->tenant_id && !$user->isSuperAdmin()) {
+            if ($permission->tenant_id && $permission->tenant_id !== $user->tenant_id && ! $user->isSuperAdmin()) {
                 return response()->json([
                     'message' => 'You can only modify permissions for your tenant',
                 ], 403);
             }
 
             // Prevent modification of system permissions
-            if (!$permission->isCustom()) {
+            if (! $permission->isCustom()) {
                 return response()->json([
                     'message' => 'System permissions cannot be modified. Create a custom permission instead.',
                 ], 403);
             }
 
             $validator = Validator::make($request->all(), [
-                'name' => 'sometimes|required|string|max:255|unique:permissions,name,' . $id,
+                'name' => 'sometimes|required|string|max:255|unique:permissions,name,'.$id,
                 'display_name' => 'sometimes|required|string|max:255',
                 'description' => 'nullable|string',
                 'module' => 'nullable|string|max:255',
@@ -374,11 +381,13 @@ class PermissionsController extends Controller
             ]);
         } catch (\RuntimeException $e) {
             $status = in_array($e->getCode(), [403, 422], true) ? $e->getCode() : 422;
+
             return response()->json([
                 'message' => $e->getMessage(),
             ], $status);
         } catch (\Exception $e) {
-            Log::error('Error updating permission: ' . $e->getMessage());
+            Log::error('Error updating permission: '.$e->getMessage());
+
             return response()->json([
                 'message' => 'Error updating permission',
                 'error' => $e->getMessage(),
@@ -392,7 +401,7 @@ class PermissionsController extends Controller
     public function destroy($id): JsonResponse
     {
         try {
-            if (!$this->canManagePermissions()) {
+            if (! $this->canManagePermissions()) {
                 return response()->json(['message' => 'Unauthorized'], 403);
             }
 
@@ -402,9 +411,9 @@ class PermissionsController extends Controller
             // Tenant-context path uses dedicated service guardrails.
             if (
                 $user->tenant_id &&
-                !$user->isSuperAdmin() &&
-                !$user->isEkklesiaAdmin() &&
-                !$user->isEkklesiaManager()
+                ! $user->isSuperAdmin() &&
+                ! $user->isEkklesiaAdmin() &&
+                ! $user->isEkklesiaManager()
             ) {
                 $this->tenantPermissionCrudService->deleteTenantPermission($user, $permission);
 
@@ -414,14 +423,14 @@ class PermissionsController extends Controller
             }
 
             // Prevent deletion of system permissions
-            if (!$permission->isCustom()) {
+            if (! $permission->isCustom()) {
                 return response()->json([
                     'message' => 'System permissions cannot be deleted',
                 ], 403);
             }
 
             // Check authorization
-            if (!$user->isSuperAdmin() && $permission->tenant_id !== $user->tenant_id) {
+            if (! $user->isSuperAdmin() && $permission->tenant_id !== $user->tenant_id) {
                 return response()->json([
                     'message' => 'You can only delete permissions for your tenant',
                 ], 403);
@@ -436,11 +445,13 @@ class PermissionsController extends Controller
             ]);
         } catch (\RuntimeException $e) {
             $status = in_array($e->getCode(), [403, 422], true) ? $e->getCode() : 422;
+
             return response()->json([
                 'message' => $e->getMessage(),
             ], $status);
         } catch (\Exception $e) {
-            Log::error('Error deleting permission: ' . $e->getMessage());
+            Log::error('Error deleting permission: '.$e->getMessage());
+
             return response()->json([
                 'message' => 'Error deleting permission',
                 'error' => $e->getMessage(),
@@ -454,7 +465,7 @@ class PermissionsController extends Controller
     public function assignToRole(Request $request): JsonResponse
     {
         try {
-            if (!$this->canManagePermissions()) {
+            if (! $this->canManagePermissions()) {
                 return response()->json(['message' => 'Unauthorized'], 403);
             }
 
@@ -481,7 +492,7 @@ class PermissionsController extends Controller
                     ->map(fn ($id) => (int) $id)
                     ->all();
 
-                if (!in_array((int) $permission->id, $nextPermissionIds, true)) {
+                if (! in_array((int) $permission->id, $nextPermissionIds, true)) {
                     $nextPermissionIds[] = (int) $permission->id;
                 }
 
@@ -498,7 +509,7 @@ class PermissionsController extends Controller
             }
 
             // CRITICAL SECURITY: Prevent non-SuperAdmin users from assigning "Tenants" and "Pope" module permissions
-            if (($permission->module === 'Tenants' || $permission->module === 'Pope') && !$currentUser->isSuperAdmin()) {
+            if (($permission->module === 'Tenants' || $permission->module === 'Pope') && ! $currentUser->isSuperAdmin()) {
                 Log::warning('Non-SuperAdmin user attempted to assign restricted module permission to role (SuperAdmin only)', [
                     'user_id' => $currentUser->id,
                     'user_email' => $currentUser->email,
@@ -522,7 +533,7 @@ class PermissionsController extends Controller
             // SECURITY: Validate tenant isolation - permission and role must belong to same tenant
             // System permissions (tenant_id = null) can be assigned to any role
             // Tenant-specific permissions can only be assigned to roles from the same tenant
-            if (!is_null($permission->tenant_id)) {
+            if (! is_null($permission->tenant_id)) {
                 if (is_null($role->tenant_id)) {
                     return response()->json([
                         'success' => false,
@@ -553,12 +564,14 @@ class PermissionsController extends Controller
             ]);
         } catch (\RuntimeException $e) {
             $status = in_array($e->getCode(), [403, 422], true) ? $e->getCode() : 422;
+
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),
             ], $status);
         } catch (\Exception $e) {
-            Log::error('Error assigning permission to role: ' . $e->getMessage());
+            Log::error('Error assigning permission to role: '.$e->getMessage());
+
             return response()->json([
                 'message' => 'Error assigning permission',
                 'error' => $e->getMessage(),
@@ -572,7 +585,7 @@ class PermissionsController extends Controller
     public function removeFromRole(Request $request): JsonResponse
     {
         try {
-            if (!$this->canManagePermissions()) {
+            if (! $this->canManagePermissions()) {
                 return response()->json(['message' => 'Unauthorized'], 403);
             }
 
@@ -615,7 +628,7 @@ class PermissionsController extends Controller
 
             // CRITICAL SECURITY: Prevent non-SuperAdmin users from removing "Tenants" and "Pope" module permissions
             // This ensures that even if a role has restricted permissions, non-SuperAdmin users cannot modify them
-            if (($permission->module === 'Tenants' || $permission->module === 'Pope') && !$currentUser->isSuperAdmin()) {
+            if (($permission->module === 'Tenants' || $permission->module === 'Pope') && ! $currentUser->isSuperAdmin()) {
                 Log::warning('Non-SuperAdmin user attempted to remove restricted module permission from role (SuperAdmin only)', [
                     'user_id' => $currentUser->id,
                     'user_email' => $currentUser->email,
@@ -652,12 +665,14 @@ class PermissionsController extends Controller
             ]);
         } catch (\RuntimeException $e) {
             $status = in_array($e->getCode(), [403, 422], true) ? $e->getCode() : 422;
+
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),
             ], $status);
         } catch (\Exception $e) {
-            Log::error('Error removing permission from role: ' . $e->getMessage());
+            Log::error('Error removing permission from role: '.$e->getMessage());
+
             return response()->json([
                 'message' => 'Error removing permission',
                 'error' => $e->getMessage(),
@@ -672,7 +687,7 @@ class PermissionsController extends Controller
     public function assignToUser(Request $request): JsonResponse
     {
         try {
-            if (!$this->canManagePermissions()) {
+            if (! $this->canManagePermissions()) {
                 return response()->json(['message' => 'Unauthorized'], 403);
             }
 
@@ -693,7 +708,7 @@ class PermissionsController extends Controller
             $currentUser = auth()->user();
 
             // CRITICAL SECURITY: Prevent non-SuperAdmin users from assigning "Tenants" and "Pope" module permissions
-            if (($permission->module === 'Tenants' || $permission->module === 'Pope') && !$currentUser->isSuperAdmin()) {
+            if (($permission->module === 'Tenants' || $permission->module === 'Pope') && ! $currentUser->isSuperAdmin()) {
                 Log::warning('Non-SuperAdmin user attempted to assign restricted module permission to user (SuperAdmin only)', [
                     'user_id' => $currentUser->id,
                     'user_email' => $currentUser->email,
@@ -717,19 +732,19 @@ class PermissionsController extends Controller
                         'message' => 'Cannot assign permissions to a user from another tenant',
                     ], 403);
                 }
-                if (!is_null($permission->tenant_id) && $permission->tenant_id !== $currentUser->tenant_id) {
+                if (! is_null($permission->tenant_id) && $permission->tenant_id !== $currentUser->tenant_id) {
                     return response()->json([
                         'success' => false,
                         'message' => 'Cannot assign permission from another tenant',
                     ], 403);
                 }
-                if (!$permission->isTenantAssignable()) {
+                if (! $permission->isTenantAssignable()) {
                     return response()->json([
                         'success' => false,
                         'message' => 'Permission is not assignable in tenant context',
                     ], 403);
                 }
-                if (!$currentUser->isSuperAdmin() && !$currentUser->hasPermission($permission->name)) {
+                if (! $currentUser->isSuperAdmin() && ! $currentUser->hasPermission($permission->name)) {
                     return response()->json([
                         'success' => false,
                         'message' => "Permission escalation blocked. You cannot assign '{$permission->name}'.",
@@ -747,7 +762,7 @@ class PermissionsController extends Controller
             // SECURITY: Validate tenant isolation - permission and user must belong to same tenant
             // System permissions (tenant_id = null) can be assigned to any user
             // Tenant-specific permissions can only be assigned to users from the same tenant
-            if (!is_null($permission->tenant_id)) {
+            if (! is_null($permission->tenant_id)) {
                 if (is_null($user->tenant_id)) {
                     return response()->json([
                         'success' => false,
@@ -778,12 +793,14 @@ class PermissionsController extends Controller
             ]);
         } catch (\RuntimeException $e) {
             $status = in_array($e->getCode(), [403, 422], true) ? $e->getCode() : 422;
+
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),
             ], $status);
         } catch (\Exception $e) {
-            Log::error('Error assigning permission to user: ' . $e->getMessage());
+            Log::error('Error assigning permission to user: '.$e->getMessage());
+
             return response()->json([
                 'message' => 'Error assigning permission',
                 'error' => $e->getMessage(),
@@ -797,7 +814,7 @@ class PermissionsController extends Controller
     public function removeFromUser(Request $request): JsonResponse
     {
         try {
-            if (!$this->canManagePermissions()) {
+            if (! $this->canManagePermissions()) {
                 return response()->json(['message' => 'Unauthorized'], 403);
             }
 
@@ -819,7 +836,7 @@ class PermissionsController extends Controller
 
             // CRITICAL SECURITY: Prevent non-SuperAdmin users from removing "Tenants" and "Pope" module permissions
             // This ensures that even if a user has restricted permissions, non-SuperAdmin users cannot modify them
-            if (($permission->module === 'Tenants' || $permission->module === 'Pope') && !$currentUser->isSuperAdmin()) {
+            if (($permission->module === 'Tenants' || $permission->module === 'Pope') && ! $currentUser->isSuperAdmin()) {
                 Log::warning('Non-SuperAdmin user attempted to remove restricted module permission from user (SuperAdmin only)', [
                     'user_id' => $currentUser->id,
                     'user_email' => $currentUser->email,
@@ -845,7 +862,7 @@ class PermissionsController extends Controller
             // SECURITY: Validate tenant isolation - permission and user must belong to same tenant
             // System permissions (tenant_id = null) can be removed from any user
             // Tenant-specific permissions can only be removed from users from the same tenant
-            if (!is_null($permission->tenant_id) && !is_null($user->tenant_id)) {
+            if (! is_null($permission->tenant_id) && ! is_null($user->tenant_id)) {
                 if ($permission->tenant_id !== $user->tenant_id) {
                     return response()->json([
                         'success' => false,
@@ -869,7 +886,8 @@ class PermissionsController extends Controller
                 'message' => 'Permission removed from user successfully',
             ]);
         } catch (\Exception $e) {
-            Log::error('Error removing permission from user: ' . $e->getMessage());
+            Log::error('Error removing permission from user: '.$e->getMessage());
+
             return response()->json([
                 'message' => 'Error removing permission',
                 'error' => $e->getMessage(),
@@ -884,7 +902,7 @@ class PermissionsController extends Controller
     public function bulkAssignToRole(Request $request): JsonResponse
     {
         try {
-            if (!$this->canManagePermissions()) {
+            if (! $this->canManagePermissions()) {
                 return response()->json(['message' => 'Unauthorized'], 403);
             }
 
@@ -902,7 +920,7 @@ class PermissionsController extends Controller
             }
 
             $role = Role::findOrFail($request->role_id);
-            
+
             // Authorization: Check if user can modify this role
             $user = auth()->user();
             if ($this->isTenantScopedActor($user)) {
@@ -918,7 +936,7 @@ class PermissionsController extends Controller
                 ]);
             }
 
-            if (!$user->isSuperAdmin()) {
+            if (! $user->isSuperAdmin()) {
                 if ($role->isGlobal() || ($role->tenant_id && $role->tenant_id !== $user->tenant_id)) {
                     return response()->json([
                         'message' => 'Unauthorized to modify this role',
@@ -932,10 +950,10 @@ class PermissionsController extends Controller
                     ->pluck('id')
                     ->toArray();
 
-                if (!empty($restrictedPermissionIds)) {
+                if (! empty($restrictedPermissionIds)) {
                     $restrictedPermissions = Permission::whereIn('id', $restrictedPermissionIds)
                         ->get(['id', 'name', 'module']);
-                    
+
                     Log::warning('Non-SuperAdmin user attempted to assign restricted module permissions (SuperAdmin only)', [
                         'user_id' => $user->id,
                         'user_email' => $user->email,
@@ -954,9 +972,9 @@ class PermissionsController extends Controller
             // SECURITY: Validate tenant isolation for all permissions before assignment
             $permissionIds = $request->permission_ids;
             $permissions = Permission::whereIn('id', $permissionIds)->get();
-            
+
             foreach ($permissions as $permission) {
-                if (!$user->isSuperAdmin() && $permission->scope === Permission::SCOPE_PLATFORM) {
+                if (! $user->isSuperAdmin() && $permission->scope === Permission::SCOPE_PLATFORM) {
                     return response()->json([
                         'success' => false,
                         'message' => "Cannot assign platform-only permission '{$permission->name}' in tenant context",
@@ -965,7 +983,7 @@ class PermissionsController extends Controller
 
                 // System permissions (tenant_id = null) can be assigned to any role
                 // Tenant-specific permissions can only be assigned to roles from the same tenant
-                if (!is_null($permission->tenant_id)) {
+                if (! is_null($permission->tenant_id)) {
                     if (is_null($role->tenant_id)) {
                         return response()->json([
                             'success' => false,
@@ -985,7 +1003,7 @@ class PermissionsController extends Controller
             \DB::transaction(function () use ($role, $permissionIds) {
                 // Use Laravel's sync method to replace all permissions atomically
                 $role->permissions()->sync($permissionIds);
-                
+
                 // Clear permission cache for all users with this role
                 $role->clearUsersPermissionCache();
             });
@@ -1006,12 +1024,14 @@ class PermissionsController extends Controller
             ]);
         } catch (\RuntimeException $e) {
             $status = in_array($e->getCode(), [403, 422], true) ? $e->getCode() : 422;
+
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),
             ], $status);
         } catch (\Exception $e) {
-            Log::error('Error bulk assigning permissions to role: ' . $e->getMessage());
+            Log::error('Error bulk assigning permissions to role: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error assigning permissions',
@@ -1027,7 +1047,7 @@ class PermissionsController extends Controller
     public function getPermissionsForRole($roleId): JsonResponse
     {
         try {
-            if (!auth()->check()) {
+            if (! auth()->check()) {
                 return response()->json(['message' => 'Unauthorized'], 401);
             }
 
@@ -1035,7 +1055,7 @@ class PermissionsController extends Controller
 
             // Authorization check
             $user = auth()->user();
-            if (!$user->isSuperAdmin()) {
+            if (! $user->isSuperAdmin()) {
                 if ($role->isGlobal() || ($role->tenant_id && $role->tenant_id !== $user->tenant_id)) {
                     return response()->json(['message' => 'Unauthorized'], 403);
                 }
@@ -1045,7 +1065,7 @@ class PermissionsController extends Controller
             $permissions = $role->permissions;
 
             // CRITICAL SECURITY: Filter out "Tenants" and "Pope" module permissions for non-SuperAdmin users
-            if (!$user->isSuperAdmin()) {
+            if (! $user->isSuperAdmin()) {
                 $permissions = $permissions->filter(function ($permission) {
                     return $permission->module !== 'Tenants' && $permission->module !== 'Pope';
                 })->values(); // Re-index array after filtering
@@ -1056,7 +1076,8 @@ class PermissionsController extends Controller
                 'data' => $permissions,
             ]);
         } catch (\Exception $e) {
-            Log::error('Error fetching permissions for role: ' . $e->getMessage());
+            Log::error('Error fetching permissions for role: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error fetching permissions',
@@ -1071,7 +1092,7 @@ class PermissionsController extends Controller
     public function syncPermissionsForRole(SyncTenantRolePermissionsRequest $request, $roleId): JsonResponse
     {
         try {
-            if (!$this->canManagePermissions()) {
+            if (! $this->canManagePermissions()) {
                 return response()->json(['message' => 'Unauthorized'], 403);
             }
 
@@ -1090,12 +1111,14 @@ class PermissionsController extends Controller
             ]);
         } catch (\RuntimeException $e) {
             $status = in_array($e->getCode(), [403, 422], true) ? $e->getCode() : 422;
+
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),
             ], $status);
         } catch (\Exception $e) {
-            Log::error('Error syncing tenant role permissions: ' . $e->getMessage());
+            Log::error('Error syncing tenant role permissions: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error syncing role permissions',
@@ -1116,22 +1139,22 @@ class PermissionsController extends Controller
      */
     private function canManagePermissions(): bool
     {
-        if (!auth()->check()) {
+        if (! auth()->check()) {
             return false;
         }
 
         $user = auth()->user();
-        
+
         // SuperAdmin, EkklesiaAdmin, and EkklesiaManager can manage ALL permissions
         if ($user->isSuperAdmin() || $user->isEkklesiaAdmin() || $user->isEkklesiaManager()) {
             return true;
         }
-        
+
         // Tenant Administrators can manage custom permissions within their tenant
         if ($user->isTenantAdmin()) {
             return true;
         }
-        
+
         // All other users cannot manage permissions
         return false;
     }
@@ -1139,9 +1162,9 @@ class PermissionsController extends Controller
     private function isTenantScopedActor(User $user): bool
     {
         return (bool) $user->tenant_id
-            && !$user->isSuperAdmin()
-            && !$user->isEkklesiaAdmin()
-            && !$user->isEkklesiaManager();
+            && ! $user->isSuperAdmin()
+            && ! $user->isEkklesiaAdmin()
+            && ! $user->isEkklesiaManager();
     }
 
     /**
@@ -1169,7 +1192,7 @@ class PermissionsController extends Controller
                 'permission_is_custom' => $permission->is_custom,
                 'permission_module' => $permission->module,
             ]);
-            
+
             return false;
         }
 
@@ -1209,4 +1232,3 @@ class PermissionsController extends Controller
         return null;
     }
 }
-

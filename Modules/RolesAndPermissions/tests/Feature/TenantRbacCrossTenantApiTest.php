@@ -16,18 +16,29 @@ class TenantRbacCrossTenantApiTest extends TestCase
     use RefreshDatabase;
 
     protected Tenant $tenantA;
+
     protected Tenant $tenantB;
+
     protected User $tenantAAdmin;
+
     protected Role $tenantARole;
+
     protected Role $tenantBRole;
+
     protected User $tenantBUser;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->tenantA = Tenant::factory()->create();
-        $this->tenantB = Tenant::factory()->create();
+        $writable = [
+            'active' => 1,
+            'trial_ends_at' => null,
+            'subscription_ends_at' => now()->addYear(),
+            'subscription_suspended_at' => null,
+        ];
+        $this->tenantA = Tenant::factory()->create($writable);
+        $this->tenantB = Tenant::factory()->create($writable);
 
         $tenantAAdminRole = Role::create([
             'name' => Role::TENANT_ADMINISTRATOR,

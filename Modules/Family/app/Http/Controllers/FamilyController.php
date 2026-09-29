@@ -3,6 +3,8 @@
 namespace Modules\Family\app\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Contracts\Support\Responsable;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -17,8 +19,8 @@ use Modules\Family\app\Http\Requests\RelocateBccRequest;
 use Modules\Family\app\Http\Requests\SplitFamilyMemberRequest;
 use Modules\Family\app\Http\Requests\StoreFamilyMemberRequest;
 use Modules\Family\app\Http\Requests\StoreFamilyRequest;
-use Modules\Family\app\Http\Requests\UpdateFamilyRequest;
 use Modules\Family\app\Http\Requests\UpdateFamilyMemberRequest;
+use Modules\Family\app\Http\Requests\UpdateFamilyRequest;
 use Modules\Family\app\Http\Requests\UploadFamilyHeadProfileImageRequest;
 use Modules\Family\app\Http\Requests\UploadFamilyProfileImageRequest;
 use Modules\Family\app\Services\BccRelocationService;
@@ -30,9 +32,9 @@ use Modules\Family\app\Services\MarriageHouseholdService;
 use Modules\Family\app\Services\MemberCelebrationsService;
 use Modules\Family\app\Services\ParishionerFamilyAccessService;
 use Modules\Family\Models\Family;
+use Modules\Tenants\Services\Media\ImageMediaException;
 use Modules\Tenants\Services\SupportSessionAuthorizationService;
 use Modules\Tenants\Support\TenantContext;
-use Modules\Tenants\Services\Media\ImageMediaException;
 
 class FamilyController extends Controller
 {
@@ -231,6 +233,10 @@ class FamilyController extends Controller
         } catch (HouseholdTransitionException $e) {
             return $this->transitionErrorResponse($e);
         } catch (\Exception $e) {
+            if ($e instanceof Responsable) {
+                return $e->toResponse($request);
+            }
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to process marriage transition',
@@ -322,8 +328,8 @@ class FamilyController extends Controller
                 'progression' => $request->input('progression'),
                 'parish_zone_id' => $request->input('parish_zone_id'),
                 'city' => $request->input('city'),
-                'sort_by' => $request->input('sort_by', 'created_at'),
-                'sort_order' => $request->input('sort_order', 'desc'),
+                'sort_by' => $request->input('sort_by', 'family_code'),
+                'sort_order' => $request->input('sort_order', 'asc'),
             ];
 
             $user = Auth::user();
@@ -407,6 +413,10 @@ class FamilyController extends Controller
                 'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
+            if ($e instanceof Responsable) {
+                return $e->toResponse($request);
+            }
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to create family',
@@ -450,11 +460,15 @@ class FamilyController extends Controller
                 'data' => $family,
             ]);
 
+        } catch (AuthorizationException) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Family not found',
+            ], 404);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve family',
-                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -525,6 +539,10 @@ class FamilyController extends Controller
                 'error' => $e->getMessage(),
             ], 500);
         } catch (\Exception $e) {
+            if ($e instanceof Responsable) {
+                return $e->toResponse($request);
+            }
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to update family',
@@ -789,6 +807,10 @@ class FamilyController extends Controller
                 'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
+            if ($e instanceof Responsable) {
+                return $e->toResponse($request);
+            }
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to add family member',
@@ -1022,6 +1044,10 @@ class FamilyController extends Controller
                 'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
+            if ($e instanceof Responsable) {
+                return $e->toResponse($request);
+            }
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to split family member',

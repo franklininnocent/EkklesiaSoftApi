@@ -2,8 +2,10 @@
 
 namespace Modules\Tenants\Services;
 
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Modules\Tenants\Contracts\TenantPlanAssigner;
 use Modules\Tenants\Models\SubscriptionDurationOption;
 use Modules\Tenants\Models\SubscriptionPlan;
 use Modules\Tenants\Models\SubscriptionSettings;
@@ -18,11 +20,17 @@ use RuntimeException;
 class SubscriptionService
 {
     public const STATUS_TRIAL = 'TRIAL';
+
     public const STATUS_ACTIVE = 'ACTIVE';
+
     public const STATUS_LIFETIME = 'LIFETIME';
+
     public const STATUS_EXPIRING = 'EXPIRING';
+
     public const STATUS_GRACE_PERIOD = 'GRACE_PERIOD';
+
     public const STATUS_EXPIRED = 'EXPIRED';
+
     public const STATUS_SUSPENDED = 'SUSPENDED';
 
     public const ACCESS_MODE_FULL = 'full';
@@ -45,6 +53,7 @@ class SubscriptionService
         return array_values(config('tenants.subscription.gated_modules', [
             'donations',
             'ministries_associations',
+            'mass_intentions',
             'groups',
             'messaging',
             'events',
@@ -194,6 +203,10 @@ class SubscriptionService
                 if (! $tenant->supportsMinistriesAssociations()) {
                     return ['allowed' => false, 'reason' => 'feature_not_entitled', 'status' => $status];
                 }
+            } elseif ($moduleKey === 'mass_intentions') {
+                if (! $tenant->supportsMassIntentions()) {
+                    return ['allowed' => false, 'reason' => 'feature_not_entitled', 'status' => $status];
+                }
             } else {
                 return ['allowed' => false, 'reason' => 'feature_not_entitled', 'status' => $status];
             }
@@ -222,6 +235,12 @@ class SubscriptionService
         $source = $options['source'] ?? 'admin_ui';
         $reason = $options['reason'] ?? null;
 
+        if (app()->bound(TenantPlanAssigner::class)) {
+            $this->assertDurationAllowed($durationMonths);
+
+            return app(TenantPlanAssigner::class)->applyPlanByKey($tenant, (string) $planKey, $options, $actorId, $actorRole);
+        }
+
         $plan = SubscriptionPlan::query()->where('key', $planKey)->where('active', true)->first();
         if (! $plan) {
             throw new RuntimeException('invalid_plan');
@@ -229,7 +248,7 @@ class SubscriptionService
 
         $this->assertDurationAllowed($durationMonths);
 
-        $order = ['free' => 0, 'basic' => 1, 'premium' => 2, 'enterprise' => 3];
+        $order = ['free' => 0, 'starter' => 1, 'standard' => 2, 'professional' => 3, 'enterprise' => 4];
         $newOrder = $order[$planKey] ?? 0;
         $oldOrder = $order[$tenant->plan] ?? 0;
         if ($newOrder < $oldOrder && $planKey !== 'free' && empty($options['allow_downgrade_non_free'])) {
@@ -565,7 +584,7 @@ class SubscriptionService
         }
 
         try {
-            return \Carbon\Carbon::parse((string) $value)->toFormattedDateString();
+            return Carbon::parse((string) $value)->toFormattedDateString();
         } catch (\Throwable) {
             return (string) $value;
         }

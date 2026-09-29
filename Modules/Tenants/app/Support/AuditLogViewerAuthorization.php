@@ -4,6 +4,8 @@ namespace Modules\Tenants\Support;
 
 use Modules\Authentication\Models\Role;
 use Modules\Authentication\Models\User;
+use Modules\Tenants\Contracts\TenantEntitlementGate;
+use Modules\Tenants\Models\Tenant;
 
 /**
  * Central gate for who may view audit trails (read APIs and audit-derived UI payloads).
@@ -23,7 +25,24 @@ final class AuditLogViewerAuthorization
             return true;
         }
 
-        return $user->tenant_id !== null && (bool) $user->is_primary_admin;
+        return $user->tenant_id !== null
+            && (bool) $user->is_primary_admin
+            && self::tenantPlanIncludesAuditLog((int) $user->tenant_id);
+    }
+
+    /**
+     * Commercial check layered on top of the role check: the church's plan must include AUDIT_LOG.
+     * Without the Subscriptions module bound (or in legacy/shadow mode) this stays permissive.
+     */
+    private static function tenantPlanIncludesAuditLog(int $tenantId): bool
+    {
+        if (! app()->bound(TenantEntitlementGate::class)) {
+            return true;
+        }
+
+        $tenant = Tenant::query()->find($tenantId);
+
+        return $tenant === null || app(TenantEntitlementGate::class)->allows($tenant, 'AUDIT_LOG');
     }
 
     /**

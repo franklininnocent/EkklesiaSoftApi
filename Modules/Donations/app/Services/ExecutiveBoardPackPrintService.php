@@ -3,14 +3,14 @@
 namespace Modules\Donations\Services;
 
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Support\ChurchMoneyFormatter;
 
 class ExecutiveBoardPackPrintService
 {
     public function __construct(
         private readonly DonationReportService $reportService,
         private readonly StewardshipReportPrintService $stewardshipPrintService
-    ) {
-    }
+    ) {}
 
     /**
      * @return array<string, mixed>
@@ -23,6 +23,7 @@ class ExecutiveBoardPackPrintService
 
         return [
             'organization' => [
+                'tenant_id' => $tenantId,
                 'name' => $tenant?->name ?? 'Parish',
                 'printed_at' => now()->toDateTimeString(),
             ],
@@ -32,7 +33,7 @@ class ExecutiveBoardPackPrintService
     }
 
     /**
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $payload
      */
     public function renderHtml(array $payload): string
     {
@@ -42,8 +43,9 @@ class ExecutiveBoardPackPrintService
         $comparison = is_array($payload['parish_comparison'] ?? null) ? $payload['parish_comparison'] : [];
 
         $executivePage = $this->renderExecutivePage($orgName, $printedAt, $executive);
+        $rollupTenantId = (int) ($payload['organization']['tenant_id'] ?? 0);
         $comparisonPage = ($comparison['available'] ?? false)
-            ? $this->renderComparisonPage($orgName, $printedAt, $comparison)
+            ? $this->renderComparisonPage($orgName, $printedAt, $comparison, $rollupTenantId)
             : '';
 
         return <<<HTML
@@ -76,7 +78,7 @@ HTML;
     }
 
     /**
-     * @param array<string, mixed> $executive
+     * @param  array<string, mixed>  $executive
      */
     private function renderExecutivePage(string $orgName, string $printedAt, array $executive): string
     {
@@ -96,25 +98,26 @@ HTML;
     }
 
     /**
-     * @param array<string, mixed> $comparison
+     * @param  array<string, mixed>  $comparison
      */
-    private function renderComparisonPage(string $orgName, string $printedAt, array $comparison): string
+    private function renderComparisonPage(string $orgName, string $printedAt, array $comparison, int $defaultTenantId): string
     {
         $title = htmlspecialchars((string) ($comparison['title'] ?? 'Parish Comparison Report'));
         $narrative = htmlspecialchars((string) ($comparison['narrative'] ?? ''));
 
         $highlightsHtml = '';
         foreach ($comparison['highlights'] ?? [] as $highlight) {
-            $highlightsHtml .= '<li>' . htmlspecialchars((string) $highlight) . '</li>';
+            $highlightsHtml .= '<li>'.htmlspecialchars((string) $highlight).'</li>';
         }
 
         $rowsHtml = '';
         foreach ($comparison['parishes'] ?? [] as $parish) {
             $name = htmlspecialchars((string) ($parish['name'] ?? 'Parish'));
-            $health = htmlspecialchars((string) (($parish['health_score'] ?? 0) . '/100 · ' . ($parish['health_label'] ?? '')));
-            $participation = htmlspecialchars((string) (($parish['participation_rate'] ?? 0) . '%'));
-            $collected = htmlspecialchars(number_format((float) ($parish['total_collected'] ?? 0), 2));
-            $outstanding = htmlspecialchars(number_format((float) ($parish['pending_dues'] ?? 0), 2));
+            $health = htmlspecialchars((string) (($parish['health_score'] ?? 0).'/100 · '.($parish['health_label'] ?? '')));
+            $participation = htmlspecialchars((string) (($parish['participation_rate'] ?? 0).'%'));
+            $parishTenantId = (int) ($parish['tenant_id'] ?? 0) ?: $defaultTenantId;
+            $collected = htmlspecialchars(ChurchMoneyFormatter::formatForTenant($parishTenantId, (float) ($parish['total_collected'] ?? 0)));
+            $outstanding = htmlspecialchars(ChurchMoneyFormatter::formatForTenant($parishTenantId, (float) ($parish['pending_dues'] ?? 0)));
             $rowsHtml .= "<tr><td>{$name}</td><td>{$health}</td><td>{$participation}</td><td>{$collected}</td><td>{$outstanding}</td></tr>";
         }
 

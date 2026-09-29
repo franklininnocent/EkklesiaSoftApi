@@ -12,6 +12,7 @@ use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
 use Modules\Family\Models\HouseholdTransition;
 use Modules\Family\Models\Person;
+use Modules\Tenants\Contracts\TenantLimitGuard;
 
 class MarriageHouseholdService
 {
@@ -125,6 +126,12 @@ class MarriageHouseholdService
                 'updated_by' => $userId,
             ]);
             unset($newFamilyData['bcc_id']);
+
+            $this->assertWithinPlanLimit($tenantId, 'FAMILY_LIMIT', 1);
+            $newPeople = count(array_filter([$bride, $groom], static fn (array $p) => $p['member'] === null));
+            if ($newPeople > 0) {
+                $this->assertWithinPlanLimit($tenantId, 'PEOPLE_LIMIT', $newPeople);
+            }
 
             $newFamily = $this->familyRepository->create($newFamilyData);
             $originFamilyIds = [];
@@ -340,6 +347,7 @@ class MarriageHouseholdService
 
             $createdSpouseId = null;
             if (is_array($externalSpouse)) {
+                $this->assertWithinPlanLimit($tenantId, 'PEOPLE_LIMIT', 1);
                 $person = $this->resolveExternalPerson($externalSpouse, $tenantId, $userId);
                 $spouseMember = $this->familyRepository->addMember($targetFamily, $this->personService->memberIdentityFromPerson($person, [
                     'relationship_to_head' => 'spouse',
@@ -519,6 +527,13 @@ class MarriageHouseholdService
             'created_by' => $userId,
             'updated_by' => $userId,
         ]));
+    }
+
+    private function assertWithinPlanLimit(int|string $tenantId, string $metricCode, int $adding): void
+    {
+        if (app()->bound(TenantLimitGuard::class)) {
+            app(TenantLimitGuard::class)->assertTenantCanAdd((int) $tenantId, $metricCode, $adding, 'marriage_transition');
+        }
     }
 
     /**

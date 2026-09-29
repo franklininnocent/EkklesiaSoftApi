@@ -195,6 +195,37 @@ class BishopPhotoApiTest extends TestCase
     }
 
     #[Test]
+    public function coat_of_arms_is_reencoded_on_the_private_disk(): void
+    {
+        $bishop = $this->createBishop('Bishop Heraldry');
+
+        $this->postJson("/api/ecclesiastical/bishops/{$bishop->id}/upload-coat-of-arms", [
+            'image' => UploadedFile::fake()->image('arms.png', 200, 200),
+        ])->assertOk();
+
+        $bishop->refresh();
+        $this->assertStringStartsWith('platform/bishops/', (string) $bishop->coat_of_arms_path);
+        $this->assertStringEndsWith('.webp', (string) $bishop->coat_of_arms_path);
+        Storage::disk('local')->assertExists($bishop->coat_of_arms_path);
+        Storage::disk('public')->assertMissing($bishop->coat_of_arms_path);
+    }
+
+    #[Test]
+    public function coat_of_arms_rejects_a_non_image_payload(): void
+    {
+        $bishop = $this->createBishop('Bishop Heraldry');
+        $path = tempnam(sys_get_temp_dir(), 'phpjpg');
+        file_put_contents($path, "<?php echo 'evil'; ?>");
+        $file = new UploadedFile($path, 'arms.jpg', 'image/jpeg', null, true);
+
+        $this->postJson("/api/ecclesiastical/bishops/{$bishop->id}/upload-coat-of-arms", [
+            'image' => $file,
+        ])->assertStatus(422);
+
+        $this->assertNull($bishop->fresh()->coat_of_arms_path);
+    }
+
+    #[Test]
     public function bishop_file_upload_service_validates_image_integrity(): void
     {
         $service = app(BishopFileUploadService::class);

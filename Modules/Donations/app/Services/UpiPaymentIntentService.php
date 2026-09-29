@@ -7,6 +7,7 @@ use Endroid\QrCode\Writer\PngWriter;
 use Modules\Donations\Models\DonationSetting;
 use Modules\Family\Models\Family;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Services\ChurchCurrencyResolver;
 
 class UpiPaymentIntentService
 {
@@ -38,7 +39,10 @@ class UpiPaymentIntentService
             ];
         }
 
-        $currency = $settings?->default_currency ?? 'INR';
+        $currency = app(ChurchCurrencyResolver::class)
+            ->currencyCodeForTenantId($tenantId)
+            ?? $settings?->default_currency
+            ?? 'INR';
         $transactionNote = $this->buildTransactionNote($tenantId, $familyId, $note);
 
         $query = http_build_query([
@@ -49,7 +53,7 @@ class UpiPaymentIntentService
             'tn' => $transactionNote,
         ], '', '&', PHP_QUERY_RFC3986);
 
-        $upiUri = 'upi://pay?' . $query;
+        $upiUri = 'upi://pay?'.$query;
 
         return [
             'available' => true,
@@ -66,7 +70,7 @@ class UpiPaymentIntentService
     private function buildQrDataUri(string $payload): string
     {
         $builder = new Builder(
-            writer: new PngWriter(),
+            writer: new PngWriter,
             data: $payload,
             size: 240,
             margin: 8,
@@ -88,7 +92,7 @@ class UpiPaymentIntentService
                 ->first();
 
             if ($family) {
-                return mb_substr('Contribution ' . ($family->family_code ?: $family->family_name), 0, 80);
+                return mb_substr('Contribution '.($family->family_code ?: $family->family_name), 0, 80);
             }
         }
 

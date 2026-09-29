@@ -2,10 +2,14 @@
 
 namespace Modules\Donations\Services;
 
+use Carbon\Carbon;
 use Modules\Authentication\Models\User;
 use Modules\Donations\Models\DonationPayment;
 use Modules\Donations\Models\DonationProject;
+use Modules\Donations\Support\DonationBusinessDate;
 use Modules\Family\Models\Family;
+use Modules\Tenants\Services\ChurchFinancialPeriodResolver;
+use Modules\Tenants\Support\ChurchMoneyFormatter;
 
 class FinancialCommandCenterService
 {
@@ -17,8 +21,7 @@ class FinancialCommandCenterService
         private readonly ParishExpenseService $parishExpenseService,
         private readonly CollectionForecastService $forecastService,
         private readonly WhatsAppDeliveryService $whatsAppDeliveryService
-    ) {
-    }
+    ) {}
 
     /**
      * @return array<string, mixed>
@@ -26,17 +29,17 @@ class FinancialCommandCenterService
     public function build(int $tenantId, ?User $user = null, string $period = 'month'): array
     {
         $summary = $this->dashboardService->getSummary($tenantId);
-        $currency = $summary['tenant_context']['currency_code'] ?? 'INR';
         $periodCollections = $summary['period_collections'] ?? [];
         $totals = $summary['totals'] ?? [];
         $families = $summary['families'] ?? [];
         $kpis = $summary['kpis'] ?? [];
 
         $monthExpenses = $this->parishExpenseService->monthTotal($tenantId);
-        $annualExpenses = $this->parishExpenseService->yearTotal(
-            $tenantId,
-            $this->resolveFyStartFromSummary($summary)
-        );
+        $fyStart = $this->resolveFyStartFromSummary($tenantId, $summary);
+        $fyEnd = app(ChurchFinancialPeriodResolver::class)
+            ->currentFiscalYear($tenantId)
+            ->end;
+        $annualExpenses = $this->parishExpenseService->yearTotal($tenantId, $fyStart, $fyEnd);
         $monthCollected = (float) ($periodCollections['current_month_collected'] ?? 0);
         $annualCollected = (float) ($periodCollections['annual_collected'] ?? 0);
         $expenseRatio = $monthCollected > 0 ? round(($monthExpenses / $monthCollected) * 100, 1) : 0.0;
@@ -49,14 +52,14 @@ class FinancialCommandCenterService
         $healthIndex = $summary['financial_health'] ?? [];
         $healthIndex['ai_summary'] = $this->buildHealthAiSummary($healthIndex, $summary);
 
-        $trend = $this->filterTrendByPeriod($summary['collection_trend'] ?? [], $period, $summary);
+        $trend = $this->filterTrendByPeriod($tenantId, $summary['collection_trend'] ?? [], $period, $summary);
         $collectionChart = $this->filterChartByPeriod($summary['collection_performance_chart'] ?? null, $trend);
 
         return [
             'meta' => [
                 'church_name' => $summary['tenant_context']['name'] ?? 'Parish',
                 'financial_year' => $periodCollections['financial_year'] ?? null,
-                'currency_code' => $currency,
+                'currency_code' => $summary['tenant_context']['currency_code'] ?? null,
                 'period' => $period,
                 'last_synced_at' => now()->toIso8601String(),
                 'operator_name' => $user?->name,
@@ -124,8 +127,8 @@ class FinancialCommandCenterService
     }
 
     /**
-     * @param array<string, mixed> $summary
-     * @param array<string, mixed> $forecast
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $forecast
      * @return array<string, mixed>
      */
     private function buildCollectionHealth(array $summary, array $forecast): array
@@ -137,7 +140,10 @@ class FinancialCommandCenterService
         $attention = $summary['attention_summary'] ?? [];
         $projects = $summary['active_project_summaries'] ?? [];
         $totals = $summary['totals'] ?? [];
-        $currency = $summary['tenant_context']['currency_code'] ?? 'INR';
+        $tenantId = (int) ($summary['tenant_context']['tenant_id'] ?? 0);
+        $formatMoney = static fn (float|int|string $amount): string => $tenantId > 0
+            ? ChurchMoneyFormatter::formatForTenant($tenantId, $amount)
+            : number_format((float) $amount, 2);
 
         $score = (float) ($health['score'] ?? 0);
         $status = (string) ($health['status'] ?? 'attention');
@@ -177,7 +183,7 @@ class FinancialCommandCenterService
             $issues[] = [
                 'severity' => 'warning',
                 'message' => sprintf('%s is below target', $laggingProject['name'] ?? 'A project'),
-                'detail' => $gap > 0 ? sprintf('Funding gap of %s %s', $currency, number_format($gap, 2)) : null,
+                'detail' => $gap > 0 ? sprintf('Funding gap of %s', $formatMoney($gap)) : null,
                 'cta_route' => '/donations/projects',
             ];
         }
@@ -187,7 +193,7 @@ class FinancialCommandCenterService
             $issues[] = [
                 'severity' => 'warning',
                 'message' => sprintf('Participation dropped by %d %s', abs($delta), abs($delta) === 1 ? 'family' : 'families'),
-                'cta_route' => '/donations/collection-health',
+                'cta_route' => '/donations',
             ];
         } elseif ($growth < 0) {
             $issues[] = [
@@ -213,7 +219,7 @@ class FinancialCommandCenterService
         if ($laggingProject) {
             $gap = max(0, (float) ($laggingProject['target_amount'] ?? 0) - (float) ($laggingProject['collected'] ?? 0));
             $secondaryReason = $gap > 0
-                ? sprintf('%s behind by %s %s', $laggingProject['name'] ?? 'Project', $currency, number_format($gap, 2))
+                ? sprintf('%s behind by %s', $laggingProject['name'] ?? 'Project', $formatMoney($gap))
                 : sprintf('%s funding below target', $laggingProject['name'] ?? 'Project');
         } elseif ($inactive > 0) {
             $secondaryReason = sprintf('%d inactive families', $inactive);
@@ -229,24 +235,22 @@ class FinancialCommandCenterService
         }
         if ($overdueCount > 0 && $overdueAmount > 0) {
             $insights[] = sprintf(
-                '%d families account for a significant share of %s %s in overdue contributions.',
+                '%d families account for a significant share of %s in overdue contributions.',
                 $overdueCount,
-                $currency,
-                number_format($overdueAmount, 2)
+                $formatMoney($overdueAmount)
             );
         }
         if ($laggingProject) {
             $gap = max(0, (float) ($laggingProject['target_amount'] ?? 0) - (float) ($laggingProject['collected'] ?? 0));
             if ($gap > 0) {
                 $insights[] = sprintf(
-                    '%s collections are projected to miss target by %s %s.',
+                    '%s collections are projected to miss target by %s.',
                     $laggingProject['name'] ?? 'A project',
-                    $currency,
-                    number_format($gap, 2)
+                    $formatMoney($gap)
                 );
             }
         }
-        if (!empty($forecast['narrative'])) {
+        if (! empty($forecast['narrative'])) {
             $insights[] = (string) $forecast['narrative'];
         }
         if ($overdueCount > 0) {
@@ -266,7 +270,7 @@ class FinancialCommandCenterService
             'primary_reason' => $primaryReason,
             'secondary_reason' => $secondaryReason,
             'action_label' => count($issues) > 0 ? 'Review Issues' : 'Open Health Center',
-            'action_route' => '/donations/collection-health',
+            'action_route' => '/donations',
             'factors' => [
                 $this->collectionHealthFactor('completion', 'Collection Completion Rate', $collectionPerformance, 35, $growth),
                 $this->collectionHealthFactor('participation', 'Family Participation Rate', $participation, 35, (float) $delta),
@@ -278,7 +282,7 @@ class FinancialCommandCenterService
             'recommended_actions' => [
                 ['id' => 'overdue', 'label' => 'View Overdue Families', 'route' => '/donations/dues'],
                 ['id' => 'reminders', 'label' => 'Send Follow-Up Reminders', 'route' => '/donations/notifications'],
-                ['id' => 'performance', 'label' => 'Review Collection Performance', 'route' => '/donations/collection-health'],
+                ['id' => 'performance', 'label' => 'Review Collection Performance', 'route' => '/donations'],
                 ['id' => 'projects', 'label' => 'Analyze Funding Projects', 'route' => '/donations/projects'],
                 ['id' => 'outreach', 'label' => 'Generate Outreach Campaign', 'route' => '/donations/notifications'],
                 ['id' => 'export', 'label' => 'Export Follow-Up List', 'route' => '/donations/reports'],
@@ -318,7 +322,7 @@ class FinancialCommandCenterService
     }
 
     /**
-     * @param array<string, mixed> $summary
+     * @param  array<string, mixed>  $summary
      * @return array<int, array<string, mixed>>
      */
     private function buildExecutiveCards(array $summary, float $monthExpenses, float $expenseRatio, float $netPosition): array
@@ -372,8 +376,8 @@ class FinancialCommandCenterService
     }
 
     /**
-     * @param array<string, mixed> $health
-     * @param array<string, mixed> $summary
+     * @param  array<string, mixed>  $health
+     * @param  array<string, mixed>  $summary
      */
     private function buildHealthAiSummary(array $health, array $summary): string
     {
@@ -392,7 +396,7 @@ class FinancialCommandCenterService
     }
 
     /**
-     * @param array<string, mixed> $summary
+     * @param  array<string, mixed>  $summary
      * @return array<int, array<string, mixed>>
      */
     private function buildIntelligenceStream(array $summary, int $tenantId): array
@@ -427,19 +431,19 @@ class FinancialCommandCenterService
     }
 
     /**
-     * @param array<string, mixed> $summary
-     * @param array<string, mixed> $forecast
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $forecast
      * @return array<int, string>
      */
     private function buildAdvisorActions(array $summary, array $forecast): array
     {
         $actions = [];
         foreach ($summary['proactive_insights'] ?? [] as $insight) {
-            if (!empty($insight['action']['label'])) {
+            if (! empty($insight['action']['label'])) {
                 $actions[] = $insight['action']['label'];
             }
         }
-        if (!empty($forecast['narrative'])) {
+        if (! empty($forecast['narrative'])) {
             $actions[] = 'Forecast Cash Flow';
         }
         if ((int) ($summary['attention_summary']['count'] ?? 0) > 0) {
@@ -511,7 +515,7 @@ class FinancialCommandCenterService
      */
     private function buildTodayCollections(int $tenantId): array
     {
-        $today = now()->toDateString();
+        $today = DonationBusinessDate::today($tenantId);
         $payments = DonationPayment::forTenant($tenantId)
             ->where('status', 'succeeded')
             ->whereDate('payment_date', $today)
@@ -562,26 +566,26 @@ class FinancialCommandCenterService
     }
 
     /**
-     * @param array<string, mixed> $summary
+     * @param  array<string, mixed>  $summary
      */
-    private function resolveFyStartFromSummary(array $summary): string
+    private function resolveFyStartFromSummary(int $tenantId, array $summary): string
     {
-        $fy = (string) ($summary['period_collections']['financial_year'] ?? '');
-        if (str_contains($fy, '-')) {
-            $startYear = (int) explode('-', $fy)[0];
-
-            return sprintf('%d-04-01', $startYear);
+        $start = (string) ($summary['period_collections']['financial_year_start'] ?? '');
+        if ($start !== '') {
+            return $start;
         }
 
-        return now()->startOfYear()->toDateString();
+        return app(ChurchFinancialPeriodResolver::class)
+            ->currentFiscalYear($tenantId)
+            ->start;
     }
 
     /**
-     * @param array<int, array<string, mixed>> $trend
-     * @param array<string, mixed> $summary
+     * @param  array<int, array<string, mixed>>  $trend
+     * @param  array<string, mixed>  $summary
      * @return array<int, array<string, mixed>>
      */
-    private function filterTrendByPeriod(array $trend, string $period, array $summary): array
+    private function filterTrendByPeriod(int $tenantId, array $trend, string $period, array $summary): array
     {
         if ($trend === []) {
             return [];
@@ -593,7 +597,7 @@ class FinancialCommandCenterService
         }
 
         if ($period === 'fy') {
-            $fyStart = $this->resolveFyStartFromSummary($summary);
+            $fyStart = $this->resolveFyStartFromSummary($tenantId, $summary);
             $fyKey = substr($fyStart, 0, 7);
 
             return array_values(array_filter($trend, fn (array $row) => ($row['period'] ?? '') >= $fyKey));
@@ -607,13 +611,13 @@ class FinancialCommandCenterService
     }
 
     /**
-     * @param array<string, mixed>|null $chart
-     * @param array<int, array<string, mixed>> $trend
+     * @param  array<string, mixed>|null  $chart
+     * @param  array<int, array<string, mixed>>  $trend
      * @return array<string, mixed>|null
      */
     private function filterChartByPeriod(?array $chart, array $trend): ?array
     {
-        if (!$chart || $trend === []) {
+        if (! $chart || $trend === []) {
             return $chart;
         }
 
@@ -631,8 +635,8 @@ class FinancialCommandCenterService
     }
 
     /**
-     * @param array<string, mixed> $summary
-     * @param array<string, mixed> $forecast
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $forecast
      * @return array<int, string>
      */
     private function buildAdvisorNarratives(array $summary, array $forecast): array
@@ -640,23 +644,33 @@ class FinancialCommandCenterService
         $narratives = [];
         $growth = (float) ($summary['kpis']['collection_growth_pct'] ?? 0);
         $monthCollected = (float) ($summary['period_collections']['current_month_collected'] ?? 0);
-        $currency = $summary['tenant_context']['currency_code'] ?? 'INR';
+        $tenantId = (int) ($summary['tenant_context']['tenant_id'] ?? 0);
+        $formatMoney = static fn (float|int|string $amount): string => $tenantId > 0
+            ? ChurchMoneyFormatter::formatForTenant($tenantId, $amount)
+            : number_format((float) $amount, 2);
 
         $narratives[] = $growth >= 0
-            ? sprintf('Collections grew %.1f%% versus last month with %s %s received this month.', $growth, $currency, number_format($monthCollected, 2))
+            ? sprintf('Collections grew %.1f%% versus last month with %s received this month.', $growth, $formatMoney($monthCollected))
             : sprintf('Collections declined %.1f%% versus last month — review the action center priorities.', abs($growth));
 
         $attention = (int) ($summary['attention_summary']['count'] ?? 0);
         $pending = (float) ($summary['totals']['pending_dues'] ?? 0);
         if ($attention > 0) {
-            $narratives[] = sprintf('%d families are overdue on mandatory contributions with %s %s exposed.', $attention, $currency, number_format((float) ($summary['attention_summary']['total_overdue_amount'] ?? 0), 2));
+            $narratives[] = sprintf(
+                '%d families are overdue on mandatory contributions with %s exposed.',
+                $attention,
+                $formatMoney((float) ($summary['attention_summary']['total_overdue_amount'] ?? 0))
+            );
         } elseif ($pending > 0) {
-            $narratives[] = sprintf('%s %s remains outstanding across the parish with no families currently overdue.', $currency, number_format($pending, 2));
+            $narratives[] = sprintf(
+                '%s remains outstanding across the parish with no families currently overdue.',
+                $formatMoney($pending)
+            );
         } else {
             $narratives[] = 'Mandatory contribution balances are clear — focus on project momentum and voluntary pledges.';
         }
 
-        if (!empty($forecast['narrative'])) {
+        if (! empty($forecast['narrative'])) {
             $narratives[] = (string) $forecast['narrative'];
         }
 
@@ -741,7 +755,7 @@ class FinancialCommandCenterService
         $monthsByFamily = [];
         foreach ($payments as $payment) {
             $month = $payment->payment_date?->format('Y-m');
-            if (!$month) {
+            if (! $month) {
                 continue;
             }
             $monthsByFamily[$payment->family_id][$month] = true;
@@ -754,8 +768,8 @@ class FinancialCommandCenterService
             $streak = 1;
             $maxStreak = 1;
             for ($i = 1; $i < count($sorted); $i++) {
-                $prev = \Carbon\Carbon::createFromFormat('Y-m', $sorted[$i - 1])->startOfMonth();
-                $curr = \Carbon\Carbon::createFromFormat('Y-m', $sorted[$i])->startOfMonth();
+                $prev = Carbon::createFromFormat('Y-m', $sorted[$i - 1])->startOfMonth();
+                $curr = Carbon::createFromFormat('Y-m', $sorted[$i])->startOfMonth();
                 if ($prev->copy()->addMonth()->format('Y-m') === $curr->format('Y-m')) {
                     $streak++;
                     $maxStreak = max($maxStreak, $streak);

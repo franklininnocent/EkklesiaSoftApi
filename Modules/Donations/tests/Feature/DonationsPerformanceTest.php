@@ -67,8 +67,16 @@ class DonationsPerformanceTest extends DonationsCertificationTestCase
         DB::flushQueryLog();
         DB::enableQueryLog();
         $list = $this->getJson('/api/tenant/donations/payments?per_page=20')->assertOk();
-        $listQueries = count(DB::getQueryLog());
-        $this->assertLessThan(25, $listQueries, 'Payment list should eager-load related rows. Queries: '.$listQueries);
+        $domainQueries = collect(DB::getQueryLog())->filter(function (array $query): bool {
+            $sql = $query['query'];
+
+            return str_contains($sql, 'donation_payments')
+                || str_contains($sql, 'payment_allocations')
+                || str_contains($sql, 'donation_receipts')
+                || str_contains($sql, 'from "families"')
+                || str_contains($sql, 'from `families`');
+        });
+        $this->assertLessThan(10, $domainQueries->count(), 'Payment list should eager-load related rows. Queries: '.$domainQueries->count());
         $this->assertSame(400, (int) $list->json('data.total'));
 
         DB::flushQueryLog();

@@ -15,6 +15,8 @@ use Modules\Family\Events\FamilyMemberStatusChanged;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
 use Modules\Family\Models\Person;
+use Modules\Sacraments\Models\Sacrament;
+use Modules\Tenants\Contracts\TenantLimitGuard;
 use Modules\Tenants\Services\Media\ImageMediaException;
 
 class FamilyService
@@ -92,6 +94,12 @@ class FamilyService
             unset($data['allow_duplicate']);
 
             DB::beginTransaction();
+
+            $newMembers = (! empty($data['members']) && is_array($data['members'])) ? count($data['members']) : 0;
+            $this->assertWithinPlanLimit($tenantId, 'FAMILY_LIMIT', 1);
+            if ($newMembers > 0) {
+                $this->assertWithinPlanLimit($tenantId, 'PEOPLE_LIMIT', $newMembers);
+            }
 
             // Add tenant and audit info
             $data['tenant_id'] = $tenantId;
@@ -263,6 +271,7 @@ class FamilyService
                             'family_id' => $family->id,
                             'first_name' => $memberData['first_name'] ?? 'N/A',
                         ]);
+                        $this->assertWithinPlanLimit($tenantId, 'PEOPLE_LIMIT', 1);
                         $memberData['created_by'] = $userId;
                         $memberData['updated_by'] = $userId;
                         $memberData = $this->ensureMemberPersonWithParents($memberData, $tenantId, $userId);
@@ -428,6 +437,8 @@ class FamilyService
             }
 
             DB::beginTransaction();
+
+            $this->assertWithinPlanLimit($tenantId, 'PEOPLE_LIMIT', 1);
 
             // Add audit info
             $memberData['created_by'] = $userId;
@@ -1104,6 +1115,8 @@ class FamilyService
             ]);
         }
 
+        $this->assertWithinPlanLimit($tenantId, 'PEOPLE_LIMIT', 1, 'sacrament_recipient');
+
         $memberData['person_id'] = $person->id;
         $memberData['created_by'] = $userId;
         $memberData['updated_by'] = $userId;
@@ -1136,6 +1149,9 @@ class FamilyService
         $familyData['updated_by'] = $userId;
         unset($familyData['members']);
 
+        $this->assertWithinPlanLimit($tenantId, 'FAMILY_LIMIT', 1, 'sacrament_recipient');
+        $this->assertWithinPlanLimit($tenantId, 'PEOPLE_LIMIT', 1, 'sacrament_recipient');
+
         $family = $this->familyRepository->create($familyData);
 
         $memberData['person_id'] = $person->id;
@@ -1151,6 +1167,13 @@ class FamilyService
         $this->applyBaptismRegisterToMemberIfEmpty($member, $person->id, (int) $tenantId);
 
         return ['family' => $family, 'person' => $person, 'member' => $member];
+    }
+
+    private function assertWithinPlanLimit(int|string $tenantId, string $metricCode, int $adding, ?string $flow = null): void
+    {
+        if (app()->bound(TenantLimitGuard::class)) {
+            app(TenantLimitGuard::class)->assertTenantCanAdd((int) $tenantId, $metricCode, $adding, $flow);
+        }
     }
 
     /**
@@ -1339,11 +1362,11 @@ class FamilyService
             return;
         }
 
-        if (! class_exists(\Modules\Sacraments\Models\Sacrament::class)) {
+        if (! class_exists(Sacrament::class)) {
             return;
         }
 
-        $baptism = \Modules\Sacraments\Models\Sacrament::query()
+        $baptism = Sacrament::query()
             ->where('tenant_id', $tenantId)
             ->where('person_id', $personId)
             ->whereNull('deleted_at')

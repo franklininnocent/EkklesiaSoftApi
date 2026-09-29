@@ -9,8 +9,7 @@ use Modules\Notifications\Models\NotificationDefinition;
 use Modules\Notifications\Models\NotificationEvent;
 use Modules\Notifications\Models\UserNotification;
 use Modules\Notifications\Support\InboxScope;
-use Modules\Notifications\Support\NotificationIntent;
-use Modules\Notifications\Services\NotificationPublisher;
+use Modules\Tenants\Models\Tenant;
 use Tests\TestCase;
 
 class NotificationInboxApiTest extends TestCase
@@ -25,8 +24,9 @@ class NotificationInboxApiTest extends TestCase
 
     public function test_tenant_user_lists_own_notifications(): void
     {
-        $user = User::factory()->create(['tenant_id' => 1, 'active' => 1]);
-        $this->createUserNotification($user, 1);
+        $tenant = $this->writableTenant();
+        $user = User::factory()->create(['tenant_id' => $tenant->id, 'active' => 1]);
+        $this->createUserNotification($user, (int) $tenant->id);
 
         $response = $this->actingAs($user, 'api')
             ->getJson('/api/tenant/notifications');
@@ -47,8 +47,9 @@ class NotificationInboxApiTest extends TestCase
 
     public function test_mark_read_decrements_unread_count(): void
     {
-        $user = User::factory()->create(['tenant_id' => 1, 'active' => 1]);
-        $row = $this->createUserNotification($user, 1);
+        $tenant = $this->writableTenant();
+        $user = User::factory()->create(['tenant_id' => $tenant->id, 'active' => 1]);
+        $row = $this->createUserNotification($user, (int) $tenant->id);
 
         $this->actingAs($user, 'api')
             ->getJson('/api/tenant/notifications/unread-count')
@@ -61,6 +62,35 @@ class NotificationInboxApiTest extends TestCase
         $this->actingAs($user, 'api')
             ->getJson('/api/tenant/notifications/unread-count')
             ->assertJsonPath('data.unread_count', 0);
+    }
+
+    public function test_user_cannot_read_or_update_another_users_notification(): void
+    {
+        $ownerTenant = $this->writableTenant();
+        $intruderTenant = $this->writableTenant();
+        $owner = User::factory()->create(['tenant_id' => $ownerTenant->id, 'active' => 1]);
+        $intruder = User::factory()->create(['tenant_id' => $intruderTenant->id, 'active' => 1]);
+        $row = $this->createUserNotification($owner, (int) $ownerTenant->id);
+
+        $this->actingAs($intruder, 'api')
+            ->getJson('/api/tenant/notifications/'.$row->id)
+            ->assertNotFound();
+
+        $this->actingAs($intruder, 'api')
+            ->patchJson('/api/tenant/notifications/'.$row->id.'/read')
+            ->assertNotFound();
+
+        $this->assertSame('unread', $row->fresh()->status);
+    }
+
+    private function writableTenant(): Tenant
+    {
+        return Tenant::factory()->create([
+            'active' => 1,
+            'trial_ends_at' => null,
+            'subscription_ends_at' => now()->addYear(),
+            'subscription_suspended_at' => null,
+        ]);
     }
 
     private function createUserNotification(User $user, int $tenantId): UserNotification

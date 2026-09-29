@@ -4,10 +4,17 @@ namespace Modules\SupportAccess\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Modules\Authentication\Models\Role;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Platform support permission gate (does not require an effective tenant).
+ *
+ * Support Center ops routes must not depend on an active support session.
+ * User::hasPermission() gates SCOPE_PLATFORM behind canResolvePlatformPermissions()
+ * (parish-home operators only resolve during session elevation) — that is correct for
+ * tenant product APIs, but wrong here. We check role/direct assignment via
+ * getAllPermissions() instead, after confirming the actor is a platform operator.
  */
 class EnsureSupportPermission
 {
@@ -35,7 +42,7 @@ class EnsureSupportPermission
 
         $missing = [];
         foreach ($permissions as $permission) {
-            if (! method_exists($user, 'hasPermission') || ! $user->hasPermission($permission)) {
+            if (! $this->hasAssignedSupportPermission($user, $permission)) {
                 $missing[] = $permission;
             }
         }
@@ -61,6 +68,19 @@ class EnsureSupportPermission
             return true;
         }
 
-        return method_exists($user, 'hasRole') && $user->hasRole(\Modules\Authentication\Models\Role::SUPPORT_ADMIN);
+        return method_exists($user, 'hasRole') && $user->hasRole(Role::SUPPORT_ADMIN);
+    }
+
+    /**
+     * True when the operator's roles/direct grants include the permission name.
+     * Does not require canResolvePlatformPermissions() / support-session elevation.
+     */
+    private function hasAssignedSupportPermission(object $user, string $permission): bool
+    {
+        if (method_exists($user, 'getAllPermissions')) {
+            return $user->getAllPermissions(true)->contains('name', $permission);
+        }
+
+        return method_exists($user, 'hasPermission') && $user->hasPermission($permission);
     }
 }

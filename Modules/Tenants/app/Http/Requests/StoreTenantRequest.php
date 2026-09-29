@@ -2,8 +2,10 @@
 
 namespace Modules\Tenants\Http\Requests;
 
+use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Modules\Tenants\Contracts\TenantPlanAssigner;
 
 class StoreTenantRequest extends FormRequest
 {
@@ -19,7 +21,7 @@ class StoreTenantRequest extends FormRequest
     /**
      * Get the validation rules that apply to the request.
      *
-     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
+     * @return array<string, ValidationRule|array<mixed>|string>
      */
     public function rules(): array
     {
@@ -33,7 +35,7 @@ class StoreTenantRequest extends FormRequest
             'slug' => 'nullable|string|max:255|alpha_dash|unique:tenants,slug',
             'domain' => 'nullable|string|max:255|unique:tenants,domain',
             'archdiocese_id' => 'nullable|integer|exists:archdioceses,id',
-            'plan' => 'nullable|string|in:free,basic,premium,enterprise',
+            'plan' => ['nullable', 'string', Rule::in($this->assignablePlanKeys())],
 
             // Tenant Official Address (Mandatory) - NEW STRUCTURE
             'tenant_official_address' => 'required|array',
@@ -185,5 +187,17 @@ class StoreTenantRequest extends FormRequest
             'secondary_user_address.country' => 'secondary country',
             'secondary_user_address.pin_zip_code' => 'secondary PIN/ZIP code',
         ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function assignablePlanKeys(): array
+    {
+        if (app()->bound(TenantPlanAssigner::class)) {
+            return app(TenantPlanAssigner::class)->assignablePlanKeys();
+        }
+
+        return ['free', 'starter', 'standard', 'professional', 'enterprise'];
     }
 }

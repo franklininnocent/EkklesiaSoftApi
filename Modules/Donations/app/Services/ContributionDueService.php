@@ -4,6 +4,7 @@ namespace Modules\Donations\Services;
 
 use Carbon\Carbon;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -12,7 +13,6 @@ use Modules\Donations\Jobs\GenerateFullContributionScheduleJob;
 use Modules\Donations\Models\ContributionDue;
 use Modules\Donations\Models\ContributionPlan;
 use Modules\Donations\Models\ContributionPlanAssignment;
-use Modules\Donations\Support\ContributionBalance;
 use Modules\Donations\Support\ContributionPeriod;
 use Modules\Donations\Support\ContributionPlanFrequencies;
 use Modules\Donations\Support\DonationBusinessDate;
@@ -23,9 +23,7 @@ use Modules\Tenants\Support\SubscriptionJobWriteGuard;
 
 class ContributionDueService
 {
-    public function __construct(private readonly DonationAuditService $auditService)
-    {
-    }
+    public function __construct(private readonly DonationAuditService $auditService) {}
 
     public function resolveAmountForFamily(ContributionPlan $plan, string $familyId, string $asOfDate): ?float
     {
@@ -145,7 +143,7 @@ class ContributionDueService
         $lockKey = "donations:generate-schedule:{$tenantId}:{$plan->id}";
         $lock = Cache::lock($lockKey, 60);
 
-        if (!$lock->get()) {
+        if (! $lock->get()) {
             throw new ScheduleGenerationBusyException('Dues are already being generated for this plan. Please wait and try again.');
         }
 
@@ -174,7 +172,7 @@ class ContributionDueService
                 : $this->estimateEnrolledFamilyCount($plan, $periods, $uniformFamilies, $individualAssignments);
             $totalOps = $familyCount * count($periods);
 
-            if (!$forceSync && $totalOps > ContributionPlanFrequencies::ASYNC_THRESHOLD) {
+            if (! $forceSync && $totalOps > ContributionPlanFrequencies::ASYNC_THRESHOLD) {
                 GenerateFullContributionScheduleJob::dispatch($tenantId, $userId, $plan->id, $familyIds);
 
                 return [
@@ -357,7 +355,7 @@ class ContributionDueService
         $businessToday = DonationBusinessDate::today($tenantId);
         $reference ??= Carbon::parse($businessToday);
 
-        if (!$this->isPlanActiveOnDate($plan, $reference->toDateString())) {
+        if (! $this->isPlanActiveOnDate($plan, $reference->toDateString())) {
             return [
                 'generated_count' => 0,
                 'unchanged_count' => 0,
@@ -389,7 +387,7 @@ class ContributionDueService
         $businessToday = DonationBusinessDate::today($tenantId);
         $reference ??= Carbon::parse($businessToday);
 
-        if (!$this->isPlanActiveOnDate($plan, $reference->toDateString())) {
+        if (! $this->isPlanActiveOnDate($plan, $reference->toDateString())) {
             return [];
         }
 
@@ -501,7 +499,7 @@ class ContributionDueService
 
         foreach ($tenantIds as $tenantId) {
             $tenantId = (int) $tenantId;
-            if (!$writeGuard->allowsMutationsForTenantId($tenantId)) {
+            if (! $writeGuard->allowsMutationsForTenantId($tenantId)) {
                 continue;
             }
 
@@ -519,6 +517,7 @@ class ContributionDueService
     {
         $oldStatus = $due->status;
         $due->status = 'waived';
+        $due->status_changed_at = now();
         $due->notes = trim(($due->notes ? $due->notes.' ' : '').($reason ?? 'Waived'));
         $due->updated_by = $userId;
         $due->save();
@@ -573,7 +572,7 @@ class ContributionDueService
         $familyCount = count($this->getEnrolledFamilyIds($plan, $periods[0]['period_start']));
         $totalOps = $familyCount * count($periods);
 
-        if (!$forceSync && $totalOps > ContributionPlanFrequencies::ASYNC_THRESHOLD) {
+        if (! $forceSync && $totalOps > ContributionPlanFrequencies::ASYNC_THRESHOLD) {
             GenerateFullContributionScheduleJob::dispatch($tenantId, $userId, $plan->id, null, true);
 
             return [
@@ -663,7 +662,7 @@ class ContributionDueService
             }
 
             if ($existing->status === 'cancelled') {
-                if (!MoneyMath::isPositive($existing->amount_paid ?? 0)) {
+                if (! MoneyMath::isPositive($existing->amount_paid ?? 0)) {
                     $existing->status = 'pending';
                     $existing->due_date = $dueDate;
                     $existing->amount_due = MoneyMath::normalize($amountDue);
@@ -681,7 +680,7 @@ class ContributionDueService
                 return null;
             }
 
-            if (!$allowUpdatePending) {
+            if (! $allowUpdatePending) {
                 if ($existing->period_start === null && $periodStart !== null) {
                     $existing->period_start = $periodStart;
                     $existing->period_end = $periodEnd;
@@ -765,7 +764,7 @@ class ContributionDueService
             ->where('period_label', $periodLabel)
             ->first();
 
-        if (!$existing) {
+        if (! $existing) {
             return 'unchanged';
         }
 
@@ -814,7 +813,7 @@ class ContributionDueService
     }
 
     /**
-     * @return \Illuminate\Support\Collection<int, ContributionPlanAssignment>
+     * @return Collection<int, ContributionPlanAssignment>
      */
     private function loadIndividualAssignmentsForPlan(ContributionPlan $plan)
     {
@@ -826,8 +825,8 @@ class ContributionDueService
     }
 
     /**
-     * @param array<int, array{period_label: string, period_start: string, period_end: string, due_date: string}> $periods
-     * @param array<int, array{id: string, joined_on: string}>|null $uniformFamilies
+     * @param  array<int, array{period_label: string, period_start: string, period_end: string, due_date: string}>  $periods
+     * @param  array<int, array{id: string, joined_on: string}>|null  $uniformFamilies
      */
     private function estimateEnrolledFamilyCount(
         ContributionPlan $plan,
@@ -852,8 +851,8 @@ class ContributionDueService
     }
 
     /**
-     * @param array<int, array{id: string, joined_on: string}>|null $uniformFamilies
-     * @param \Illuminate\Support\Collection<int, ContributionPlanAssignment>|null $individualAssignments
+     * @param  array<int, array{id: string, joined_on: string}>|null  $uniformFamilies
+     * @param  Collection<int, ContributionPlanAssignment>|null  $individualAssignments
      * @return array<int, string>
      */
     private function resolveEnrolledFamilyIds(
@@ -896,7 +895,7 @@ class ContributionDueService
     }
 
     /**
-     * @param array<int, array{period_label: string, period_start: string, period_end: string, due_date: string}> $periods
+     * @param  array<int, array{period_label: string, period_start: string, period_end: string, due_date: string}>  $periods
      */
     private function updateFuturePendingOnReconcile(
         int $tenantId,

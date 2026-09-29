@@ -3,8 +3,8 @@
 namespace Modules\Tenants\Database\Seeders;
 
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Schema;
 use Modules\Tenants\Models\SubscriptionPlan;
-use Illuminate\Support\Facades\DB;
 
 class SubscriptionPlansSeeder extends Seeder
 {
@@ -27,30 +27,6 @@ class SubscriptionPlansSeeder extends Seeder
                 'is_default' => true,
             ],
             [
-                'key' => 'basic',
-                'name' => 'Basic Plan',
-                'description' => 'Ideal for growing churches with moderate needs',
-                'price' => 29.99,
-                'max_users' => 50,
-                'max_storage_mb' => 1000,
-                'features' => ['events', 'donations', 'ministries_associations'],
-                'display_order' => 2,
-                'active' => true,
-                'is_default' => false,
-            ],
-            [
-                'key' => 'premium',
-                'name' => 'Premium Plan',
-                'description' => 'Comprehensive solution for established churches',
-                'price' => 99.99,
-                'max_users' => 100,
-                'max_storage_mb' => 5000,
-                'features' => ['events', 'donations', 'groups', 'messaging', 'ministries_associations'],
-                'display_order' => 3,
-                'active' => true,
-                'is_default' => false,
-            ],
-            [
                 'key' => 'enterprise',
                 'name' => 'Enterprise Plan',
                 'description' => 'Full-featured solution with unlimited users and premium support',
@@ -58,18 +34,24 @@ class SubscriptionPlansSeeder extends Seeder
                 'max_users' => 999999,
                 'max_storage_mb' => 50000,
                 'features' => ['events', 'donations', 'groups', 'messaging', 'custom_branding', 'api_access', 'dedicated_support', 'ministries_associations'],
-                'display_order' => 4,
+                'display_order' => 2,
                 'active' => true,
                 'is_default' => false,
             ],
         ];
 
+        // Once the versioned catalog (Subscriptions module) owns plans, legacy seed rows are not
+        // needed and existing rows must never be overwritten (Super Admin edits, grandfathering).
+        if (Schema::hasColumn('subscription_plans', 'code')
+            && SubscriptionPlan::withTrashed()->whereNotNull('code')->exists()) {
+            return;
+        }
+
         foreach ($plans as $plan) {
-            SubscriptionPlan::updateOrCreate(
-                ['key' => $plan['key']],
-                $plan
-            );
+            if (SubscriptionPlan::withTrashed()->where('key', $plan['key'])->exists()) {
+                continue;
+            }
+            SubscriptionPlan::query()->create($plan);
         }
     }
 }
-

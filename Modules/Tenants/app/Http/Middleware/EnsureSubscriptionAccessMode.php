@@ -19,8 +19,7 @@ class EnsureSubscriptionAccessMode
     public function __construct(
         private readonly SubscriptionService $subscriptionService,
         private readonly SubscriptionRouteAllowlist $allowlist,
-    ) {
-    }
+    ) {}
 
     public function handle(Request $request, Closure $next): Response
     {
@@ -38,13 +37,19 @@ class EnsureSubscriptionAccessMode
         }
 
         $effectiveTenantId = app(TenantContext::class)->effectiveTenantId();
+        $homeTenantId = isset($user->tenant_id) ? $user->tenant_id : null;
+
         if (! $effectiveTenantId) {
+            if ($homeTenantId) {
+                return $this->denyUnresolvedTenant($request) ?? $next($request);
+            }
+
             return $next($request);
         }
 
         $tenant = Tenant::query()->find($effectiveTenantId);
         if (! $tenant) {
-            return $next($request);
+            return $this->denyUnresolvedTenant($request) ?? $next($request);
         }
 
         if ($this->subscriptionService->isWriteAllowed($tenant)) {
@@ -70,6 +75,25 @@ class EnsureSubscriptionAccessMode
     private function isSafeReadMethod(Request $request): bool
     {
         return in_array($request->method(), ['GET', 'HEAD', 'OPTIONS'], true);
+    }
+
+    /**
+     * Parish context is missing. Reads stay available. Mutations fail closed
+     * unless the route is on the subscription write allowlist.
+     */
+    private function denyUnresolvedTenant(Request $request): ?Response
+    {
+        if ($this->isSafeReadMethod($request) || $this->allowlist->allows($request)) {
+            return null;
+        }
+
+        return response()->json([
+            'success' => false,
+            'code' => SubscriptionService::CODE_SUBSCRIPTION_READ_ONLY,
+            'reason' => 'subscription_blocked',
+            'access_mode' => SubscriptionService::ACCESS_MODE_READ_ONLY,
+            'message' => 'This account cannot save changes until a parish subscription is available.',
+        ], 403);
     }
 
     private function deny(Tenant $tenant): Response
