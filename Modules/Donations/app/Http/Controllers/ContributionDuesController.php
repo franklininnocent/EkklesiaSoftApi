@@ -13,18 +13,19 @@ use Modules\Donations\Models\ContributionDue;
 use Modules\Donations\Services\ContributionDueService;
 use Modules\Donations\Services\DonationAuditService;
 use Modules\Donations\Support\ContributionBalance;
+use Modules\Donations\Support\DonationBusinessDate;
+use Modules\Tenants\Support\TenantContext;
 
 class ContributionDuesController extends Controller
 {
     public function __construct(
         private readonly DonationAuditService $auditService,
         private readonly ContributionDueService $dueService
-    ) {
-    }
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
 
         $query = ContributionDue::forTenant($tenantId)->with(['family', 'plan']);
 
@@ -37,14 +38,31 @@ class ContributionDuesController extends Controller
         if ($request->filled('plan_id')) {
             $query->where('plan_id', $request->string('plan_id'));
         }
-        if ($request->boolean('overdue_only')) {
-            $query->whereDate('due_date', '<', now()->toDateString())
-                ->whereIn('status', ['pending', 'partially_paid']);
+        $businessDate = DonationBusinessDate::today($tenantId);
+        $overdueOnly = $request->boolean('overdue_only');
+        $remainingOnly = $request->boolean('remaining_only');
+        $actionable = $request->boolean('actionable');
+
+        if ($overdueOnly && $remainingOnly) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Use either overdue_only or remaining_only, not both.',
+            ], 422);
+        }
+
+        if ($overdueOnly) {
+            ContributionBalance::scopeOverdue($query, $businessDate);
+        } elseif ($remainingOnly) {
+            ContributionBalance::scopeRemainingCollectable($query, $businessDate);
+        } elseif ($actionable) {
+            ContributionBalance::scopeCollectable($query, $businessDate);
         }
 
         $paginator = $query->orderBy('due_date')->paginate((int) $request->input('per_page', 20));
-        $paginator->getCollection()->transform(function (ContributionDue $due): ContributionDue {
+        $paginator->getCollection()->transform(function (ContributionDue $due) use ($businessDate): ContributionDue {
             $due->setAttribute('outstanding_amount', ContributionBalance::outstandingForDue($due));
+            $due->setAttribute('is_overdue', ContributionBalance::scheduleState($due, $businessDate) === 'overdue');
+            $due->setAttribute('schedule_state', ContributionBalance::scheduleState($due, $businessDate));
 
             return $due;
         });
@@ -57,7 +75,7 @@ class ContributionDuesController extends Controller
 
     public function store(StoreDueRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
         $payload = $request->validated();
         $payload['tenant_id'] = $tenantId;
         $payload['amount_paid'] = 0;
@@ -76,11 +94,11 @@ class ContributionDuesController extends Controller
 
     public function waive(string $id, UpdateDueStatusRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $due = ContributionDue::forTenant($tenantId)->findOrFail($id);
 
-        if (!in_array($due->status, ['pending', 'partially_paid'], true)) {
+        if (! in_array($due->status, ['pending', 'partially_paid'], true)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Only pending or partially paid dues can be waived.',
@@ -98,11 +116,11 @@ class ContributionDuesController extends Controller
 
     public function cancel(string $id, UpdateDueStatusRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $due = ContributionDue::forTenant($tenantId)->findOrFail($id);
 
-        if (!in_array($due->status, ['pending', 'partially_paid'], true)) {
+        if (! in_array($due->status, ['pending', 'partially_paid'], true)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Only pending or partially paid dues can be cancelled.',
@@ -120,7 +138,7 @@ class ContributionDuesController extends Controller
 
     public function sendReminder(string $id): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
         $due = ContributionDue::forTenant($tenantId)->findOrFail($id);
 
         SendContributionReminderJob::dispatch($tenantId, $due->id);

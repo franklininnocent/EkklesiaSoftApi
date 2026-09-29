@@ -11,7 +11,7 @@ use Modules\Family\Models\Family;
 
 class ContributionDue extends Model
 {
-    use HasUuids, SoftDeletes, BelongsToTenant;
+    use BelongsToTenant, HasUuids, SoftDeletes;
 
     protected $table = 'contribution_dues';
 
@@ -20,17 +20,23 @@ class ContributionDue extends Model
         'family_id',
         'plan_id',
         'period_label',
+        'period_start',
+        'period_end',
         'due_date',
         'amount_due',
         'amount_paid',
         'status',
+        'status_changed_at',
         'notes',
         'created_by',
         'updated_by',
     ];
 
     protected $casts = [
-        'due_date' => 'date',
+        'period_start' => 'date:Y-m-d',
+        'period_end' => 'date:Y-m-d',
+        'due_date' => 'date:Y-m-d',
+        'status_changed_at' => 'datetime',
         'amount_due' => 'decimal:2',
         'amount_paid' => 'decimal:2',
     ];

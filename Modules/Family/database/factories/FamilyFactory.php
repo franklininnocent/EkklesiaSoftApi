@@ -2,10 +2,11 @@
 
 namespace Modules\Family\Database\Factories;
 
+use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Modules\Family\Models\Family;
+use Modules\Family\Models\FamilyMember;
 use Modules\Tenants\Models\Tenant;
-use App\Models\User;
 
 class FamilyFactory extends Factory
 {
@@ -15,7 +16,7 @@ class FamilyFactory extends Factory
     {
         return [
             'tenant_id' => Tenant::factory(),
-            'family_name' => $this->faker->lastName() . ' Family',
+            'family_name' => $this->faker->lastName().' Family',
             'head_of_family' => $this->faker->name(),
             'address_line_1' => $this->faker->streetAddress(),
             'address_line_2' => $this->faker->optional()->secondaryAddress(),
@@ -44,5 +45,28 @@ class FamilyFactory extends Factory
             'status' => 'inactive',
         ]);
     }
-}
 
+    /**
+     * @param  array<string, mixed>  $attrs
+     */
+    public function withAddress(array $attrs = []): static
+    {
+        return $this->state(fn (array $attributes) => array_merge([
+            'address_line_1' => '123 Oak Street',
+            'address_line_2' => null,
+            'city' => 'Springfield',
+            'postal_code' => '62701',
+        ], $attrs));
+    }
+
+    public function withPrimaryPhone(string $phone): static
+    {
+        return $this->afterCreating(function (Family $family) use ($phone) {
+            FamilyMember::factory()->head()->active()->create([
+                'family_id' => $family->id,
+                'phone' => $phone,
+                'is_primary_contact' => true,
+            ]);
+        });
+    }
+}

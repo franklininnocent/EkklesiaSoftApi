@@ -14,9 +14,10 @@ class UpdateDonationSettingsRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'default_currency' => ['required', 'string', 'max:10'],
+            'default_currency' => ['prohibited'],
             'financial_year_start_month' => ['required', 'string', 'size:2'],
             'financial_year_start_day' => ['required', 'string', 'size:2'],
+            'financial_year_source' => ['nullable', 'string', 'in:country,tenant'],
             'tax_registration_number' => ['nullable', 'string', 'max:120'],
             'tax_acknowledgement_note' => ['nullable', 'string'],
             'receipt_prefix_enabled' => ['nullable', 'boolean'],

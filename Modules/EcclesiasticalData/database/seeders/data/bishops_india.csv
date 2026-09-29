@@ -1,19 +1,23 @@
 diocese_name,bishop_title,first_name,middle_name,last_name,date_of_birth,place_of_birth,date_of_ordination,date_of_episcopal_ordination,date_of_appointment,ecclesiastical_title,religious_order,nationality,email,phone,status,notes
-Madras-Mylapore,Archbishop,George,,Antonysamy,1952-04-18,"Kumbakonam, Tamil Nadu",1977-04-14,2008-01-26,2022-11-18,Archbishop,,Indian,archbishop@archdioceseofchennai.org,,active,Archbishop of Madras-Mylapore (Chennai)
+Madras-Mylapore,Archbishop,George,,Antonysamy,1958-10-11,"Thoothukudi, Tamil Nadu",1980-11-19,2005-09-21,2012-11-21,Archbishop,,Indian,archbishop@archdioceseofchennai.org,,active,Archbishop of Madras-Mylapore (Chennai)
 Pondicherry-Cuddalore,Archbishop,Francis,,Kalist,1949-12-03,"Karaikal, Puducherry",1977-04-09,1999-10-10,2004-01-25,Archbishop,,Indian,archbishop@pondicherryarchdiocese.org,,active,Archbishop of Pondicherry and Cuddalore
-Madurai,Archbishop,Antony,,Pappusamy,1960-05-15,"Andipatti, Tamil Nadu",1986-04-19,2004-03-14,2016-04-16,Archbishop,,Indian,archbishop@archdioceseofmadurai.org,,active,Archbishop of Madurai
-Chingleput,Bishop,Anthonisamy,,Neethinathan,1966-10-02,"Chingleput, Tamil Nadu",1994-04-30,2021-05-23,2021-03-20,Bishop,,Indian,bishop@chingleputdiocese.org,,active,Bishop of Chingleput
-Coimbatore,Bishop,Thomas,,Aquinas,1957-11-28,"Coimbatore, Tamil Nadu",1985-04-20,2012-01-14,2012-01-14,Bishop,,Indian,bishop@coimbatorediocese.org,,active,Bishop of Coimbatore
-Dharmapuri,Bishop,Lawrence,Pius,Dorairaj,1965-07-25,"Dharmapuri, Tamil Nadu",1993-04-24,2017-10-08,2017-08-05,Bishop,,Indian,bishop@dharmapuridiocese.org,,active,Bishop of Dharmapuri
-Dindigul,Bishop,Thomas,,Paulsamy,1958-03-12,"Dindigul, Tamil Nadu",1986-04-19,2016-09-11,2016-06-14,Bishop,,Indian,bishop@dindiguldiocese.org,,active,Bishop of Dindigul
-Kottar,Bishop,Nazarene,,Soosai,1959-07-10,"Anjugramam, Tamil Nadu",1986-04-19,2004-02-14,2014-10-23,Bishop,,Indian,bishop@kottardiocese.org,,active,Bishop of Kottar
-Kumbakonam,Bishop,F.,,Antonisamy,1960-01-05,"Kumbakonam, Tamil Nadu",1987-04-18,2013-02-17,2012-12-01,Bishop,,Indian,bishop@kumbakonamdiocese.org,,active,Bishop of Kumbakonam
-Kuzhithurai,Bishop,Jerome,Dhas,Varuvel,1962-09-30,"Kuzhithurai, Tamil Nadu",1990-04-21,2019-02-24,2018-12-08,Bishop,,Indian,bishop@kuzhithuraidiocese.org,,active,Bishop of Kuzhithurai
-Ootacamund,Bishop,Arulappan,,Amalraj,1963-06-15,"Salem, Tamil Nadu",1990-04-21,2018-09-23,2018-06-23,Bishop,,Indian,bishop@ootydiocese.org,,active,Bishop of Ootacamund (Ooty)
-Palayamkottai,Bishop,Antonysamy,,Savarimuthu,1956-05-20,"Palayamkottai, Tamil Nadu",1984-04-21,2013-09-28,2014-07-30,Bishop,,Indian,bishop@palayamkottaidiocese.org,,active,Bishop of Palayamkottai
-Salem,Bishop,Arulselvam,,Rayappan,1965-04-28,"Trichy, Tamil Nadu",1992-04-18,2017-07-01,2017-04-22,Bishop,,Indian,bishop@salemdiocese.org,,active,Bishop of Salem
-Sivagangai,Bishop,Lourdu,,Anandam,1959-08-10,"Sivagangai, Tamil Nadu",1988-04-16,2014-10-19,2014-08-02,Bishop,,Indian,bishop@sivagangaidiocese.org,,active,Bishop of Sivagangai
-Thanjavur,Bishop,Devadass,Ambrose,Mariadoss,1963-09-08,"Kumbakonam, Tamil Nadu",1990-04-21,2018-02-11,2017-12-14,Bishop,,Indian,bishop@thanjavurdiocese.org,,active,Bishop of Thanjavur
-Thoothukudi,Bishop,Stephen,,Antony,1968-05-01,"Thoothukudi, Tamil Nadu",1996-04-20,2019-08-25,2019-06-01,Bishop,,Indian,bishop@thoothukudidiocese.org,,active,Bishop of Thoothukudi (Tuticorin)
-Tiruchirapalli,Bishop,Arockiaraj,,Savarimuthu,1961-11-25,"Tiruchirapalli, Tamil Nadu",1989-04-22,2016-05-15,2016-02-06,Bishop,,Indian,bishop@tiruchirapallidiocese.org,,active,Bishop of Tiruchirapalli (Trichy)
-Vellore,Bishop,Peter,Abir,Antonysamy,1964-02-10,"Vellore, Tamil Nadu",1991-04-20,2019-11-03,2019-08-31,Bishop,,Indian,bishop@vellorediocese.org,,active,Bishop of Vellore
+Madurai,Archbishop,Antonysamy,,Savarimuthu,1956-05-20,"Palayamkottai, Tamil Nadu",1984-04-21,2013-09-28,2025-07-05,Archbishop,,Indian,archbishop@archdioceseofmadurai.org,,active,Archbishop of Madurai
+Madurai,Archbishop,Antony,,Pappusamy,1960-05-15,"Andipatti, Tamil Nadu",1986-04-19,2004-03-14,2016-04-16,Archbishop,,Indian,archbishop@archdioceseofmadurai.org,,retired,Former Archbishop of Madurai (retired 4 Nov 2024)
+Chingleput,Bishop,Anthonisamy,,Neethinathan,1955-07-03,"Chingleput, Tamil Nadu",1987-05-09,2002-09-29,2021-03-20,Bishop,,Indian,bishop@chingleputdiocese.org,,active,Bishop of Chingleput
+Coimbatore,Bishop,Thomas,Aquinas,Lephonse,1953-03-06,"Coimbatore, Tamil Nadu",1980-05-22,2002-08-28,2012-01-14,Bishop,,Indian,bishop@coimbatorediocese.org,,active,Bishop of Coimbatore
+Dharmapuri,Bishop,Lawrence,Pius,Dorairaj,1954-06-14,"Dharmapuri, Tamil Nadu",1981-12-28,1999-02-21,2017-08-05,Bishop,,Indian,bishop@dharmapuridiocese.org,,active,Bishop of Dharmapuri
+Dindigul,Bishop,Thomas,,Paulsamy,1958-03-12,"Dindigul, Tamil Nadu",1986-04-19,2016-09-11,2016-06-14,Bishop,,Indian,bishop@dindiguldiocese.org,,retired,Former Bishop of Dindigul (retired 3 Aug 2026; see sede vacante)
+Kottar,Bishop,Nazarene,,Soosai,1963-04-13,"Anjugramam, Tamil Nadu",1989-04-02,2017-06-29,2014-10-23,Bishop,,Indian,bishop@kottardiocese.org,,active,Bishop of Kottar
+Kumbakonam,Bishop,Jeevanandam,,Amalanathan,1963-04-02,"Kumbakonam, Tamil Nadu",1991-04-21,2024-02-11,2024-01-13,Bishop,,Indian,bishop@kumbakonamdiocese.org,,active,Bishop of Kumbakonam
+Kumbakonam,Bishop,F.,,Antonisamy,1960-01-05,"Kumbakonam, Tamil Nadu",1987-04-18,2013-02-17,2012-12-01,Bishop,,Indian,bishop@kumbakonamdiocese.org,,retired,Former Bishop of Kumbakonam (retired 13 Jan 2024)
+Kuzhithurai,Bishop,Albert,George Alexander,Anastas,1966-12-16,"Manavilai, Tamil Nadu",1992-04-26,2024-02-22,2024-01-13,Bishop,,Indian,rcdiocesekuzhithurai@gmail.com,04651-272077,active,Bishop of Kuzhithurai
+Kuzhithurai,Bishop,Jerome,Dhas,Varuvel,1962-09-30,"Kuzhithurai, Tamil Nadu",1990-04-21,2015-02-24,2014-12-22,Bishop,SDB,Indian,bishop@kuzhithuraidiocese.org,,deceased,Former Bishop of Kuzhithurai (resigned 6 Jun 2020; died 24 Mar 2026)
+Ootacamund,Bishop,Arulappan,,Amalraj,1953-12-04,"Salem, Tamil Nadu",1980-12-26,2006-08-09,2018-06-23,Bishop,,Indian,bishop@ootydiocese.org,,active,Bishop of Ootacamund (Ooty)
+Salem,Bishop,Arulselvam,,Rayappan,1960-11-18,"Trichy, Tamil Nadu",1986-05-20,2021-08-04,2017-04-22,Bishop,,Indian,bishop@salemdiocese.org,,active,Bishop of Salem
+Sivagangai,Bishop,Lourdu,,Anandam,1958-08-15,"Sivagangai, Tamil Nadu",1986-04-06,2023-11-26,2014-08-02,Bishop,,Indian,bishop@sivagangaidiocese.org,,active,Bishop of Sivagangai
+Thanjavur,Bishop,Sagayaraj,,Thamburaj,1969-03-14,"Ayyampatty, Tamil Nadu",1996-04-17,2024-08-18,2024-07-13,Bishop,,Indian,bishop@thanjavurdiocese.org,,active,Bishop of Thanjavur
+Thanjavur,Bishop,Devadass,Ambrose,Mariadoss,1963-09-08,"Kumbakonam, Tamil Nadu",1990-04-21,2018-02-11,2017-12-14,Bishop,,Indian,bishop@thanjavurdiocese.org,,retired,Former Bishop of Thanjavur (ended 4 Feb 2023)
+Thoothukudi,Bishop,Stephen,Antony,Pillai,1952-06-22,"Thoothukudi, Tamil Nadu",1979-05-07,2019-02-24,2019-06-01,Bishop,,Indian,bishop@thoothukudidiocese.org,,active,Bishop of Thoothukudi (Tuticorin)
+Tiruchirapalli,Bishop,Savarimuthu,,Arokiaraj,1954-10-24,"Tiruchirapalli, Tamil Nadu",1981-01-08,2021-08-15,2016-02-06,Bishop,,Indian,bishop@tiruchirapallidiocese.org,,active,Bishop of Tiruchirapalli (Trichy)
+Vellore,Bishop,Ambrose,,Pitchaimuthu,1966-05-03,"Cheyyur, Tamil Nadu",1993-03-25,2024-12-09,2024-11-09,Bishop,,Indian,bishop@vellorediocese.org,,active,Bishop of Vellore
+Vellore,Bishop,Peter,Abir,Antonysamy,1964-02-10,"Vellore, Tamil Nadu",1991-04-20,2019-11-03,2019-08-31,Bishop,,Indian,bishop@vellorediocese.org,,retired,Former Bishop of Vellore

@@ -4,12 +4,11 @@ namespace Modules\Donations\Services;
 
 use Modules\Family\Models\Family;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Support\ChurchMoneyFormatter;
 
 class FamilyStatementPrintService
 {
-    public function __construct(private readonly FamilyFinancialProfileService $profileService)
-    {
-    }
+    public function __construct(private readonly FamilyFinancialProfileService $profileService) {}
 
     /**
      * @return array<string, mixed>
@@ -21,6 +20,7 @@ class FamilyStatementPrintService
         $tenant = Tenant::query()->find($tenantId);
 
         return array_merge($profile, [
+            'tenant_id' => $tenantId,
             'family' => [
                 'id' => $family->id,
                 'name' => $family->family_name,
@@ -35,7 +35,7 @@ class FamilyStatementPrintService
     }
 
     /**
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $payload
      */
     public function renderHtml(array $payload): string
     {
@@ -51,26 +51,27 @@ class FamilyStatementPrintService
 
         $insightsHtml = '';
         foreach ($insights as $insight) {
-            $insightsHtml .= '<li>' . htmlspecialchars((string) $insight) . '</li>';
+            $insightsHtml .= '<li>'.htmlspecialchars((string) $insight).'</li>';
         }
 
         $actionsHtml = '';
         foreach ($actions as $action) {
-            $actionsHtml .= '<li>' . htmlspecialchars((string) $action) . '</li>';
+            $actionsHtml .= '<li>'.htmlspecialchars((string) $action).'</li>';
         }
 
+        $tenantId = (int) ($payload['tenant_id'] ?? 0);
         $rows = [
-            ['Total paid', number_format((float) ($totals['total_paid'] ?? 0), 2)],
-            ['Outstanding', number_format((float) ($totals['pending_due'] ?? 0), 2)],
-            ['Mandatory outstanding', number_format((float) ($totals['pending_mandatory_due'] ?? 0), 2)],
-            ['Project outstanding', number_format((float) ($totals['pending_project_due'] ?? 0), 2)],
-            ['Overdue amount', number_format((float) ($totals['overdue_amount'] ?? 0), 2)],
-            ['Voluntary collected', number_format((float) ($totals['voluntary_collected'] ?? 0), 2)],
+            ['Total paid', ChurchMoneyFormatter::formatForTenant($tenantId, $totals['total_paid'] ?? 0)],
+            ['Outstanding', ChurchMoneyFormatter::formatForTenant($tenantId, $totals['pending_due'] ?? 0)],
+            ['Mandatory outstanding', ChurchMoneyFormatter::formatForTenant($tenantId, $totals['pending_mandatory_due'] ?? 0)],
+            ['Project outstanding', ChurchMoneyFormatter::formatForTenant($tenantId, $totals['pending_project_due'] ?? 0)],
+            ['Overdue amount', ChurchMoneyFormatter::formatForTenant($tenantId, $totals['overdue_amount'] ?? 0)],
+            ['Voluntary collected', ChurchMoneyFormatter::formatForTenant($tenantId, $totals['voluntary_collected'] ?? 0)],
         ];
 
         $metricsHtml = '';
         foreach ($rows as [$label, $value]) {
-            $metricsHtml .= '<tr><td>' . htmlspecialchars($label) . '</td><td style="text-align:right">' . $value . '</td></tr>';
+            $metricsHtml .= '<tr><td>'.htmlspecialchars($label).'</td><td style="text-align:right">'.$value.'</td></tr>';
         }
 
         $healthScore = (int) ($health['score'] ?? 0);

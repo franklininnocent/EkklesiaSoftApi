@@ -8,16 +8,16 @@ use Illuminate\Support\Facades\Auth;
 use Modules\Donations\Http\Requests\StoreParishExpenseRequest;
 use Modules\Donations\Models\ParishExpense;
 use Modules\Donations\Services\DonationAuditService;
+use Modules\Tenants\Services\ChurchCurrencyResolver;
+use Modules\Tenants\Support\TenantContext;
 
 class ParishExpensesController extends Controller
 {
-    public function __construct(private readonly DonationAuditService $auditService)
-    {
-    }
+    public function __construct(private readonly DonationAuditService $auditService) {}
 
     public function index(): JsonResponse
     {
-        $tenantId = (int) Auth::user()->tenant_id;
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
         $expenses = ParishExpense::forTenant($tenantId)
             ->orderByDesc('expense_date')
             ->limit(100)
@@ -31,14 +31,15 @@ class ParishExpensesController extends Controller
 
     public function store(StoreParishExpenseRequest $request): JsonResponse
     {
-        $tenantId = (int) Auth::user()->tenant_id;
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $payload = $request->validated();
         $payload['tenant_id'] = $tenantId;
         $payload['recorded_by'] = $userId;
         $payload['created_by'] = $userId;
         $payload['updated_by'] = $userId;
-        $payload['currency'] = $payload['currency'] ?? 'INR';
+        $payload['currency'] = app(ChurchCurrencyResolver::class)
+            ->currencyCodeForTenantId($tenantId) ?? 'INR';
         $payload['method'] = $payload['method'] ?? 'cash';
         $payload['status'] = $payload['status'] ?? 'recorded';
 

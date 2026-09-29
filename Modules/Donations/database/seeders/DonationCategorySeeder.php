@@ -26,18 +26,40 @@ class DonationCategorySeeder extends Seeder
             ['name' => 'Anonymous Donation', 'code' => 'ANONYMOUS', 'description' => 'Anonymous voluntary gift', 'is_tax_deductible' => false],
         ];
 
-        foreach ($defaults as $category) {
-            DonationCategory::updateOrCreate(
-                ['tenant_id' => $tenantId, 'code' => $category['code']],
-                [
+        DonationCategory::runWithoutTenantScope(function () use ($tenantId, $userId, $defaults): void {
+            foreach ($defaults as $category) {
+                $existing = DonationCategory::withTrashed()
+                    ->where('tenant_id', $tenantId)
+                    ->where('code', $category['code'])
+                    ->first();
+
+                if ($existing) {
+                    if ($existing->trashed()) {
+                        $existing->restore();
+                    }
+
+                    $existing->update([
+                        'name' => $category['name'],
+                        'description' => $category['description'],
+                        'is_tax_deductible' => $category['is_tax_deductible'],
+                        'active' => true,
+                        'updated_by' => $userId,
+                    ]);
+
+                    continue;
+                }
+
+                DonationCategory::create([
+                    'tenant_id' => $tenantId,
+                    'code' => $category['code'],
                     'name' => $category['name'],
                     'description' => $category['description'],
                     'is_tax_deductible' => $category['is_tax_deductible'],
                     'active' => true,
                     'created_by' => $userId,
                     'updated_by' => $userId,
-                ]
-            );
-        }
+                ]);
+            }
+        });
     }
 }

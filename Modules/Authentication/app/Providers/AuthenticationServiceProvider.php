@@ -2,8 +2,12 @@
 
 namespace Modules\Authentication\Providers;
 
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\ServiceProvider;
+use Modules\Authentication\Console\CleanupExpiredPasswordRecoveriesCommand;
+use Modules\Authentication\Support\StaffUserUsageProvider;
+use Modules\Tenants\Support\UsageMetricRegistry;
 use Nwidart\Modules\Traits\PathNamespace;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -26,7 +30,7 @@ class AuthenticationServiceProvider extends ServiceProvider
         $this->registerTranslations();
         $this->registerConfig();
         $this->registerViews();
-        
+
         // Load module migrations
         $this->loadMigrationsFrom(module_path($this->name, 'database/migrations'));
 
@@ -54,6 +58,10 @@ class AuthenticationServiceProvider extends ServiceProvider
     {
         $this->app->register(EventServiceProvider::class);
         $this->app->register(RouteServiceProvider::class);
+
+        $this->callAfterResolving(UsageMetricRegistry::class, static function ($registry): void {
+            $registry->register(new StaffUserUsageProvider);
+        });
     }
 
     /**
@@ -61,7 +69,9 @@ class AuthenticationServiceProvider extends ServiceProvider
      */
     protected function registerCommands(): void
     {
-        // $this->commands([]);
+        $this->commands([
+            CleanupExpiredPasswordRecoveriesCommand::class,
+        ]);
     }
 
     /**
@@ -69,10 +79,12 @@ class AuthenticationServiceProvider extends ServiceProvider
      */
     protected function registerCommandSchedules(): void
     {
-        // $this->app->booted(function () {
-        //     $schedule = $this->app->make(Schedule::class);
-        //     $schedule->command('inspire')->hourly();
-        // });
+        $this->app->booted(function () {
+            $schedule = $this->app->make(Schedule::class);
+            $schedule->command('auth:cleanup-password-recoveries')
+                ->everyFifteenMinutes()
+                ->withoutOverlapping();
+        });
     }
 
     /**
@@ -147,7 +159,7 @@ class AuthenticationServiceProvider extends ServiceProvider
 
         $this->loadViewsFrom(array_merge($this->getPublishableViewPaths(), [$sourcePath]), $this->nameLower);
 
-        Blade::componentNamespace(config('modules.namespace').'\\' . $this->name . '\\View\\Components', $this->nameLower);
+        Blade::componentNamespace(config('modules.namespace').'\\'.$this->name.'\\View\\Components', $this->nameLower);
     }
 
     /**

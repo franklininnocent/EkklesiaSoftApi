@@ -38,6 +38,7 @@ class BCCLeader extends Model
      * @var array<string>
      */
     protected $fillable = [
+        'tenant_id',
         'bcc_id',
         'family_member_id',
         'role',
@@ -45,7 +46,13 @@ class BCCLeader extends Model
         'appointed_date',
         'term_start_date',
         'term_end_date',
+        'term_label',
+        'appointment_reference',
+        'is_interim',
         'is_active',
+        'status',
+        'exit_reason',
+        'remarks',
         'leader_phone',
         'leader_email',
         'responsibilities',
@@ -63,6 +70,7 @@ class BCCLeader extends Model
         'appointed_date' => 'date',
         'term_start_date' => 'date',
         'term_end_date' => 'date',
+        'is_interim' => 'boolean',
         'is_active' => 'boolean',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',

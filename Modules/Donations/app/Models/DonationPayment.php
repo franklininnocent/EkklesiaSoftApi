@@ -13,7 +13,7 @@ use Modules\Family\Models\Family;
 
 class DonationPayment extends Model
 {
-    use HasUuids, SoftDeletes, BelongsToTenant;
+    use BelongsToTenant, HasUuids, SoftDeletes;
 
     protected $table = 'donation_payments';
 
@@ -28,6 +28,7 @@ class DonationPayment extends Model
         'payer_phone',
         'payment_date',
         'amount',
+        'refunded_amount',
         'currency',
         'method',
         'gateway_reference',
@@ -35,6 +36,7 @@ class DonationPayment extends Model
         'source_type',
         'is_anonymous',
         'notes',
+        'idempotency_key',
         'created_by',
         'updated_by',
     ];
@@ -42,6 +44,7 @@ class DonationPayment extends Model
     protected $casts = [
         'payment_date' => 'date',
         'amount' => 'decimal:2',
+        'refunded_amount' => 'decimal:2',
         'is_anonymous' => 'boolean',
     ];
 
@@ -65,8 +68,16 @@ class DonationPayment extends Model
         return $this->hasMany(PaymentAllocation::class, 'payment_id');
     }
 
+    public function receipts(): HasMany
+    {
+        return $this->hasMany(DonationReceipt::class, 'payment_id');
+    }
+
+    /** Active non-void receipt (one per payment; do not use ofMany — PG has no MAX(uuid)). */
     public function receipt(): HasOne
     {
-        return $this->hasOne(DonationReceipt::class, 'payment_id');
+        return $this->hasOne(DonationReceipt::class, 'payment_id')
+            ->where('is_void', false)
+            ->orderByDesc('created_at');
     }
 }

@@ -19,7 +19,7 @@ class ContributionPlanAssignmentsController extends Controller
 
     public function index(string $planId, Request $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         ContributionPlan::forTenant($tenantId)->findOrFail($planId);
 
         $assignments = ContributionPlanAssignment::forTenant($tenantId)
@@ -37,7 +37,7 @@ class ContributionPlanAssignmentsController extends Controller
 
     public function store(string $planId, StorePlanAssignmentRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $plan = ContributionPlan::forTenant($tenantId)->findOrFail($planId);
         $payload = $request->validated();

@@ -12,6 +12,15 @@ class UpdateTenantRoleRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('name') && is_string($this->input('name'))) {
+            $this->merge([
+                'name' => trim($this->input('name')),
+            ]);
+        }
+    }
+
     public function rules(): array
     {
         $tenantId = $this->user()?->tenant_id;
@@ -28,7 +37,7 @@ class UpdateTenantRoleRequest extends FormRequest
                     ->ignore($roleId),
             ],
             'description' => ['nullable', 'string'],
-            'level' => ['sometimes', 'required', 'integer', 'min:1', 'max:10'],
+            'level' => ['sometimes', 'required', 'integer', 'min:2', 'max:10'],
             'active' => ['nullable', 'boolean'],
         ];
     }

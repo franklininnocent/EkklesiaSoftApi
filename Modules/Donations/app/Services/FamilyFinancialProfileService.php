@@ -2,6 +2,7 @@
 
 namespace Modules\Donations\Services;
 
+use Illuminate\Support\Collection;
 use Modules\Donations\Models\ContributionDue;
 use Modules\Donations\Models\ContributionPlan;
 use Modules\Donations\Models\ContributionPlanAssignment;
@@ -10,7 +11,12 @@ use Modules\Donations\Models\DonationPayment;
 use Modules\Donations\Models\DonationSetting;
 use Modules\Donations\Models\ProjectInstallmentDue;
 use Modules\Donations\Support\ContributionBalance;
+use Modules\Donations\Support\DonationBusinessDate;
 use Modules\Family\Models\Family;
+use Modules\Tenants\Services\ChurchCurrencyResolver;
+use Modules\Tenants\Services\ChurchFinancialPeriodResolver;
+use Modules\Tenants\Support\ChurchFinancialPeriod;
+use Modules\Tenants\Support\ChurchMoneyFormatter;
 
 class FamilyFinancialProfileService
 {
@@ -18,8 +24,7 @@ class FamilyFinancialProfileService
         private readonly DonationProjectService $projectService,
         private readonly FamilyFinancialAnalyticsService $analyticsService,
         private readonly FinancialHealthService $healthService
-    ) {
-    }
+    ) {}
 
     /**
      * @return array<string, mixed>
@@ -28,15 +33,19 @@ class FamilyFinancialProfileService
     {
         $this->assertFamilyBelongsToTenant($tenantId, $familyId);
 
-        $asOfDate = now()->toDateString();
-        $financialYear = $this->resolveFinancialYearLabel($tenantId);
-        $currency = DonationSetting::forTenant($tenantId)->first()?->default_currency ?? 'INR';
+        $asOfDate = DonationBusinessDate::today($tenantId);
+        $fyPeriod = app(ChurchFinancialPeriodResolver::class)->currentFiscalYear($tenantId);
+        $financialYear = $fyPeriod->label;
+        $financialYearKey = $fyPeriod->key;
+        $currency = app(ChurchCurrencyResolver::class)
+            ->currencyCodeForTenantId($tenantId)
+            ?? DonationSetting::forTenant($tenantId)->first()?->default_currency;
 
         $paymentBreakdown = $this->buildPaymentBreakdown($tenantId, $familyId);
         $mandatory = $this->buildMandatorySummary($tenantId, $familyId, $asOfDate);
         $projectSummary = $this->projectService->getFamilyProjectSummary($tenantId, $familyId);
         $projectSummary = $this->enrichProjectInstallmentStatus($tenantId, $familyId, $projectSummary);
-        $donationsOfferings = $this->buildDonationsOfferings($tenantId, $familyId, $financialYear);
+        $donationsOfferings = $this->buildDonationsOfferings($tenantId, $familyId, $fyPeriod, $asOfDate);
         $paymentHistory = $this->buildPaymentHistory($tenantId, $familyId);
         $outstandingBalances = $this->buildOutstandingBalances($mandatory, $projectSummary, $donationsOfferings);
         $analytics = $this->analyticsService->build($tenantId, $familyId, $mandatory, $paymentBreakdown);
@@ -61,8 +70,8 @@ class FamilyFinancialProfileService
                 'pending_due' => $pendingDue,
                 'pending_mandatory_due' => round($pendingMandatoryDue, 2),
                 'pending_project_due' => round($pendingProjectDue, 2),
-                'overdue_count' => $mandatory['totals']['overdue_count'] + $this->countOverdueInstallments($projectSummary),
-                'overdue_amount' => round($mandatory['totals']['overdue_amount'] + $this->sumOverdueInstallmentAmount($projectSummary), 2),
+                'overdue_count' => $mandatory['totals']['overdue_count'] + $this->countOverdueInstallments($projectSummary, $asOfDate),
+                'overdue_amount' => round($mandatory['totals']['overdue_amount'] + $this->sumOverdueInstallmentAmount($projectSummary, $asOfDate), 2),
                 'net' => round($paymentBreakdown['total_paid'] - $pendingDue, 2),
                 'voluntary_collected' => $donationsOfferings['lifetime_collected'],
             ],
@@ -80,7 +89,7 @@ class FamilyFinancialProfileService
             'payment_history' => $paymentHistory,
             'outstanding_balances' => $outstandingBalances,
             'analytics' => $analytics,
-            'ai_insights' => $this->buildAiInsights($mandatory, $projectSummary, $donationsOfferings, $analytics, $outstandingBalances),
+            'ai_insights' => $this->buildAiInsights($tenantId, $mandatory, $projectSummary, $donationsOfferings, $analytics, $outstandingBalances),
             'recommended_actions' => $this->buildRecommendedActions($mandatory, $projectSummary, $outstandingBalances),
         ];
 
@@ -95,7 +104,7 @@ class FamilyFinancialProfileService
     {
         $family = Family::query()->find($familyId);
 
-        if (!$family || (int) $family->tenant_id !== (int) $tenantId) {
+        if (! $family || (int) $family->tenant_id !== (int) $tenantId) {
             throw new \RuntimeException('Family does not belong to the tenant.');
         }
     }
@@ -130,7 +139,7 @@ class FamilyFinancialProfileService
                 match ($allocation->allocatable_type) {
                     'due' => $mandatoryPaid += $amount,
                     'project', 'project_installment' => $projectPaid += $amount,
-                    'donation' => $voluntaryPaid += $amount,
+                    'donation', 'fund', 'plan' => $voluntaryPaid += $amount,
                     default => null,
                 };
             }
@@ -159,18 +168,38 @@ class FamilyFinancialProfileService
             ->with('plan:id,name,code,frequency,grace_days,status')
             ->get();
 
-        $outstandingDues = $allDues
-            ->whereIn('status', ['pending', 'partially_paid'])
+        $collectableDues = $allDues
+            ->filter(fn (ContributionDue $due) => ContributionBalance::isCollectable($due, $asOfDate))
             ->sortBy('due_date')
+            ->values();
+
+        $outstandingDues = $collectableDues
+            ->filter(fn (ContributionDue $due) => in_array(
+                ContributionBalance::scheduleState($due, $asOfDate),
+                ['overdue', 'due_today', 'grace'],
+                true
+            ))
+            ->map(fn (ContributionDue $due) => $this->mapDueRow($due, $asOfDate));
+
+        $currentPeriodDues = $collectableDues
+            ->filter(fn (ContributionDue $due) => ContributionBalance::scheduleState($due, $asOfDate) === 'current')
+            ->map(fn (ContributionDue $due) => $this->mapDueRow($due, $asOfDate));
+
+        $scheduledDues = $allDues
+            ->filter(fn (ContributionDue $due) => ContributionBalance::scheduleState($due, $asOfDate) === 'future')
+            ->sortBy('due_date')
+            ->take(50)
             ->values()
-            ->map(fn (ContributionDue $due) => $this->mapDueRow($due));
+            ->map(fn (ContributionDue $due) => $this->mapDueRow($due, $asOfDate));
+
+        $collectAllocationDues = $this->buildCollectAllocationDues($collectableDues, $asOfDate);
 
         $overdueDues = $outstandingDues
             ->filter(fn (array $row) => $row['is_overdue'])
             ->values();
 
         $assignments = $this->buildMandatoryAssignments($tenantId, $familyId, $asOfDate);
-        $planSummaries = $this->buildContributionPlanSummaries($assignments, $allDues, $asOfDate);
+        $planSummaries = $this->buildContributionPlanSummaries($assignments, $allDues, $asOfDate, $tenantId);
         $contributionPlanTotals = $this->buildContributionPlanTotals($planSummaries);
 
         return [
@@ -179,6 +208,9 @@ class FamilyFinancialProfileService
             'contribution_plans' => $planSummaries,
             'contribution_plan_totals' => $contributionPlanTotals,
             'outstanding_dues' => $outstandingDues->take(50)->values()->all(),
+            'current_period_dues' => $currentPeriodDues->take(50)->values()->all(),
+            'scheduled_dues' => $scheduledDues->all(),
+            'collect_allocation_dues' => $collectAllocationDues,
             'overdue_dues' => $overdueDues->take(50)->values()->all(),
             'totals' => [
                 'assigned' => $contributionPlanTotals['total_commitment'],
@@ -194,10 +226,10 @@ class FamilyFinancialProfileService
      * Merge active plan assignments with generated dues so families see obligations
      * even before dues are generated for the current period.
      *
-     * @param array<int, array<string, mixed>> $assignments
+     * @param  array<int, array<string, mixed>>  $assignments
      * @return array<int, array<string, mixed>>
      */
-    private function buildContributionPlanSummaries(array $assignments, $allDues, string $asOfDate): array
+    private function buildContributionPlanSummaries(array $assignments, $allDues, string $asOfDate, int $tenantId): array
     {
         $duesByPlan = $allDues->groupBy('plan_id');
         $summariesByPlanId = [];
@@ -205,7 +237,7 @@ class FamilyFinancialProfileService
         foreach ($assignments as $assignment) {
             $planId = $assignment['plan_id'];
             $dues = $duesByPlan->get($planId, collect());
-            $summariesByPlanId[$planId] = $this->summarizeContributionPlanForFamily($assignment, $dues);
+            $summariesByPlanId[$planId] = $this->summarizeContributionPlanForFamily($assignment, $dues, $asOfDate);
         }
 
         foreach ($duesByPlan as $planId => $dues) {
@@ -223,7 +255,7 @@ class FamilyFinancialProfileService
                 'assigned_amount' => null,
                 'is_exempt' => false,
                 'plan_status' => $firstDue->plan?->status,
-            ], $dues);
+            ], $dues, $asOfDate);
         }
 
         return collect($summariesByPlanId)
@@ -233,32 +265,67 @@ class FamilyFinancialProfileService
     }
 
     /**
-     * @param array<string, mixed> $assignment
-     * @param \Illuminate\Support\Collection<int, ContributionDue> $dues
+     * @param  array<string, mixed>  $assignment
+     * @param  Collection<int, ContributionDue>  $dues
      * @return array<string, mixed>
      */
-    private function summarizeContributionPlanForFamily(array $assignment, $dues): array
+    private function summarizeContributionPlanForFamily(array $assignment, $dues, string $asOfDate): array
     {
-        $outstandingDueRows = $dues->whereIn('status', ['pending', 'partially_paid']);
-        $overdueCount = $dues->filter(fn (ContributionDue $due) => $this->isDueOverdue($due))->count();
+        $openDues = $dues->whereIn('status', ['pending', 'partially_paid']);
+        $overdueCount = $dues->filter(fn (ContributionDue $due) => $this->isDueOverdue($due, $asOfDate))->count();
+
+        $assignedAmount = ($assignment['is_exempt'] ?? false)
+            ? 0.0
+            : round((float) ($assignment['assigned_amount'] ?? 0), 2);
 
         if ($dues->isNotEmpty()) {
-            $assignedAmount = round((float) $dues->sum('amount_due'), 2);
             $amountPaid = round((float) $dues->sum('amount_paid'), 2);
+            $scheduledTotal = round((float) $dues->where('status', '!=', 'cancelled')->sum('amount_due'), 2);
+            $installmentCount = $dues->where('status', '!=', 'cancelled')->count();
+
+            $collectableRows = $openDues->filter(fn (ContributionDue $due) => ContributionBalance::isCollectable($due, $asOfDate));
             $outstandingBalance = round(
-                (float) $outstandingDueRows->sum(fn (ContributionDue $due) => ContributionBalance::outstandingForDue($due)),
+                (float) $collectableRows->sum(fn (ContributionDue $due) => ContributionBalance::outstandingForDue($due)),
                 2
             );
-            $installmentCount = $dues->count();
-            $nextDueDate = $outstandingDueRows->sortBy('due_date')->first()?->due_date?->toDateString();
+            $overdueAmount = round(
+                (float) $openDues
+                    ->filter(fn (ContributionDue $due) => ContributionBalance::scheduleState($due, $asOfDate) === 'overdue')
+                    ->sum(fn (ContributionDue $due) => ContributionBalance::outstandingForDue($due)),
+                2
+            );
+            $currentPeriodAmount = round(
+                (float) $openDues
+                    ->filter(fn (ContributionDue $due) => ContributionBalance::scheduleState($due, $asOfDate) === 'current')
+                    ->sum(fn (ContributionDue $due) => ContributionBalance::outstandingForDue($due)),
+                2
+            );
+            $futureScheduledAmount = round(
+                (float) $openDues
+                    ->filter(fn (ContributionDue $due) => ContributionBalance::scheduleState($due, $asOfDate) === 'future')
+                    ->sum(fn (ContributionDue $due) => ContributionBalance::outstandingForDue($due)),
+                2
+            );
+
+            $nextDueDate = $openDues->sortBy('due_date')->first()?->due_date?->toDateString();
+            $nextUpcomingDueDate = $openDues
+                ->filter(fn (ContributionDue $due) => ($due->due_date?->toDateString() ?? '') >= $asOfDate)
+                ->sortBy('due_date')
+                ->first()?->due_date?->toDateString();
+
+            if ($scheduledTotal > $assignedAmount) {
+                $assignedAmount = $scheduledTotal;
+            }
         } else {
-            $assignedAmount = ($assignment['is_exempt'] ?? false)
-                ? 0.0
-                : round((float) ($assignment['assigned_amount'] ?? 0), 2);
             $amountPaid = 0.0;
-            $outstandingBalance = $assignedAmount;
+            $scheduledTotal = 0.0;
             $installmentCount = 0;
+            $outstandingBalance = $assignedAmount;
+            $overdueAmount = 0.0;
+            $currentPeriodAmount = 0.0;
+            $futureScheduledAmount = 0.0;
             $nextDueDate = null;
+            $nextUpcomingDueDate = null;
         }
 
         return [
@@ -271,8 +338,13 @@ class FamilyFinancialProfileService
             'amount_paid' => $amountPaid,
             'amount_pending' => $outstandingBalance,
             'outstanding_balance' => $outstandingBalance,
+            'scheduled_total' => $scheduledTotal,
+            'overdue_amount' => $overdueAmount,
+            'current_period_amount' => $currentPeriodAmount,
+            'future_scheduled_amount' => $futureScheduledAmount,
             'installment_count' => $installmentCount,
             'next_due_date' => $nextDueDate,
+            'next_upcoming_due_date' => $nextUpcomingDueDate,
             'overdue_count' => $overdueCount,
             'status' => $this->resolveContributionPlanStatus($assignment, $dues, $overdueCount, $outstandingBalance),
             'is_exempt' => (bool) ($assignment['is_exempt'] ?? false),
@@ -282,8 +354,8 @@ class FamilyFinancialProfileService
     }
 
     /**
-     * @param array<string, mixed> $assignment
-     * @param \Illuminate\Support\Collection<int, ContributionDue> $dues
+     * @param  array<string, mixed>  $assignment
+     * @param  Collection<int, ContributionDue>  $dues
      */
     private function resolveContributionPlanStatus(
         array $assignment,
@@ -307,7 +379,7 @@ class FamilyFinancialProfileService
     }
 
     /**
-     * @param array<int, array<string, mixed>> $planSummaries
+     * @param  array<int, array<string, mixed>>  $planSummaries
      * @return array<string, float|int>
      */
     private function buildContributionPlanTotals(array $planSummaries): array
@@ -392,13 +464,21 @@ class FamilyFinancialProfileService
     /**
      * @return array<string, mixed>
      */
-    private function buildDonationsOfferings(int $tenantId, string $familyId, string $financialYear): array
-    {
+    private function buildDonationsOfferings(
+        int $tenantId,
+        string $familyId,
+        ChurchFinancialPeriod $fyPeriod,
+        string $asOfDate
+    ): array {
         $baseQuery = Donation::forTenant($tenantId)->where('family_id', $familyId);
 
         $lifetimeCollected = (float) (clone $baseQuery)->sum('collected_amount');
+        $fyEnd = min($fyPeriod->end, $asOfDate);
         $currentYearCollected = (float) (clone $baseQuery)
-            ->where('financial_year', $financialYear)
+            ->where(function ($query) use ($fyPeriod, $fyEnd): void {
+                $query->whereBetween('received_at', [$fyPeriod->start, $fyEnd])
+                    ->orWhereIn('financial_year', $this->legacyFinancialYearKeys($fyPeriod));
+            })
             ->sum('collected_amount');
         $lastDonationDate = (clone $baseQuery)
             ->where('collected_amount', '>', 0)
@@ -447,7 +527,8 @@ class FamilyFinancialProfileService
         return [
             'lifetime_collected' => round($lifetimeCollected, 2),
             'current_financial_year_collected' => round($currentYearCollected, 2),
-            'financial_year' => $financialYear,
+            'financial_year' => $fyPeriod->label,
+            'financial_year_key' => $fyPeriod->key,
             'last_donation_date' => $lastDonationDate ? (string) $lastDonationDate : null,
             'pledged_outstanding' => round($pledgedOutstanding, 2),
             'entry_count' => (int) (clone $baseQuery)->count(),
@@ -497,9 +578,9 @@ class FamilyFinancialProfileService
     }
 
     /**
-     * @param array<string, mixed> $mandatory
-     * @param array<string, mixed> $projectSummary
-     * @param array<string, mixed> $donationsOfferings
+     * @param  array<string, mixed>  $mandatory
+     * @param  array<string, mixed>  $projectSummary
+     * @param  array<string, mixed>  $donationsOfferings
      * @return array<string, mixed>
      */
     private function buildOutstandingBalances(array $mandatory, array $projectSummary, array $donationsOfferings): array
@@ -520,7 +601,7 @@ class FamilyFinancialProfileService
     }
 
     /**
-     * @param array<string, mixed> $projectSummary
+     * @param  array<string, mixed>  $projectSummary
      * @return array<string, mixed>
      */
     private function enrichProjectInstallmentStatus(int $tenantId, string $familyId, array $projectSummary): array
@@ -579,18 +660,23 @@ class FamilyFinancialProfileService
         return $projectSummary;
     }
 
-    private function mapDueRow(ContributionDue $due): array
+    private function mapDueRow(ContributionDue $due, string $asOfDate): array
     {
+        $scheduleState = ContributionBalance::scheduleState($due, $asOfDate);
+
         return [
             'id' => $due->id,
             'plan_id' => $due->plan_id,
             'period_label' => $due->period_label,
+            'period_start' => $due->period_start?->toDateString(),
+            'period_end' => $due->period_end?->toDateString(),
             'due_date' => $due->due_date?->toDateString(),
             'amount_due' => (float) $due->amount_due,
             'amount_paid' => (float) $due->amount_paid,
             'outstanding_amount' => ContributionBalance::outstandingForDue($due),
             'status' => $due->status,
-            'is_overdue' => $this->isDueOverdue($due),
+            'schedule_state' => $scheduleState,
+            'is_overdue' => $scheduleState === 'overdue',
             'plan' => $due->plan ? [
                 'id' => $due->plan->id,
                 'name' => $due->plan->name,
@@ -600,61 +686,84 @@ class FamilyFinancialProfileService
         ];
     }
 
-    private function isDueOverdue(ContributionDue $due): bool
+    /**
+     * @param  Collection<int, ContributionDue>  $collectableDues
+     * @return array<int, array<string, mixed>>
+     */
+    private function buildCollectAllocationDues($collectableDues, string $asOfDate): array
     {
-        if (!in_array($due->status, ['pending', 'partially_paid'], true)) {
-            return false;
-        }
+        $overdue = $collectableDues
+            ->filter(fn (ContributionDue $due) => ContributionBalance::scheduleState($due, $asOfDate) === 'overdue')
+            ->sortBy('due_date')
+            ->take(2)
+            ->values();
 
-        $graceDays = (int) ($due->plan?->grace_days ?? 0);
-        $dueDate = $due->due_date?->copy()->addDays($graceDays);
+        $current = $collectableDues
+            ->filter(fn (ContributionDue $due) => in_array(
+                ContributionBalance::scheduleState($due, $asOfDate),
+                ['current', 'due_today'],
+                true
+            ))
+            ->sortBy('due_date')
+            ->take(1)
+            ->values();
 
-        return $dueDate && $dueDate->lt(now()->startOfDay());
+        return $overdue
+            ->concat($current)
+            ->unique('id')
+            ->map(fn (ContributionDue $due) => $this->mapDueRow($due, $asOfDate))
+            ->values()
+            ->all();
+    }
+
+    private function isDueOverdue(ContributionDue $due, string $asOfDate): bool
+    {
+        return ContributionBalance::scheduleState($due, $asOfDate) === 'overdue';
     }
 
     /**
-     * @param array<string, mixed> $projectSummary
+     * @param  array<string, mixed>  $projectSummary
      */
-    private function countOverdueInstallments(array $projectSummary): int
+    private function countOverdueInstallments(array $projectSummary, string $businessDate): int
     {
         return collect($projectSummary['outstanding_installments'] ?? [])
-            ->filter(fn (array $row) => ($row['due_date'] ?? '') < now()->toDateString())
+            ->filter(fn (array $row) => ($row['due_date'] ?? '') < $businessDate)
             ->count();
     }
 
     /**
-     * @param array<string, mixed> $projectSummary
+     * @param  array<string, mixed>  $projectSummary
      */
-    private function sumOverdueInstallmentAmount(array $projectSummary): float
+    private function sumOverdueInstallmentAmount(array $projectSummary, string $businessDate): float
     {
         return (float) collect($projectSummary['outstanding_installments'] ?? [])
-            ->filter(fn (array $row) => ($row['due_date'] ?? '') < now()->toDateString())
+            ->filter(fn (array $row) => ($row['due_date'] ?? '') < $businessDate)
             ->sum('outstanding_amount');
     }
 
-    private function resolveFinancialYearLabel(int $tenantId): string
+    /**
+     * @return array<int, string>
+     */
+    private function legacyFinancialYearKeys(ChurchFinancialPeriod $fyPeriod): array
     {
-        $settings = DonationSetting::forTenant($tenantId)->first();
-        $month = (int) ($settings?->financial_year_start_month ?? 1);
-        $day = (int) ($settings?->financial_year_start_day ?? 1);
-        $now = now();
-        $fyStart = $now->copy()->setMonth($month)->setDay($day)->startOfDay();
+        $startYear = (int) $fyPeriod->key;
+        $endYear = (int) substr($fyPeriod->end, 0, 4);
 
-        if ($now->lt($fyStart)) {
-            $fyStart->subYear();
-        }
-
-        $fyEnd = $fyStart->copy()->addYear()->subDay();
-
-        return sprintf('%s-%s', $fyStart->format('Y'), $fyEnd->format('Y'));
+        return array_values(array_unique([
+            $fyPeriod->key,
+            $fyPeriod->label,
+            sprintf('%d-%d', $startYear, $endYear),
+            sprintf('%d-%02d', $startYear, $endYear % 100),
+            (string) $startYear,
+        ]));
     }
 
     /**
-     * @param array<string, mixed> $mandatory
-     * @param array<string, mixed> $projectSummary
-     * @param array<string, mixed> $donationsOfferings
-     * @param array<string, mixed> $paymentHistory
-     * @param array{total_paid: float, mandatory_paid: float, project_paid: float, voluntary_paid: float} $paymentBreakdown
+     * @param  array<string, mixed>  $mandatory
+     * @param  array<string, mixed>  $projectSummary
+     * @param  array<string, mixed>  $donationsOfferings
+     * @param  array<string, mixed>  $paymentHistory
+     * @param  array{total_paid: float, mandatory_paid: float, project_paid: float, voluntary_paid: float}  $paymentBreakdown
      * @return array<string, mixed>
      */
     private function buildFamilyHealth(
@@ -699,9 +808,9 @@ class FamilyFinancialProfileService
     }
 
     /**
-     * @param array<string, mixed> $paymentHistory
-     * @param array<string, mixed> $donationsOfferings
-     * @param array<string, mixed> $mandatory
+     * @param  array<string, mixed>  $paymentHistory
+     * @param  array<string, mixed>  $donationsOfferings
+     * @param  array<string, mixed>  $mandatory
      * @return array<int, array<string, mixed>>
      */
     private function buildFinancialTimeline(array $paymentHistory, array $donationsOfferings, array $mandatory): array
@@ -759,7 +868,7 @@ class FamilyFinancialProfileService
     }
 
     /**
-     * @param array<string, mixed> $analytics
+     * @param  array<string, mixed>  $analytics
      * @return array<int, array<string, mixed>>
      */
     private function buildEngagementHeatmap(array $analytics): array
@@ -781,8 +890,8 @@ class FamilyFinancialProfileService
     }
 
     /**
-     * @param array<string, mixed> $mandatory
-     * @param array<string, mixed> $projectSummary
+     * @param  array<string, mixed>  $mandatory
+     * @param  array<string, mixed>  $projectSummary
      * @return array<int, array<string, mixed>>
      */
     private function buildFundBreakdown(array $mandatory, array $projectSummary): array
@@ -807,14 +916,15 @@ class FamilyFinancialProfileService
     }
 
     /**
-     * @param array<string, mixed> $mandatory
-     * @param array<string, mixed> $projectSummary
-     * @param array<string, mixed> $donationsOfferings
-     * @param array<string, mixed> $analytics
-     * @param array<string, mixed> $outstandingBalances
+     * @param  array<string, mixed>  $mandatory
+     * @param  array<string, mixed>  $projectSummary
+     * @param  array<string, mixed>  $donationsOfferings
+     * @param  array<string, mixed>  $analytics
+     * @param  array<string, mixed>  $outstandingBalances
      * @return array<int, string>
      */
     private function buildAiInsights(
+        int $tenantId,
         array $mandatory,
         array $projectSummary,
         array $donationsOfferings,
@@ -830,19 +940,25 @@ class FamilyFinancialProfileService
         $percentile = (float) ($analytics['ranking']['percentile'] ?? 0);
 
         if ($overdueAmount > 0) {
-            $insights[] = sprintf('This family has %s overdue across mandatory contributions.', number_format($overdueAmount, 2));
+            $insights[] = sprintf(
+                'This family has %s overdue across mandatory contributions.',
+                ChurchMoneyFormatter::formatForTenant($tenantId, $overdueAmount)
+            );
         } elseif ($pendingMandatory <= 0) {
             $insights[] = 'Mandatory contributions are fully settled for the current period.';
         }
 
         if ($projectOutstanding > 0) {
-            $insights[] = sprintf('Project installments still need %s.', number_format($projectOutstanding, 2));
+            $insights[] = sprintf(
+                'Project installments still need %s.',
+                ChurchMoneyFormatter::formatForTenant($tenantId, $projectOutstanding)
+            );
         }
 
         if (($donationsOfferings['lifetime_collected'] ?? 0) > 0) {
             $insights[] = sprintf(
                 'The family has contributed %s in voluntary offerings over time.',
-                number_format((float) $donationsOfferings['lifetime_collected'], 2)
+                ChurchMoneyFormatter::formatForTenant($tenantId, (float) $donationsOfferings['lifetime_collected'])
             );
         }
 
@@ -860,9 +976,9 @@ class FamilyFinancialProfileService
     }
 
     /**
-     * @param array<string, mixed> $mandatory
-     * @param array<string, mixed> $projectSummary
-     * @param array<string, mixed> $outstandingBalances
+     * @param  array<string, mixed>  $mandatory
+     * @param  array<string, mixed>  $projectSummary
+     * @param  array<string, mixed>  $outstandingBalances
      * @return array<int, string>
      */
     private function buildRecommendedActions(array $mandatory, array $projectSummary, array $outstandingBalances): array

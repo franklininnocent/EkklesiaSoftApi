@@ -7,7 +7,9 @@
     "license": "MIT",
     "require": {
         "php": "^8.3",
+        "dompdf/dompdf": "^3.0",
         "endroid/qr-code": "^6.1",
+        "ezyang/htmlpurifier": "^4.19",
         "firebase/php-jwt": "*",
         "giggsey/libphonenumber-for-php": "^9.0",
         "laravel/framework": "^13.0",
@@ -15,6 +17,7 @@
         "laravel/tinker": "^3.0",
         "nwidart/laravel-modules": "^12.0",
         "nyholm/psr7": "^1.8",
+        "phpoffice/phpspreadsheet": "^2.0",
         "symfony/psr-http-message-bridge": "^7.3"
     },
     "require-dev": {
@@ -46,21 +49,60 @@
             "Modules\\Family\\": "Modules/Family/app/",
             "Modules\\Family\\Database\\Factories\\": "Modules/Family/database/factories/",
             "Modules\\Family\\Database\\Seeders\\": "Modules/Family/database/seeders/",
+            "Modules\\MinistriesAssociations\\": "Modules/MinistriesAssociations/app/",
+            "Modules\\MinistriesAssociations\\Database\\Seeders\\": "Modules/MinistriesAssociations/database/seeders/",
+            "Modules\\MassIntentions\\": "Modules/MassIntentions/app/",
+            "Modules\\MassIntentions\\Database\\Seeders\\": "Modules/MassIntentions/database/seeders/",
+            "Modules\\PastoralCare\\": "Modules/PastoralCare/app/",
+            "Modules\\PastoralCare\\Database\\Factories\\": "Modules/PastoralCare/database/factories/",
+            "Modules\\PastoralCare\\Database\\Seeders\\": "Modules/PastoralCare/database/seeders/",
+            "Modules\\Notifications\\": "Modules/Notifications/app/",
+            "Modules\\Notifications\\Database\\Seeders\\": "Modules/Notifications/database/seeders/",
+            "Modules\\SupportTickets\\": "Modules/SupportTickets/app/",
+            "Modules\\SupportTickets\\Database\\Factories\\": "Modules/SupportTickets/database/factories/",
+            "Modules\\SupportTickets\\Database\\Seeders\\": "Modules/SupportTickets/database/seeders/",
             "Modules\\RolesAndPermissions\\": "Modules/RolesAndPermissions/app/",
             "Modules\\RolesAndPermissions\\Database\\Factories\\": "Modules/RolesAndPermissions/database/factories/",
             "Modules\\RolesAndPermissions\\Database\\Seeders\\": "Modules/RolesAndPermissions/database/seeders/",
             "Modules\\Sacraments\\": "Modules/Sacraments/app/",
             "Modules\\Sacraments\\Database\\Factories\\": "Modules/Sacraments/database/factories/",
             "Modules\\Sacraments\\Database\\Seeders\\": "Modules/Sacraments/database/seeders/",
+            "Modules\\SupportAccess\\": "Modules/SupportAccess/app/",
+            "Modules\\SupportAccess\\Database\\Seeders\\": "Modules/SupportAccess/database/seeders/",
+            "Modules\\ApplicationAccess\\": "Modules/ApplicationAccess/app/",
+            "Modules\\ApplicationAccess\\Database\\Seeders\\": "Modules/ApplicationAccess/database/seeders/",
+            "Modules\\Subscriptions\\": "Modules/Subscriptions/app/",
+            "Modules\\Subscriptions\\Database\\Seeders\\": "Modules/Subscriptions/database/seeders/",
             "Modules\\Tenants\\": "Modules/Tenants/app/",
             "Modules\\Tenants\\Database\\Factories\\": "Modules/Tenants/database/factories/",
             "Modules\\Tenants\\Database\\Seeders\\": "Modules/Tenants/database/seeders/",
+            "Modules\\Authentication\\Models\\": "Modules/Authentication/Models/",
+            "Modules\\Family\\Models\\": "Modules/Family/Models/",
             "Modules\\": "Modules/"
-        }
+        },
+        "exclude-from-classmap": [
+            "/Modules/*/tests/"
+        ]
     },
     "autoload-dev": {
         "psr-4": {
-            "Tests\\": "tests/"
+            "Tests\\": "tests/",
+            "Modules\\ApplicationAccess\\Tests\\": "Modules/ApplicationAccess/tests/",
+            "Modules\\Authentication\\Tests\\": "Modules/Authentication/tests/",
+            "Modules\\BCC\\Tests\\": "Modules/BCC/tests/",
+            "Modules\\Donations\\Tests\\": "Modules/Donations/tests/",
+            "Modules\\EcclesiasticalData\\Tests\\": "Modules/EcclesiasticalData/tests/",
+            "Modules\\Family\\Tests\\": "Modules/Family/tests/",
+            "Modules\\MinistriesAssociations\\Tests\\": "Modules/MinistriesAssociations/tests/",
+            "Modules\\MassIntentions\\Tests\\": "Modules/MassIntentions/tests/",
+            "Modules\\Notifications\\Tests\\": "Modules/Notifications/tests/",
+            "Modules\\PastoralCare\\Tests\\": "Modules/PastoralCare/tests/",
+            "Modules\\RolesAndPermissions\\Tests\\": "Modules/RolesAndPermissions/tests/",
+            "Modules\\Sacraments\\Tests\\": "Modules/Sacraments/tests/",
+            "Modules\\SupportAccess\\Tests\\": "Modules/SupportAccess/tests/",
+            "Modules\\Subscriptions\\Tests\\": "Modules/Subscriptions/tests/",
+            "Modules\\SupportTickets\\Tests\\": "Modules/SupportTickets/tests/",
+            "Modules\\Tenants\\Tests\\": "Modules/Tenants/tests/"
         }
     },
     "scripts": {

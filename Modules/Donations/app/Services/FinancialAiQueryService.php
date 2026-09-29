@@ -7,6 +7,7 @@ use Modules\Donations\Models\DonationPayment;
 use Modules\Donations\Models\DonationProject;
 use Modules\Donations\Support\ContributionBalance;
 use Modules\Tenants\Services\TenantHierarchyService;
+use Modules\Tenants\Support\ChurchMoneyFormatter;
 
 class FinancialAiQueryService
 {
@@ -17,8 +18,7 @@ class FinancialAiQueryService
         private readonly CollectionForecastService $forecastService,
         private readonly WhatsAppOutreachService $whatsAppOutreachService,
         private readonly FinancialLlmAdapterService $llmAdapter
-    ) {
-    }
+    ) {}
 
     /**
      * @return array<string, mixed>
@@ -50,8 +50,8 @@ class FinancialAiQueryService
     }
 
     /**
-     * @param array<int> $tenantIds
-     * @param array{type: string, score?: float, params: array<string, mixed>} $intent
+     * @param  array<int>  $tenantIds
+     * @param  array{type: string, score?: float, params: array<string, mixed>}  $intent
      * @return array<string, mixed>
      */
     private function overdueFamiliesResponse(array $tenantIds, array $intent): array
@@ -82,7 +82,11 @@ class FinancialAiQueryService
         return [
             'intent' => 'overdue_families',
             'answer' => count($rows) > 0
-                ? sprintf('Found %d families with overdue mandatory contributions totaling %s.', count($rows), number_format($totalExposure, 2))
+                ? sprintf(
+                    'Found %d families with overdue mandatory contributions totaling %s.',
+                    count($rows),
+                    ChurchMoneyFormatter::formatForTenant((int) ($tenantIds[0] ?? 0), $totalExposure)
+                )
                 : 'No overdue mandatory contributions were found in your scope.',
             'metrics' => [
                 'family_count' => count($rows),
@@ -100,8 +104,8 @@ class FinancialAiQueryService
     }
 
     /**
-     * @param array<int> $tenantIds
-     * @param array{type: string, score?: float, params: array<string, mixed>} $intent
+     * @param  array<int>  $tenantIds
+     * @param  array{type: string, score?: float, params: array<string, mixed>}  $intent
      * @return array<string, mixed>
      */
     private function projectLaggingResponse(array $tenantIds, array $intent): array
@@ -159,7 +163,7 @@ class FinancialAiQueryService
     }
 
     /**
-     * @param array{type: string, score?: float, params: array<string, mixed>} $intent
+     * @param  array{type: string, score?: float, params: array<string, mixed>}  $intent
      * @return array<string, mixed>
      */
     private function forecastResponse(int $tenantId, array $intent): array
@@ -179,7 +183,7 @@ class FinancialAiQueryService
     }
 
     /**
-     * @param array{type: string, score?: float, params: array<string, mixed>} $intent
+     * @param  array{type: string, score?: float, params: array<string, mixed>}  $intent
      * @return array<string, mixed>
      */
     private function topContributorsResponse(int $tenantId, array $intent): array
@@ -238,8 +242,8 @@ class FinancialAiQueryService
             'intent' => 'compare_collections',
             'answer' => sprintf(
                 'This month collected %s versus %s last month (%s%% change).',
-                number_format($current, 2),
-                number_format($previous, 2),
+                ChurchMoneyFormatter::formatForTenant($tenantId, $current),
+                ChurchMoneyFormatter::formatForTenant($tenantId, $previous),
                 number_format($growth, 1)
             ),
             'metrics' => [
@@ -297,7 +301,7 @@ class FinancialAiQueryService
     }
 
     /**
-     * @param array{type: string, score?: float, params: array<string, mixed>} $intent
+     * @param  array{type: string, score?: float, params: array<string, mixed>}  $intent
      */
     private function shouldUseRollup(array $intent, ?string $role): bool
     {

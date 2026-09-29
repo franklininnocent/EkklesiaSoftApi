@@ -6,6 +6,7 @@ use Modules\Donations\Models\DonationPayment;
 use Modules\Donations\Models\DonationProject;
 use Modules\Donations\Models\DonationReceipt;
 use Modules\Family\Models\Family;
+use Modules\Tenants\Support\ChurchMoneyFormatter;
 
 class FinancialGlobalSearchService
 {
@@ -23,7 +24,7 @@ class FinancialGlobalSearchService
             ];
         }
 
-        $like = '%' . $term . '%';
+        $like = '%'.$term.'%';
         $phoneDigits = preg_replace('/\D+/', '', $term) ?? '';
 
         $families = Family::query()
@@ -36,7 +37,7 @@ class FinancialGlobalSearchService
 
                 if ($phoneDigits !== '') {
                     $builder->orWhereHas('members', function ($memberQuery) use ($phoneDigits): void {
-                        $memberQuery->where('phone', 'like', '%' . $phoneDigits . '%');
+                        $memberQuery->where('phone', 'like', '%'.$phoneDigits.'%');
                     });
                 }
             })
@@ -47,8 +48,8 @@ class FinancialGlobalSearchService
                 'type' => 'family',
                 'id' => $family->id,
                 'title' => $family->family_name,
-                'subtitle' => trim(($family->family_code ?: '') . ($family->head_of_family ? ' · ' . $family->head_of_family : '')),
-                'route' => '/families/' . $family->id,
+                'subtitle' => trim(($family->family_code ?: '').($family->head_of_family ? ' · '.$family->head_of_family : '')),
+                'route' => '/families/'.$family->id,
             ])
             ->values()
             ->all();
@@ -89,7 +90,7 @@ class FinancialGlobalSearchService
                 'type' => 'campaign',
                 'id' => $campaign->id,
                 'title' => $campaign->name,
-                'subtitle' => trim(($campaign->code ?: '') . ($campaign->campaign_type ? ' · ' . $campaign->campaign_type : '')),
+                'subtitle' => trim(($campaign->code ?: '').($campaign->campaign_type ? ' · '.$campaign->campaign_type : '')),
                 'route' => '/donations/campaigns',
             ])
             ->values()
@@ -113,8 +114,8 @@ class FinancialGlobalSearchService
                 'title' => $receipt->receipt_number,
                 'subtitle' => trim(
                     ($receipt->payment?->payer_name ?: 'Receipt')
-                    . ' · '
-                    . number_format((float) ($receipt->payment?->amount ?? 0), 2)
+                    .' · '
+                    .ChurchMoneyFormatter::formatForTenant($tenantId, (float) ($receipt->payment?->amount ?? 0))
                 ),
                 'route' => '/donations/receipts',
             ])
@@ -134,7 +135,7 @@ class FinancialGlobalSearchService
                 'type' => 'payment',
                 'id' => $payment->id,
                 'title' => $payment->payment_number,
-                'subtitle' => trim(($payment->payer_name ?: 'Payment') . ' · ' . number_format((float) $payment->amount, 2)),
+                'subtitle' => trim(($payment->payer_name ?: 'Payment').' · '.ChurchMoneyFormatter::formatForTenant($tenantId, (float) $payment->amount)),
                 'route' => '/donations/payments',
             ])
             ->values()

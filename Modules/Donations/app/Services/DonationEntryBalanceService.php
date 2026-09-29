@@ -3,40 +3,55 @@
 namespace Modules\Donations\Services;
 
 use Modules\Donations\Models\Donation;
+use Modules\Donations\Support\MoneyMath;
 
 class DonationEntryBalanceService
 {
-    public function applyPayment(int $userId, Donation $donation, float $amount): void
+    public function applyPayment(int $userId, Donation $donation, string|float|int $amount): void
     {
-        $donation->collected_amount = round((float) $donation->collected_amount + $amount, 2);
-        $pledged = (float) $donation->pledged_amount;
-
-        if ($pledged > 0) {
-            $donation->status = $donation->collected_amount >= $pledged ? 'paid' : 'partially_paid';
-        } else {
-            $donation->status = 'paid';
+        $collected = MoneyMath::add($donation->collected_amount ?? 0, $amount);
+        $pledged = MoneyMath::normalize($donation->pledged_amount ?? 0);
+        if (MoneyMath::isPositive($pledged) && MoneyMath::compare($collected, $pledged) > 0) {
+            $collected = $pledged;
         }
 
-        if (!$donation->received_at) {
+        $donation->collected_amount = $collected;
+        $donation->status = $this->statusFromCollected($donation);
+        if (! $donation->received_at) {
             $donation->received_at = now()->toDateString();
         }
-
         $donation->updated_by = $userId;
         $donation->save();
     }
 
-    public function reversePayment(int $userId, Donation $donation, float $amount): void
+    public function reversePayment(int $userId, Donation $donation, string|float|int $amount): void
     {
-        $donation->collected_amount = max(0, round((float) $donation->collected_amount - $amount, 2));
-        $pledged = (float) $donation->pledged_amount;
-
-        if ($donation->collected_amount <= 0) {
-            $donation->status = $pledged > 0 ? 'pledged' : 'cancelled';
-        } elseif ($pledged > 0 && $donation->collected_amount < $pledged) {
-            $donation->status = 'partially_paid';
-        }
-
+        $donation->collected_amount = MoneyMath::floorAtZero(
+            MoneyMath::subtract($donation->collected_amount ?? 0, $amount)
+        );
+        $donation->status = $this->statusFromCollected($donation);
         $donation->updated_by = $userId;
         $donation->save();
+    }
+
+    private function statusFromCollected(Donation $donation): string
+    {
+        $current = (string) $donation->status;
+        if ($current === 'cancelled') {
+            return 'cancelled';
+        }
+
+        $pledged = MoneyMath::normalize($donation->pledged_amount ?? 0);
+        $collected = MoneyMath::normalize($donation->collected_amount ?? 0);
+
+        if (! MoneyMath::isPositive($collected)) {
+            return MoneyMath::isPositive($pledged) ? 'pledged' : 'pledged';
+        }
+
+        if (MoneyMath::isPositive($pledged) && MoneyMath::compare($collected, $pledged) >= 0) {
+            return 'paid';
+        }
+
+        return 'partially_paid';
     }
 }

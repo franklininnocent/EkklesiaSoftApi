@@ -4,18 +4,16 @@ namespace Modules\Donations\Services;
 
 use Modules\Donations\Models\ContributionDue;
 use Modules\Donations\Support\ContributionBalance;
-use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Support\ChurchMoneyFormatter;
 
 class WhatsAppOutreachService
 {
-    public function __construct(private readonly DonationNotificationService $notificationService)
-    {
-    }
+    public function __construct(private readonly DonationNotificationService $notificationService) {}
 
     /**
-     * @param array<int, string>|null $familyIds
+     * @param  array<int, string>|null  $familyIds
      * @return array<string, mixed>
      */
     public function preview(int $tenantId, ?array $familyIds = null, int $limit = 20): array
@@ -33,7 +31,7 @@ class WhatsAppOutreachService
     }
 
     /**
-     * @param array<int, string> $familyIds
+     * @param  array<int, string>  $familyIds
      * @return array<string, mixed>
      */
     public function queue(int $tenantId, array $familyIds, ?string $customMessage = null): array
@@ -42,7 +40,7 @@ class WhatsAppOutreachService
         $queued = [];
 
         foreach ($targets as $target) {
-            if (!$target['phone']) {
+            if (! $target['phone']) {
                 continue;
             }
 
@@ -78,7 +76,7 @@ class WhatsAppOutreachService
     }
 
     /**
-     * @param array<int, string>|null $familyIds
+     * @param  array<int, string>|null  $familyIds
      * @return array<int, array<string, mixed>>
      */
     private function resolveTargets(int $tenantId, ?array $familyIds, int $limit): array
@@ -100,7 +98,7 @@ class WhatsAppOutreachService
         $targets = [];
         foreach ($grouped as $familyId => $familyDues) {
             $family = $familyDues->first()?->family;
-            if (!$family) {
+            if (! $family) {
                 continue;
             }
 
@@ -110,7 +108,7 @@ class WhatsAppOutreachService
                 'Dear %s, this is a gentle reminder from %s regarding outstanding contributions of %s. Please contact the parish office if you need assistance.',
                 $family->head_of_family ?: $family->family_name,
                 Tenant::query()->find($tenantId)?->name ?? 'your church',
-                number_format($overdueAmount, 2)
+                ChurchMoneyFormatter::formatForTenant($tenantId, $overdueAmount)
             );
 
             $targets[] = [
@@ -142,7 +140,7 @@ class WhatsAppOutreachService
             ->orderByDesc('is_primary_contact')
             ->first();
 
-        if (!$member?->phone) {
+        if (! $member?->phone) {
             $member = FamilyMember::query()
                 ->where('family_id', $familyId)
                 ->whereNotNull('phone')
@@ -154,7 +152,7 @@ class WhatsAppOutreachService
 
     private function normalizePhone(?string $phone): ?string
     {
-        if (!$phone) {
+        if (! $phone) {
             return null;
         }
 
@@ -164,7 +162,7 @@ class WhatsAppOutreachService
         }
 
         if (strlen($digits) === 10) {
-            return '91' . $digits;
+            return '91'.$digits;
         }
 
         return ltrim($digits, '0');
@@ -172,11 +170,11 @@ class WhatsAppOutreachService
 
     private function buildWhatsAppUrl(string $phone, string $message): string
     {
-        return 'https://wa.me/' . $phone . '?text=' . rawurlencode($message);
+        return 'https://wa.me/'.$phone.'?text='.rawurlencode($message);
     }
 
     private function defaultTemplate(string $tenantName): string
     {
-        return 'Dear {family_head}, this is a gentle reminder from ' . $tenantName . ' regarding outstanding contributions of {overdue_amount}. Please contact the parish office if you need assistance.';
+        return 'Dear {family_head}, this is a gentle reminder from '.$tenantName.' regarding outstanding contributions of {overdue_amount}. Please contact the parish office if you need assistance.';
     }
 }

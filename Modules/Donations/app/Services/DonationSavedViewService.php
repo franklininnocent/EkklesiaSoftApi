@@ -6,6 +6,7 @@ use Modules\Donations\Models\ContributionDue;
 use Modules\Donations\Models\DonationPayment;
 use Modules\Donations\Models\DonationProject;
 use Modules\Donations\Support\ContributionBalance;
+use Modules\Donations\Support\DonationBusinessDate;
 use Modules\Family\Models\Family;
 
 class DonationSavedViewService
@@ -75,10 +76,11 @@ class DonationSavedViewService
      */
     private function outstandingFamilies(int $tenantId, int $limit): array
     {
-        $dues = ContributionDue::forTenant($tenantId)
-            ->whereIn('status', ['pending', 'partially_paid'])
-            ->with('family:id,family_name,family_code')
-            ->get();
+        $businessDate = DonationBusinessDate::today($tenantId);
+        $dues = ContributionBalance::scopeCollectable(
+            ContributionDue::forTenant($tenantId),
+            $businessDate
+        )->with('family:id,family_name,family_code')->get();
 
         $items = $dues->groupBy('family_id')->map(function ($familyDues) {
             $first = $familyDues->first();
@@ -105,7 +107,7 @@ class DonationSavedViewService
      */
     private function highRiskFamilies(int $tenantId, int $limit): array
     {
-        $today = now()->toDateString();
+        $today = DonationBusinessDate::today($tenantId);
         $dues = ContributionDue::forTenant($tenantId)
             ->whereIn('status', ['pending', 'partially_paid'])
             ->whereDate('due_date', '<', $today)

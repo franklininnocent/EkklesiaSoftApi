@@ -140,5 +140,29 @@ return [
         'expires_in_days' => 365, // Token expiration (optional, based on Passport config)
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Password Recovery (Forgot Password)
+    |--------------------------------------------------------------------------
+    */
+    'recovery' => [
+        'otp_ttl_seconds' => (int) env('AUTH_RECOVERY_OTP_TTL', 60),
+        'reset_authorization_ttl_seconds' => (int) env('AUTH_RECOVERY_RESET_TTL', 300),
+        'max_attempts' => (int) env('AUTH_RECOVERY_MAX_ATTEMPTS', 5),
+        'daily_initiations' => (int) env('AUTH_RECOVERY_DAILY_LIMIT', 3),
+        'recovery_block_seconds' => (int) env('AUTH_RECOVERY_BLOCK_SECONDS', 120),
+        'resend_cooldown_seconds' => (int) env('AUTH_RECOVERY_RESEND_COOLDOWN', 60),
+        'cleanup_retention_days' => (int) env('AUTH_RECOVERY_CLEANUP_DAYS', 7),
+        'request_ttl_hours' => (int) env('AUTH_RECOVERY_REQUEST_TTL_HOURS', 24),
+        'processing_stale_minutes' => (int) env('AUTH_RECOVERY_PROCESSING_STALE_MINUTES', 5),
+        'pepper' => env('AUTH_RECOVERY_PEPPER'),
+        'mail_enabled' => (bool) env('AUTH_RECOVERY_MAIL_ENABLED', true),
+        'test_inbox_enabled' => (bool) env('AUTH_RECOVERY_TEST_INBOX', false),
+        'mail_from' => [
+            'address' => env('AUTH_RECOVERY_MAIL_FROM_ADDRESS', 'franklininnocent.fs@gmail.com'),
+            'name' => env('AUTH_RECOVERY_MAIL_FROM_NAME', 'EkklesiaSoft'),
+        ],
+    ],
+
 ];
 

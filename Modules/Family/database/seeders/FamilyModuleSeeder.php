@@ -22,26 +22,20 @@ class FamilyModuleSeeder extends Seeder
         $this->command->info('🌱 Starting comprehensive seeding process...');
         $this->command->info('');
 
-        // Step 1: Parish Zones
-        $this->command->info('📍 Step 1/4: Creating Parish Zones...');
-        $this->command->info('─────────────────────────────────────────────');
-        $this->call(ParishZonesSeeder::class);
-        $this->command->info('');
-
-        // Step 2: Families with Members
-        $this->command->info('👨‍👩‍👧‍👦 Step 2/4: Creating Families with Members...');
+        // Step 1: Families with Members
+        $this->command->info('👨‍👩‍👧‍👦 Step 1/3: Creating Families with Members...');
         $this->command->info('─────────────────────────────────────────────');
         $this->call(FamiliesSeeder::class);
         $this->command->info('');
 
-        // Step 3: BCCs with Leaders
-        $this->command->info('🏘️  Step 3/4: Creating BCCs with Leaders...');
+        // Step 2: BCCs with Leaders
+        $this->command->info('🏘️  Step 2/3: Creating BCCs with Leaders...');
         $this->command->info('─────────────────────────────────────────────');
         $this->call(\Modules\BCC\Database\Seeders\BCCsSeeder::class);
         $this->command->info('');
 
-        // Step 4: Assign Families to BCCs
-        $this->command->info('🔗 Step 4/4: Assigning Families to BCCs...');
+        // Step 3: Assign Families to BCCs
+        $this->command->info('🔗 Step 3/3: Assigning Families to BCCs...');
         $this->command->info('─────────────────────────────────────────────');
         $this->call(\Modules\BCC\Database\Seeders\FamilyAssignmentSeeder::class);
         $this->command->info('');
@@ -53,9 +47,8 @@ class FamilyModuleSeeder extends Seeder
         $this->command->info('║         ✅ SEEDING COMPLETE!                                        ║');
         $this->command->info('║                                                                    ║');
         $this->command->info('║   Created:                                                         ║');
-        $this->command->info('║   • 12 Parish Zones                                                ║');
-        $this->command->info('║   • 60 Families with ~200 Members                                  ║');
-        $this->command->info('║   • 12 BCCs with Leaders                                           ║');
+        $this->command->info('║   • Families with Members                                          ║');
+        $this->command->info('║   • BCCs with Leaders                                              ║');
         $this->command->info('║   • Family-to-BCC Assignments                                      ║');
         $this->command->info('║                                                                    ║');
         $this->command->info('║   🚀 Ready to test all 25 API endpoints!                           ║');

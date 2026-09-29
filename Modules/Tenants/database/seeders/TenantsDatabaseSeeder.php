@@ -3,6 +3,8 @@
 namespace Modules\Tenants\Database\Seeders;
 
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class TenantsDatabaseSeeder extends Seeder
 {
@@ -17,19 +19,39 @@ class TenantsDatabaseSeeder extends Seeder
         $this->command->line('');
 
         // Seed geographic data first (countries and states)
-        // Then seed ecclesiastical data (denominations, archdioceses, titles, orders, bishops)
-        // Finally seed tenants
+        // Then seed ecclesiastical reference data (denominations, archdioceses, titles, orders, bishops)
+        // Finally seed subscription plans and duration options
+        $this->seedIfEmpty('countries', GeographicDataSeeder::class);
+        $this->call(DenominationsSeeder::class);
+        $this->seedIfEmpty('archdioceses', ComprehensiveArchdiocesesSeeder::class);
+        $this->seedIfEmpty('ecclesiastical_titles', EcclesiasticalTitlesSeeder::class);
+        $this->seedIfEmpty('religious_orders', ReligiousOrdersSeeder::class);
+        $this->seedIfEmpty('bishops', TamilNaduBishopsSeeder::class);
+
         $this->call([
-            GeographicDataSeeder::class,                // 1. Countries and states
-            DenominationsSeeder::class,                 // 2. Christian denominations
-            ComprehensiveArchdiocesesSeeder::class,     // 3. Dioceses and archdioceses (normalized)
-            EcclesiasticalTitlesSeeder::class,          // 4. Ecclesiastical titles (Archbishop, Bishop, etc.)
-            ReligiousOrdersSeeder::class,               // 5. Religious orders and congregations
-            TamilNaduBishopsSeeder::class,              // 6. Current bishops of Tamil Nadu dioceses
-            TenantsTableSeeder::class,                  // 7. Sample tenants
+            SubscriptionPlansSeeder::class,
+            SubscriptionDurationOptionsSeeder::class,
+            PopeDetailsSeeder::class,
         ]);
 
         $this->command->line('');
         $this->command->info('✅ Tenants Module seeded successfully!');
+    }
+
+    private function seedIfEmpty(string $table, string $seederClass): void
+    {
+        if (! Schema::hasTable($table)) {
+            $this->command->warn("Skipping {$seederClass}: {$table} table missing.");
+
+            return;
+        }
+
+        if (DB::table($table)->count() > 0) {
+            $this->command->warn("Skipping {$seederClass}: {$table} already seeded.");
+
+            return;
+        }
+
+        $this->call($seederClass);
     }
 }

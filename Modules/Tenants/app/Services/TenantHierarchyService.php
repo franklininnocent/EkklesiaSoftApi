@@ -9,7 +9,9 @@ use Modules\Tenants\Models\Tenant;
 class TenantHierarchyService
 {
     public const TIER_DIOCESE = 'diocese';
+
     public const TIER_PARISH = 'parish';
+
     public const TIER_BRANCH = 'branch';
 
     public function supportsHierarchy(): bool
@@ -21,7 +23,7 @@ class TenantHierarchyService
 
     public function assignHierarchy(Tenant $tenant, ?Tenant $parent = null): Tenant
     {
-        if (!$this->supportsHierarchy()) {
+        if (! $this->supportsHierarchy()) {
             return $tenant;
         }
 
@@ -30,7 +32,7 @@ class TenantHierarchyService
         if ($parent) {
             $tenant->parent_tenant_id = $parent->id;
             $tenant->tenant_tier = $tier;
-            $tenant->hierarchy_path = trim($parent->hierarchy_path . '.' . $tenant->id, '.');
+            $tenant->hierarchy_path = trim($parent->hierarchy_path.'.'.$tenant->id, '.');
         } else {
             $tenant->parent_tenant_id = null;
             $tenant->tenant_tier = $tier;
@@ -49,7 +51,7 @@ class TenantHierarchyService
     {
         $tenant = Tenant::query()->findOrFail($tenantId);
 
-        if (!$this->supportsHierarchy()) {
+        if (! $this->supportsHierarchy()) {
             return $includeSelf ? collect([$tenant]) : collect();
         }
 
@@ -58,9 +60,9 @@ class TenantHierarchyService
         $query = Tenant::query()->where(function ($builder) use ($prefix, $includeSelf, $tenantId): void {
             if ($includeSelf) {
                 $builder->where('id', $tenantId)
-                    ->orWhere('hierarchy_path', 'like', $prefix . '.%');
+                    ->orWhere('hierarchy_path', 'like', $prefix.'.%');
             } else {
-                $builder->where('hierarchy_path', 'like', $prefix . '.%');
+                $builder->where('hierarchy_path', 'like', $prefix.'.%');
             }
         });
 
@@ -81,18 +83,18 @@ class TenantHierarchyService
             return true;
         }
 
-        if (!$this->supportsHierarchy()) {
+        if (! $this->supportsHierarchy()) {
             return false;
         }
 
         $actor = Tenant::query()->find($actorTenantId);
         $target = Tenant::query()->find($targetTenantId);
 
-        if (!$actor || !$target || !$target->hierarchy_path || !$actor->hierarchy_path) {
+        if (! $actor || ! $target || ! $target->hierarchy_path || ! $actor->hierarchy_path) {
             return false;
         }
 
-        return str_starts_with($target->hierarchy_path . '.', $actor->hierarchy_path . '.')
+        return str_starts_with($target->hierarchy_path.'.', $actor->hierarchy_path.'.')
             || $target->hierarchy_path === $actor->hierarchy_path;
     }
 
@@ -115,7 +117,8 @@ class TenantHierarchyService
             'hierarchy_path' => $this->supportsHierarchy() ? $tenant->hierarchy_path : (string) $tenant->id,
             'parent_tenant_id' => $this->supportsHierarchy() ? $tenant->parent_tenant_id : null,
             'child_count' => $childCount,
-            'currency_code' => ($this->supportsHierarchy() ? $tenant->currency_code : null) ?? 'INR',
+            'currency_code' => app(ChurchCurrencyResolver::class)
+                ->currencyCodeForTenantId((int) $tenant->id),
         ];
     }
 }

@@ -6,9 +6,16 @@ use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvid
 use Illuminate\Support\Facades\Gate;
 use Modules\Authentication\Models\Role;
 use Laravel\Passport\Passport;
+use Modules\EcclesiasticalData\Models\BishopManagement;
+use Modules\EcclesiasticalData\Models\BishopUpdateRequest;
+use Modules\EcclesiasticalData\Models\DioceseManagement;
+use Modules\EcclesiasticalData\Policies\BishopManagementPolicy;
+use Modules\EcclesiasticalData\Policies\BishopUpdateRequestPolicy;
+use Modules\EcclesiasticalData\Policies\DioceseManagementPolicy;
 use Modules\RolesAndPermissions\Models\Permission;
 use Modules\RolesAndPermissions\Policies\PermissionPolicy;
 use Modules\RolesAndPermissions\Policies\RolePolicy;
+use Modules\Tenants\Support\TenantContext;
 
 class AuthServiceProvider extends ServiceProvider
 {
@@ -20,6 +27,9 @@ class AuthServiceProvider extends ServiceProvider
     protected $policies = [
         Role::class => RolePolicy::class,
         Permission::class => PermissionPolicy::class,
+        BishopManagement::class => BishopManagementPolicy::class,
+        DioceseManagement::class => DioceseManagementPolicy::class,
+        BishopUpdateRequest::class => BishopUpdateRequestPolicy::class,
     ];
 
     /**
@@ -30,7 +40,22 @@ class AuthServiceProvider extends ServiceProvider
         $this->registerPolicies();
 
         Gate::before(function ($user) {
-            return method_exists($user, 'isSuperAdmin') && $user->isSuperAdmin() ? true : null;
+            if (! method_exists($user, 'isSuperAdmin') || ! $user->isSuperAdmin()) {
+                return null;
+            }
+
+            try {
+                $effectiveTenantId = app(TenantContext::class)->effectiveTenantId();
+            } catch (\Throwable) {
+                $effectiveTenantId = null;
+            }
+
+            // Platform operations without an effective tenant retain full bypass.
+            if ($effectiveTenantId === null || $effectiveTenantId <= 0) {
+                return true;
+            }
+
+            return null;
         });
 
         // Register gates dynamically from permission catalog.

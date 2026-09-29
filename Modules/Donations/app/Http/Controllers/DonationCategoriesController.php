@@ -14,13 +14,15 @@ use Modules\Donations\Services\DonationAuditService;
 
 class DonationCategoriesController extends Controller
 {
-    public function __construct(private readonly DonationAuditService $auditService)
-    {
+    public function __construct(
+        private readonly DonationAuditService $auditService,
+        private readonly \Modules\Donations\DefaultSeeds\DonationCategoriesDefaultSeedDefinition $categoriesDefaultSeed,
+    ) {
     }
 
     public function index(): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $categories = DonationCategory::forTenant($tenantId)->orderBy('name')->get();
 
         return response()->json([
@@ -31,7 +33,7 @@ class DonationCategoriesController extends Controller
 
     public function store(StoreDonationCategoryRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $payload = $request->validated();
         $payload['tenant_id'] = $tenantId;
@@ -50,13 +52,12 @@ class DonationCategoriesController extends Controller
 
     public function seedDefaults(): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
 
-        (new \Modules\Donations\Database\Seeders\DonationCategorySeeder())->run($tenantId, $userId);
+        $this->categoriesDefaultSeed->execute($tenantId, $userId);
 
         $categories = DonationCategory::forTenant($tenantId)->orderBy('name')->get();
-        $this->auditService->log($tenantId, 'category.defaults_seeded', 'donation_category', (string) $tenantId, null, ['count' => $categories->count()]);
 
         return response()->json([
             'success' => true,
@@ -67,7 +68,7 @@ class DonationCategoriesController extends Controller
 
     public function update(UpdateDonationCategoryRequest $request, string $id): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $category = DonationCategory::forTenant($tenantId)->findOrFail($id);
         $oldValues = $category->toArray();
@@ -86,7 +87,7 @@ class DonationCategoriesController extends Controller
 
     public function destroy(string $id): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $category = DonationCategory::forTenant($tenantId)->findOrFail($id);
 
         $hasDonations = Donation::forTenant($tenantId)

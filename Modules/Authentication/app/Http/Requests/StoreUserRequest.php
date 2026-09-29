@@ -75,6 +75,10 @@ class StoreUserRequest extends FormRequest
                 'integer',
                 'in:0,1',
             ],
+            'person_id' => [
+                'nullable',
+                'uuid',
+            ],
         ];
     }
 

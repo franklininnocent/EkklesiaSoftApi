@@ -77,7 +77,10 @@ class SecurityHeadersMiddleware
         $response->headers->set('X-Download-Options', 'noopen');
         
         // Cache-Control: Prevent caching of sensitive data
-        if ($request->is('api/*') && !$request->is('api/geography/*')) {
+        if ($request->is('api/*')
+            && ! $request->is('api/geography/*')
+            && ! $request->is('api/tenant/media/serve')
+            && ! $request->is('api/tenant/files/serve')) {
             $response->headers->set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
             $response->headers->set('Pragma', 'no-cache');
             $response->headers->set('Expires', '0');

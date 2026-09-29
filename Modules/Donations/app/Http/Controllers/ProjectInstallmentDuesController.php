@@ -19,7 +19,7 @@ class ProjectInstallmentDuesController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
 
         $query = ProjectInstallmentDue::forTenant($tenantId)->with(['family', 'project']);
 
@@ -52,7 +52,7 @@ class ProjectInstallmentDuesController extends Controller
 
     public function waive(string $id, UpdateDueStatusRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $due = ProjectInstallmentDue::forTenant($tenantId)->findOrFail($id);
 
@@ -74,7 +74,7 @@ class ProjectInstallmentDuesController extends Controller
 
     public function cancel(string $id, UpdateDueStatusRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
         $due = ProjectInstallmentDue::forTenant($tenantId)->findOrFail($id);
 

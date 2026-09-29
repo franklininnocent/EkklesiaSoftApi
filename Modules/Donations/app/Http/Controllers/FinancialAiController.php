@@ -27,7 +27,7 @@ class FinancialAiController extends Controller
 
         $user = Auth::user();
         $result = $this->aiQueryService->process(
-            (int) $user->tenant_id,
+            app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
             $validated['prompt'],
             $user->role?->name ?? $user->role_name ?? null
         );
@@ -40,7 +40,7 @@ class FinancialAiController extends Controller
 
     public function status(): JsonResponse
     {
-        $tenantId = (int) Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $globalEnabled = (bool) config('financial_ai.llm.enabled', false);
         $tenantEnabled = $this->llmAdapter->isEnabledForTenant($tenantId);
 

@@ -2,31 +2,36 @@
 
 namespace Modules\Sacraments\Tests\Unit;
 
-use Tests\TestCase;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Modules\Sacraments\Repositories\SacramentRepository;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Modules\Sacraments\Models\Sacrament;
 use Modules\Sacraments\Models\SacramentType;
+use Modules\Sacraments\Repositories\SacramentRepository;
 use Modules\Tenants\Models\Tenant;
+use PHPUnit\Framework\Attributes\Test;
+use Tests\TestCase;
 
 class SacramentRepositoryTest extends TestCase
 {
     use RefreshDatabase;
 
     protected SacramentRepository $repository;
+
     protected Tenant $tenant;
+
     protected SacramentType $sacramentType;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->repository = new SacramentRepository(new Sacrament());
+        $this->repository = new SacramentRepository(new Sacrament);
         $this->tenant = Tenant::factory()->create();
         $this->sacramentType = SacramentType::factory()->create();
     }
 
     /** @test */
+    #[Test]
     public function it_can_get_paginated_sacraments()
     {
         // Arrange
@@ -41,20 +46,21 @@ class SacramentRepositoryTest extends TestCase
         // Assert
         $this->assertEquals(10, $result->count());
         $this->assertEquals(25, $result->total());
-        $this->assertInstanceOf(\Illuminate\Pagination\LengthAwarePaginator::class, $result);
+        $this->assertInstanceOf(LengthAwarePaginator::class, $result);
     }
 
     /** @test */
+    #[Test]
     public function it_can_filter_by_tenant_id()
     {
         // Arrange
         $otherTenant = Tenant::factory()->create();
-        
+
         Sacrament::factory()->count(5)->create([
             'tenant_id' => $this->tenant->id,
             'sacrament_type_id' => $this->sacramentType->id,
         ]);
-        
+
         Sacrament::factory()->count(3)->create([
             'tenant_id' => $otherTenant->id,
             'sacrament_type_id' => $this->sacramentType->id,
@@ -68,16 +74,17 @@ class SacramentRepositoryTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_filter_by_sacrament_type()
     {
         // Arrange
         $otherType = SacramentType::factory()->create();
-        
+
         Sacrament::factory()->count(3)->create([
             'tenant_id' => $this->tenant->id,
             'sacrament_type_id' => $this->sacramentType->id,
         ]);
-        
+
         Sacrament::factory()->count(2)->create([
             'tenant_id' => $this->tenant->id,
             'sacrament_type_id' => $otherType->id,
@@ -91,6 +98,7 @@ class SacramentRepositoryTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_filter_by_status()
     {
         // Arrange
@@ -98,7 +106,7 @@ class SacramentRepositoryTest extends TestCase
             'tenant_id' => $this->tenant->id,
             'sacrament_type_id' => $this->sacramentType->id,
         ]);
-        
+
         Sacrament::factory()->count(2)->cancelled()->create([
             'tenant_id' => $this->tenant->id,
             'sacrament_type_id' => $this->sacramentType->id,
@@ -112,6 +120,7 @@ class SacramentRepositoryTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_search_by_recipient_name()
     {
         // Arrange
@@ -120,7 +129,7 @@ class SacramentRepositoryTest extends TestCase
             'sacrament_type_id' => $this->sacramentType->id,
             'recipient_name' => 'John Doe',
         ]);
-        
+
         Sacrament::factory()->create([
             'tenant_id' => $this->tenant->id,
             'sacrament_type_id' => $this->sacramentType->id,
@@ -136,6 +145,7 @@ class SacramentRepositoryTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_filter_by_date_range()
     {
         // Arrange
@@ -144,7 +154,7 @@ class SacramentRepositoryTest extends TestCase
             'sacrament_type_id' => $this->sacramentType->id,
             'date_administered' => '2025-06-15',
         ]);
-        
+
         Sacrament::factory()->create([
             'tenant_id' => $this->tenant->id,
             'sacrament_type_id' => $this->sacramentType->id,
@@ -162,6 +172,7 @@ class SacramentRepositoryTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_sort_results()
     {
         // Arrange
@@ -170,7 +181,7 @@ class SacramentRepositoryTest extends TestCase
             'sacrament_type_id' => $this->sacramentType->id,
             'date_administered' => '2025-01-01',
         ]);
-        
+
         Sacrament::factory()->create([
             'tenant_id' => $this->tenant->id,
             'sacrament_type_id' => $this->sacramentType->id,
@@ -188,6 +199,7 @@ class SacramentRepositoryTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_create_sacrament()
     {
         // Arrange
@@ -209,6 +221,7 @@ class SacramentRepositoryTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_update_sacrament()
     {
         // Arrange
@@ -230,6 +243,7 @@ class SacramentRepositoryTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_delete_sacrament()
     {
         // Arrange
@@ -247,6 +261,7 @@ class SacramentRepositoryTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_find_sacrament_by_id()
     {
         // Arrange
@@ -266,6 +281,7 @@ class SacramentRepositoryTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_returns_null_when_sacrament_not_found()
     {
         // Act
@@ -276,6 +292,7 @@ class SacramentRepositoryTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_eager_loads_relationships()
     {
         // Arrange
@@ -292,5 +309,3 @@ class SacramentRepositoryTest extends TestCase
         $this->assertTrue($result->relationLoaded('tenant'));
     }
 }
-
-

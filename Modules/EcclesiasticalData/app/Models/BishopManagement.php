@@ -11,6 +11,14 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Builder;
+use App\Support\CaseInsensitiveSearch;
+
+/**
+ * Platform master-data bishop person record.
+ *
+ * Diocese assignment history lives in bishop_appointments; archdiocese_id on
+ * bishops is retained for backward compatibility during the succession rollout.
+ */
 
 class BishopManagement extends Bishop
 {
@@ -32,10 +40,26 @@ class BishopManagement extends Bishop
     public function getFillable(): array
     {
         return array_merge(parent::getFillable(), [
+            'normalized_name',
+            'given_name',
+            'family_name',
+            'religious_name',
+            'ecclesiastical_title_id',
+            'date_of_birth',
+            'ordained_priest_date',
+            'ordained_bishop_date',
+            'retired_date',
+            'status',
+            'is_current',
+            'precedence_order',
             'is_active',
+            'education',
             'metadata',
             'last_verified_at',
+            'last_verified_by',
             'verification_notes',
+            'photo_path',
+            'coat_of_arms_path',
         ]);
     }
 
@@ -45,8 +69,13 @@ class BishopManagement extends Bishop
     public function getCasts(): array
     {
         return array_merge(parent::getCasts(), [
+            'date_of_birth' => 'date',
+            'ordained_priest_date' => 'date',
+            'ordained_bishop_date' => 'date',
+            'retired_date' => 'date',
             'metadata' => 'array',
             'last_verified_at' => 'datetime',
+            'is_current' => 'boolean',
         ]);
     }
 
@@ -109,12 +138,25 @@ class BishopManagement extends Bishop
     /**
      * Get current appointment
      */
-    public function currentAppointment()
+    public function currentAppointment(): ?BishopAppointment
     {
+        if ($this->relationLoaded('appointments')) {
+            return $this->appointments
+                ->where('is_current', true)
+                ->sortByDesc(fn (BishopAppointment $appointment) => $appointment->effective_date?->timestamp ?? 0)
+                ->first();
+        }
+
         return $this->appointments()
             ->where('is_current', true)
             ->with(['diocese', 'ecclesiasticalTitle'])
+            ->orderByDesc('effective_date')
             ->first();
+    }
+
+    public function updateRequests(): HasMany
+    {
+        return $this->hasMany(BishopUpdateRequest::class, 'target_bishop_id');
     }
 
     /**
@@ -143,26 +185,66 @@ class BishopManagement extends Bishop
             return $query;
         }
 
-        return $query->where(function ($q) use ($search) {
-            $q->where('full_name', 'ILIKE', "%{$search}%")
-              ->orWhere('given_name', 'ILIKE', "%{$search}%")
-              ->orWhere('family_name', 'ILIKE', "%{$search}%")
-              ->orWhere('email', 'ILIKE', "%{$search}%");
+        $pattern = '%'.$search.'%';
+        $matchingDioceseIds = $this->matchingDioceseIds($pattern);
+
+        return $query->where(function ($q) use ($pattern, $matchingDioceseIds) {
+            CaseInsensitiveSearch::applyColumnLike($q, 'full_name', $pattern);
+            CaseInsensitiveSearch::applyColumnLike($q, 'given_name', $pattern, 'or');
+            CaseInsensitiveSearch::applyColumnLike($q, 'family_name', $pattern, 'or');
+            CaseInsensitiveSearch::applyColumnLike($q, 'religious_name', $pattern, 'or');
+            CaseInsensitiveSearch::applyColumnLike($q, 'email', $pattern, 'or');
+
+            if ($matchingDioceseIds->isNotEmpty()) {
+                $table = $this->getTable();
+
+                $q->orWhereIn("{$table}.archdiocese_id", $matchingDioceseIds)
+                    ->orWhereIn("{$table}.id", BishopAppointment::query()
+                        ->select('bishop_id')
+                        ->whereIn('diocese_id', $matchingDioceseIds)
+                        ->whereNull('deleted_at'));
+            }
         });
+    }
+
+    /**
+     * Resolve diocese IDs whose name/code matches the search pattern.
+     *
+     * @return \Illuminate\Support\Collection<int, int|string>
+     */
+    protected function matchingDioceseIds(string $pattern)
+    {
+        return Archdiocese::query()
+            ->where(function ($dioceseQuery) use ($pattern) {
+                CaseInsensitiveSearch::applyColumnLike($dioceseQuery, 'name', $pattern);
+                CaseInsensitiveSearch::applyColumnLike($dioceseQuery, 'code', $pattern, 'or');
+            })
+            ->pluck('id');
     }
 
     /**
      * Scope by diocese
      */
-    public function scopeByDiocese($query, ?string $dioceseId)
+    public function scopeByDiocese($query, ?string $dioceseId, bool $currentOnly = true)
     {
         if (!$dioceseId) {
             return $query;
         }
 
-        return $query->whereHas('appointments', function ($q) use ($dioceseId) {
-            $q->where('diocese_id', $dioceseId)
-              ->where('is_current', true);
+        $table = $this->getTable();
+
+        return $query->where(function ($q) use ($dioceseId, $currentOnly, $table) {
+            $q->where(function ($legacy) use ($dioceseId, $currentOnly, $table) {
+                $legacy->where("{$table}.archdiocese_id", $dioceseId);
+
+                if ($currentOnly) {
+                    $legacy->where("{$table}.is_current", true);
+                }
+            })->orWhereIn("{$table}.id", BishopAppointment::query()
+                ->select('bishop_id')
+                ->where('diocese_id', $dioceseId)
+                ->when($currentOnly, fn ($appointment) => $appointment->where('is_current', true))
+                ->whereNull('deleted_at'));
         });
     }
 

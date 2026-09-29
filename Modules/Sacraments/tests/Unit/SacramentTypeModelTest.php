@@ -2,17 +2,20 @@
 
 namespace Modules\Sacraments\Tests\Unit;
 
-use Tests\TestCase;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Modules\Sacraments\Models\SacramentType;
 use Modules\Sacraments\Models\Sacrament;
+use Modules\Sacraments\Models\SacramentType;
 use Modules\Tenants\Models\Tenant;
+use PHPUnit\Framework\Attributes\Test;
+use Tests\TestCase;
 
 class SacramentTypeModelTest extends TestCase
 {
     use RefreshDatabase;
 
     /** @test */
+    #[Test]
     public function it_has_correct_fillable_attributes()
     {
         // Arrange
@@ -23,17 +26,18 @@ class SacramentTypeModelTest extends TestCase
         ];
 
         // Act
-        $model = new SacramentType();
+        $model = new SacramentType;
 
         // Assert
         $this->assertEquals($fillable, $model->getFillable());
     }
 
     /** @test */
+    #[Test]
     public function it_has_correct_casts()
     {
         // Arrange & Act
-        $model = new SacramentType();
+        $model = new SacramentType;
         $casts = $model->getCasts();
 
         // Assert
@@ -46,12 +50,13 @@ class SacramentTypeModelTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_has_many_sacraments()
     {
         // Arrange
         $tenant = Tenant::factory()->create();
         $type = SacramentType::factory()->create();
-        
+
         Sacrament::factory()->count(3)->create([
             'tenant_id' => $tenant->id,
             'sacrament_type_id' => $type->id,
@@ -66,6 +71,7 @@ class SacramentTypeModelTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_scope_active_types()
     {
         // Arrange
@@ -83,6 +89,7 @@ class SacramentTypeModelTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_scope_ordered()
     {
         // Arrange
@@ -99,6 +106,7 @@ class SacramentTypeModelTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_filter_by_category()
     {
         // Arrange
@@ -116,6 +124,7 @@ class SacramentTypeModelTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_can_check_if_repeatable()
     {
         // Arrange
@@ -128,6 +137,7 @@ class SacramentTypeModelTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_generates_age_range_attribute_with_both_ages()
     {
         // Arrange
@@ -144,6 +154,7 @@ class SacramentTypeModelTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_generates_age_range_attribute_with_min_age_only()
     {
         // Arrange
@@ -160,6 +171,7 @@ class SacramentTypeModelTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_generates_age_range_attribute_with_typical_age_only()
     {
         // Arrange
@@ -176,6 +188,7 @@ class SacramentTypeModelTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_generates_age_range_attribute_with_no_restrictions()
     {
         // Arrange
@@ -192,15 +205,14 @@ class SacramentTypeModelTest extends TestCase
     }
 
     /** @test */
+    #[Test]
     public function it_has_unique_code_constraint()
     {
         // Arrange
         SacramentType::factory()->create(['code' => 'BAPTISM']);
 
         // Act & Assert
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         SacramentType::factory()->create(['code' => 'BAPTISM']);
     }
 }
-
-

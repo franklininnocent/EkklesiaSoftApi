@@ -48,11 +48,7 @@ class UpdateUserRequest extends FormRequest
                 Rule::unique('users', 'email')->ignore($userId), // Email must be unique except for current user
             ],
             'password' => [
-                'nullable',
-                'string',
-                'min:8',
-                'confirmed', // Requires password_confirmation field
-                'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/', // Complex password
+                'prohibited',
             ],
             'contact_number' => [
                 'nullable',
@@ -79,6 +75,10 @@ class UpdateUserRequest extends FormRequest
                 'nullable',
                 'integer',
                 'in:0,1',
+            ],
+            'person_id' => [
+                'nullable',
+                'uuid',
             ],
         ];
     }

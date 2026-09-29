@@ -2,6 +2,7 @@
 
 namespace Modules\Donations\Tests\Feature;
 
+use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Laravel\Passport\Passport;
@@ -18,7 +19,10 @@ use Modules\Donations\Models\ProjectInstallmentDue;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
 use Modules\RolesAndPermissions\Models\Permission;
+use Modules\Tenants\Models\Address;
+use Modules\Tenants\Models\Country;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Services\ChurchCurrencyResolver;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -27,14 +31,19 @@ class DonationsApiTest extends TestCase
     use RefreshDatabase;
 
     protected Tenant $tenant;
+
     protected User $tenantAdminUser;
+
     protected Role $tenantAdminRole;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->tenant = Tenant::factory()->create();
+        $this->tenant = Tenant::factory()->active()->create([
+            'subscription_ends_at' => now()->addYear(),
+            'trial_ends_at' => now()->addYear(),
+        ]);
 
         $this->tenantAdminRole = Role::create([
             'name' => Role::TENANT_ADMINISTRATOR,
@@ -174,7 +183,6 @@ class DonationsApiTest extends TestCase
     public function it_creates_donation_entry_and_settings(): void
     {
         $settings = $this->putJson('/api/tenant/donations/settings', [
-            'default_currency' => 'INR',
             'financial_year_start_month' => '04',
             'financial_year_start_day' => '01',
             'tax_registration_number' => 'TAX-123',
@@ -596,7 +604,10 @@ class DonationsApiTest extends TestCase
     #[Test]
     public function it_accepts_webhook_with_valid_signature(): void
     {
-        config(['donations.webhooks.secret' => 'test-secret']);
+        config([
+            'donations.webhooks.secret' => 'test-secret',
+            'donations.webhooks.providers.generic.secret' => 'test-secret',
+        ]);
 
         $response = $this->withHeaders([
             'X-Payment-Signature' => 'test-secret',
@@ -825,7 +836,6 @@ class DonationsApiTest extends TestCase
         ])->assertCreated()->json('data');
 
         $this->putJson('/api/tenant/donations/settings', [
-            'default_currency' => 'INR',
             'financial_year_start_month' => '04',
             'financial_year_start_day' => '01',
             'tax_registration_number' => 'TAX-999',
@@ -972,6 +982,7 @@ class DonationsApiTest extends TestCase
             'donor_name' => 'Builder Bob',
             'amount' => 5000,
             'method' => 'bank_transfer',
+            'gateway_reference' => 'NEFT-5000',
             'payment_date' => now()->toDateString(),
         ])->assertCreated();
 
@@ -997,6 +1008,60 @@ class DonationsApiTest extends TestCase
         $dashboard->assertOk()
             ->assertJsonPath('data.totals.voluntary_collected', 300)
             ->assertJsonPath('data.totals.voluntary_entries', 1);
+    }
+
+    #[Test]
+    public function it_caps_dashboard_collections_at_business_today_and_flags_future_dated_payments(): void
+    {
+        $this->tenant->update([
+            'settings' => ['timezone' => 'UTC', 'language' => 'en', 'currency' => 'INR'],
+        ]);
+        Carbon::setTestNow(Carbon::parse('2026-06-15 10:00:00', 'UTC'));
+
+        DonationSetting::create([
+            'tenant_id' => $this->tenant->id,
+            'financial_year_start_month' => '01',
+            'financial_year_start_day' => '01',
+            'default_currency' => 'INR',
+        ]);
+
+        $family = Family::factory()->create(['tenant_id' => $this->tenant->id, 'status' => 'active']);
+
+        DonationPayment::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'payment_number' => 'PAY-TODAY',
+            'payer_name' => 'Today Payer',
+            'payment_date' => Carbon::now()->toDateString(),
+            'amount' => 400,
+            'currency' => 'INR',
+            'method' => 'cash',
+            'status' => 'succeeded',
+            'source_type' => 'general',
+        ]);
+
+        DonationPayment::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'payment_number' => 'PAY-FUTURE',
+            'payer_name' => 'Future Payer',
+            'payment_date' => Carbon::now()->addMonths(2)->toDateString(),
+            'amount' => 250,
+            'currency' => 'INR',
+            'method' => 'cash',
+            'status' => 'succeeded',
+            'source_type' => 'general',
+        ]);
+
+        $dashboard = $this->getJson('/api/tenant/donations/dashboard/summary');
+        $dashboard->assertOk()
+            ->assertJsonPath('data.totals.collected', 400)
+            ->assertJsonPath('data.totals.future_dated_payments.count', 1)
+            ->assertJsonPath('data.totals.future_dated_payments.amount', 250)
+            ->assertJsonPath('data.period_collections.current_month_collected', 400)
+            ->assertJsonPath('data.period_collections.annual_collected', 400);
+
+        $this->assertSame(Carbon::now()->toDateString(), $dashboard->json('data.recent_activity.0.date'));
     }
 
     #[Test]
@@ -1080,6 +1145,93 @@ class DonationsApiTest extends TestCase
     }
 
     #[Test]
+    public function it_returns_rollup_with_money_comparable_false_for_mixed_parish_currencies(): void
+    {
+        $india = Country::query()->where('iso2', 'IN')->first()
+            ?? Country::factory()->create(['iso2' => 'IN', 'name' => 'India', 'currency' => 'INR']);
+        $usa = Country::query()->where('iso2', 'US')->first()
+            ?? Country::factory()->create(['iso2' => 'US', 'name' => 'United States', 'currency' => 'USD']);
+
+        $this->tenant->update([
+            'tenant_tier' => 'diocese',
+            'name' => 'Mixed Currency Diocese',
+        ]);
+        $this->tenant->refresh();
+
+        $parishInr = Tenant::factory()->create([
+            'parent_tenant_id' => $this->tenant->id,
+            'tenant_tier' => 'parish',
+            'name' => 'Parish India',
+            'features' => ['donations'],
+        ]);
+        $parishUsd = Tenant::factory()->create([
+            'parent_tenant_id' => $this->tenant->id,
+            'tenant_tier' => 'parish',
+            'name' => 'Parish USA',
+            'features' => ['donations'],
+        ]);
+
+        $this->seedOfficialAddressForTenant($parishInr, $india);
+        $this->seedOfficialAddressForTenant($parishUsd, $usa);
+
+        $resolver = app(ChurchCurrencyResolver::class);
+        $resolver->syncDerivedColumns((int) $parishInr->id);
+        $resolver->syncDerivedColumns((int) $parishUsd->id);
+
+        $familyInr = Family::factory()->create(['tenant_id' => $parishInr->id, 'status' => 'active']);
+        $familyUsd = Family::factory()->create(['tenant_id' => $parishUsd->id, 'status' => 'active']);
+
+        DonationPayment::create([
+            'tenant_id' => $parishInr->id,
+            'family_id' => $familyInr->id,
+            'payment_number' => 'PAY-INR-001',
+            'payer_name' => 'INR Payer',
+            'payment_date' => now()->toDateString(),
+            'amount' => 500,
+            'currency' => 'INR',
+            'method' => 'cash',
+            'status' => 'succeeded',
+            'source_type' => 'general',
+        ]);
+
+        DonationPayment::create([
+            'tenant_id' => $parishUsd->id,
+            'family_id' => $familyUsd->id,
+            'payment_number' => 'PAY-USD-001',
+            'payer_name' => 'USD Payer',
+            'payment_date' => now()->toDateString(),
+            'amount' => 100,
+            'currency' => 'USD',
+            'method' => 'cash',
+            'status' => 'succeeded',
+            'source_type' => 'general',
+        ]);
+
+        $response = $this->getJson('/api/tenant/donations/dashboard/rollup');
+
+        $response->assertOk()
+            ->assertJsonPath('data.available', true)
+            ->assertJsonPath('data.money_comparable', false)
+            ->assertJsonPath('data.consolidated.total_collected', null)
+            ->assertJsonPath('data.consolidated.pending_dues', null)
+            ->assertJsonPath('data.consolidated.current_month_collected', null);
+
+        $currencies = $response->json('data.currencies') ?? [];
+        sort($currencies);
+        $expected = ['INR', 'USD'];
+        sort($expected);
+        $this->assertSame($expected, $currencies);
+
+        $parishes = collect($response->json('data.parishes') ?? []);
+        $inrRow = $parishes->firstWhere('tenant_id', $parishInr->id);
+        $usdRow = $parishes->firstWhere('tenant_id', $parishUsd->id);
+        $this->assertNotNull($inrRow);
+        $this->assertNotNull($usdRow);
+        $this->assertGreaterThanOrEqual(500, (float) ($inrRow['metrics']['total_collected'] ?? 0));
+        $this->assertGreaterThanOrEqual(100, (float) ($usdRow['metrics']['total_collected'] ?? 0));
+    }
+
+    #[Test]
     public function it_builds_upi_payment_intent_with_qr_code(): void
     {
         DonationSetting::create([
@@ -1095,7 +1247,7 @@ class DonationsApiTest extends TestCase
 
         $family = Family::factory()->create(['tenant_id' => $this->tenant->id, 'status' => 'active']);
 
-        $response = $this->getJson('/api/tenant/donations/upi/intent?amount=500&family_id=' . $family->id);
+        $response = $this->getJson('/api/tenant/donations/upi/intent?amount=500&family_id='.$family->id);
         $response->assertOk()
             ->assertJsonPath('data.available', true)
             ->assertJsonPath('data.vpa', 'church@upi')
@@ -1418,7 +1570,7 @@ class DonationsApiTest extends TestCase
             'family_id' => $family->id,
             'plan_id' => $plan->id,
             'period_label' => '2026-06',
-            'due_date' => now()->addDays(10)->toDateString(),
+            'due_date' => now()->subDays(2)->toDateString(),
             'amount_due' => 1000,
             'amount_paid' => 0,
             'status' => 'pending',
@@ -1532,7 +1684,7 @@ class DonationsApiTest extends TestCase
             ->assertJsonPath('data.totals.voluntary_collected', 300)
             ->assertJsonPath('data.payment_history.total_transactions', 2)
             ->assertJsonPath('data.analytics.ranking.by_total_giving', 1)
-            ->assertJsonPath('data.analytics.punctuality.evaluated_periods', 1);
+            ->assertJsonPath('data.analytics.punctuality.evaluated_periods', 2);
 
         $this->assertNotNull($response->json('data.donations_offerings.last_donation_date'));
         $this->assertCount(12, $response->json('data.analytics.trend'));
@@ -1652,9 +1804,14 @@ class DonationsApiTest extends TestCase
                     ],
                 ],
             ])
-            ->assertJsonPath('data.persona.default_dashboard_view', 'local');
+            ->assertJsonPath('data.persona.default_dashboard_view', 'local')
+            ->assertJsonPath('data.persona.persona', 'admin')
+            ->assertJsonPath('data.persona.label', 'Administrator View')
+            ->assertJsonPath(
+                'data.persona.emphasis',
+                'Collections, family follow-up, and parish operations in one place.'
+            );
 
-        $this->assertContains($response->json('data.persona.persona'), ['admin', 'secretary', 'treasurer']);
         $this->assertNotEmpty($response->json('data.saved_views'));
     }
 
@@ -1756,7 +1913,7 @@ class DonationsApiTest extends TestCase
             'method' => 'cash',
         ])->assertCreated()->json('data');
 
-        $response = $this->get('/api/tenant/donations/payments/' . $payment['id'] . '/receipt/print');
+        $response = $this->get('/api/tenant/donations/payments/'.$payment['id'].'/receipt/print');
         $response->assertOk();
         $this->assertStringContainsString('Official Contribution Receipt', $response->getContent());
     }
@@ -1815,6 +1972,10 @@ class DonationsApiTest extends TestCase
             ->assertJsonStructure([
                 'data' => [
                     'persona' => ['persona', 'label', 'emphasis', 'sections'],
+                    'tenant_context' => ['currency_code'],
+                    'period' => ['month_start', 'month_end', 'timezone'],
+                    'collection_trend',
+                    'collections_by_method_this_month',
                     'financial' => [
                         'totals' => ['collected', 'pending_dues', 'current_month_collected', 'annual_collected'],
                         'attention_summary' => ['count', 'total_overdue_amount'],
@@ -1824,6 +1985,83 @@ class DonationsApiTest extends TestCase
                     'saved_views',
                 ],
             ]);
+    }
+
+    #[Test]
+    public function it_bounds_current_month_collected_to_tenant_business_month(): void
+    {
+        $family = Family::factory()->create(['tenant_id' => $this->tenant->id, 'status' => 'active']);
+        $thisMonth = now()->startOfMonth()->toDateString();
+        $lastMonth = now()->copy()->subMonth()->endOfMonth()->toDateString();
+        $nextMonth = now()->copy()->addMonth()->startOfMonth()->toDateString();
+
+        DonationPayment::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'payment_number' => 'PAY-LAST-MONTH',
+            'payer_name' => 'Last Month',
+            'payment_date' => $lastMonth,
+            'amount' => 100,
+            'currency' => 'INR',
+            'method' => 'cash',
+            'status' => 'succeeded',
+            'source_type' => 'general',
+        ]);
+
+        DonationPayment::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'payment_number' => 'PAY-THIS-MONTH',
+            'payer_name' => 'This Month',
+            'payment_date' => $thisMonth,
+            'amount' => 200,
+            'currency' => 'INR',
+            'method' => 'bank_transfer',
+            'status' => 'succeeded',
+            'source_type' => 'general',
+        ]);
+
+        DonationPayment::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'payment_number' => 'PAY-NEXT-MONTH',
+            'payer_name' => 'Next Month',
+            'payment_date' => $nextMonth,
+            'amount' => 300,
+            'currency' => 'INR',
+            'method' => 'cheque',
+            'status' => 'succeeded',
+            'source_type' => 'general',
+        ]);
+
+        $response = $this->getJson('/api/tenant/donations/dashboard/operations');
+
+        $response->assertOk()
+            ->assertJsonPath('data.financial.totals.current_month_collected', 200)
+            ->assertJsonPath('data.collections_by_method_this_month.bank_transfer', 200);
+
+        $methodMix = $response->json('data.collections_by_method_this_month') ?? [];
+        $this->assertArrayNotHasKey('cash', $methodMix);
+        $this->assertArrayNotHasKey('cheque', $methodMix);
+
+        $trend = $response->json('data.collection_trend') ?? [];
+        $this->assertCount(6, $trend);
+        $lastBucket = end($trend);
+        $this->assertIsArray($lastBucket);
+        $this->assertSame(now()->format('Y-m'), $lastBucket['period']);
+        $this->assertSame(200.0, (float) $lastBucket['collected']);
+        $this->assertSame(
+            (float) $response->json('data.financial.totals.current_month_collected'),
+            (float) $lastBucket['collected']
+        );
+
+        $previousBucket = $trend[count($trend) - 2] ?? null;
+        $this->assertIsArray($previousBucket);
+        $this->assertSame(now()->copy()->subMonth()->format('Y-m'), $previousBucket['period']);
+        $this->assertSame(100.0, (float) $previousBucket['collected']);
+
+        $trendTotal = array_sum(array_map(static fn ($row) => (float) ($row['collected'] ?? 0), $trend));
+        $this->assertSame(300.0, $trendTotal);
     }
 
     #[Test]
@@ -1839,13 +2077,13 @@ class DonationsApiTest extends TestCase
             'method' => 'cash',
         ])->assertCreated()->json('data');
 
-        $familyTimeline = $this->getJson('/api/tenant/donations/activity/timeline?subject_type=family&subject_id=' . $family->id);
+        $familyTimeline = $this->getJson('/api/tenant/donations/activity/timeline?subject_type=family&subject_id='.$family->id);
         $familyTimeline->assertOk()
             ->assertJsonPath('data.subject_type', 'family')
             ->assertJsonPath('data.subject_id', (string) $family->id)
             ->assertJsonStructure(['data' => ['count', 'events']]);
 
-        $paymentTimeline = $this->getJson('/api/tenant/donations/activity/timeline?subject_type=payment&subject_id=' . $payment['id']);
+        $paymentTimeline = $this->getJson('/api/tenant/donations/activity/timeline?subject_type=payment&subject_id='.$payment['id']);
         $paymentTimeline->assertOk()
             ->assertJsonPath('data.subject_type', 'payment')
             ->assertJsonPath('data.subject_id', (string) $payment['id'])
@@ -1871,10 +2109,181 @@ class DonationsApiTest extends TestCase
                         'health_status',
                         'current_month_collected',
                         'pending_dues',
+                        'overdue_family_count',
+                        'overdue_amount',
+                        'previous_month_collected',
+                    ],
+                    'visuals' => [
+                        'health' => ['score', 'label', 'status', 'factors'],
+                        'collections',
+                        'outstanding',
+                        'participation',
+                        'collection_trend',
+                        'forecast' => ['history', 'current_month_collected', 'current_month_projection'],
                     ],
                 ],
             ])
             ->assertJsonPath('data.title', 'Executive Stewardship Summary');
+
+        $dashboard = $this->getJson('/api/tenant/donations/dashboard/summary');
+        $dashboard->assertOk();
+        $response->assertJsonPath(
+            'data.metrics.current_month_collected',
+            $dashboard->json('data.period_collections.current_month_collected')
+        );
+        $response->assertJsonPath(
+            'data.metrics.pending_dues',
+            $dashboard->json('data.totals.pending_dues')
+        );
+    }
+
+    #[Test]
+    public function it_returns_outstanding_overdue_drill_down_reconciled_with_executive_summary(): void
+    {
+        $fund = Fund::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'Fund',
+            'code' => 'DRILL-FUND',
+            'status' => 'active',
+        ]);
+
+        $plan = ContributionPlan::create([
+            'tenant_id' => $this->tenant->id,
+            'fund_id' => $fund->id,
+            'name' => 'Monthly Plan',
+            'code' => 'DRILL-PLAN',
+            'frequency' => 'monthly',
+            'default_amount' => 300,
+            'status' => 'active',
+        ]);
+
+        $family = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+            'family_name' => 'Drill Down Family',
+        ]);
+
+        ContributionDue::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'plan_id' => $plan->id,
+            'period_label' => '2026-03',
+            'period_start' => now()->subMonths(2)->startOfMonth()->toDateString(),
+            'period_end' => now()->subMonths(2)->endOfMonth()->toDateString(),
+            'due_date' => now()->subDays(15)->toDateString(),
+            'amount_due' => 300,
+            'amount_paid' => 0,
+            'status' => 'pending',
+        ]);
+
+        $executive = $this->getJson('/api/tenant/donations/reports/executive-summary');
+        $executive->assertOk();
+
+        $drill = $this->getJson('/api/tenant/donations/reports/drill-down?'.http_build_query([
+            'graph_id' => 'outstanding_overdue',
+            'data_element_id' => 'overdue_amount',
+            'slice_id' => 'overdue',
+            'per_page' => 20,
+        ]));
+
+        $drill->assertOk()
+            ->assertJsonStructure([
+                'data' => [
+                    'context' => ['expected_amount', 'expected_count', 'business_date', 'why_this_number'],
+                    'summary' => ['family_count', 'due_count', 'amount_total'],
+                    'data' => ['data', 'total'],
+                ],
+            ]);
+
+        $drill->assertJsonPath(
+            'data.context.expected_amount',
+            $executive->json('data.visuals.outstanding.overdue_amount')
+        );
+        $drill->assertJsonPath(
+            'data.context.expected_count',
+            $executive->json('data.visuals.outstanding.overdue_family_count')
+        );
+        $this->assertGreaterThanOrEqual(1, $drill->json('data.data.total'));
+    }
+
+    #[Test]
+    public function it_returns_collections_drill_down_reconciled_with_executive_summary(): void
+    {
+        $family = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+        ]);
+
+        $thisMonth = now()->startOfMonth()->toDateString();
+
+        DonationPayment::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'payment_number' => 'PAY-COLL-DRILL',
+            'payer_name' => 'Collections Drill',
+            'payment_date' => $thisMonth,
+            'amount' => 250,
+            'currency' => 'INR',
+            'method' => 'cash',
+            'status' => 'succeeded',
+            'source_type' => 'general',
+        ]);
+
+        $executive = $this->getJson('/api/tenant/donations/reports/executive-summary');
+        $executive->assertOk();
+        $this->assertGreaterThanOrEqual(
+            250,
+            (float) $executive->json('data.visuals.collections.current_month_collected')
+        );
+
+        $drill = $this->getJson('/api/tenant/donations/reports/drill-down?'.http_build_query([
+            'graph_id' => 'collections',
+            'data_element_id' => 'current_month_collected',
+            'slice_id' => 'current_month',
+            'per_page' => 20,
+        ]));
+
+        $drill->assertOk()
+            ->assertJsonPath('data.context.record_kind', 'payment')
+            ->assertJsonPath('data.context.value_kind', 'money')
+            ->assertJsonPath('data.context.point_kind', 'actual');
+
+        $drill->assertJsonPath(
+            'data.context.expected_amount',
+            $executive->json('data.visuals.collections.current_month_collected')
+        );
+        $this->assertGreaterThanOrEqual(1, (int) $drill->json('data.data.total'));
+    }
+
+    #[Test]
+    public function it_returns_forecast_projection_drill_down_without_payment_rows(): void
+    {
+        $executive = $this->getJson('/api/tenant/donations/reports/executive-summary');
+        $executive->assertOk();
+
+        $drill = $this->getJson('/api/tenant/donations/reports/drill-down?'.http_build_query([
+            'graph_id' => 'month_end_forecast',
+            'data_element_id' => 'current_month_projection',
+            'slice_id' => 'current_month_projection',
+        ]));
+
+        $drill->assertOk()
+            ->assertJsonPath('data.context.point_kind', 'forecast')
+            ->assertJsonPath('data.context.record_kind', 'none')
+            ->assertJsonPath('data.data.total', 0)
+            ->assertJsonPath('data.data.data', []);
+
+        $drill->assertJsonPath(
+            'data.context.expected_amount',
+            $executive->json('data.visuals.forecast.current_month_projection')
+        );
+    }
+
+    #[Test]
+    public function it_rejects_overdue_and_remaining_only_on_dues_index(): void
+    {
+        $response = $this->getJson('/api/tenant/donations/dues?overdue_only=1&remaining_only=1');
+        $response->assertStatus(422);
     }
 
     #[Test]
@@ -1995,7 +2404,6 @@ class DonationsApiTest extends TestCase
     public function it_persists_llm_toggle_in_donation_settings_metadata(): void
     {
         $update = $this->putJson('/api/tenant/donations/settings', [
-            'default_currency' => 'INR',
             'financial_year_start_month' => '04',
             'financial_year_start_day' => '01',
             'receipt_prefix' => 'RCPT',
@@ -2307,5 +2715,365 @@ class DonationsApiTest extends TestCase
         $yearResponse = $this->getJson('/api/tenant/donations/dashboard/command-center?period=year');
         $yearResponse->assertOk();
         $this->assertGreaterThanOrEqual(1, count($yearResponse->json('data.analytics.collection_trend')));
+    }
+
+    #[Test]
+    public function it_counts_only_collectable_period_dues_in_outstanding_total(): void
+    {
+        Passport::actingAs($this->tenantAdminUser);
+
+        $fund = Fund::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'Parish Fund',
+            'code' => 'PARISH-OUT',
+            'status' => 'active',
+        ]);
+
+        $plan = ContributionPlan::create([
+            'tenant_id' => $this->tenant->id,
+            'fund_id' => $fund->id,
+            'name' => 'Monthly Family Contribution',
+            'code' => 'MONTHLY-OUT',
+            'plan_type' => 'uniform',
+            'frequency' => 'monthly',
+            'default_amount' => 100,
+            'status' => 'active',
+        ]);
+
+        $family = Family::factory()->create(['tenant_id' => $this->tenant->id, 'status' => 'active']);
+        $currentStart = now()->startOfMonth();
+        $currentEnd = now()->copy()->endOfMonth();
+        $nextStart = $currentStart->copy()->addMonth()->startOfMonth();
+        $nextEnd = $nextStart->copy()->endOfMonth();
+
+        ContributionDue::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'plan_id' => $plan->id,
+            'period_label' => $currentStart->format('Y-m'),
+            'period_start' => $currentStart->toDateString(),
+            'period_end' => $currentEnd->toDateString(),
+            'due_date' => $currentEnd->toDateString(),
+            'amount_due' => 100,
+            'amount_paid' => 0,
+            'status' => 'pending',
+        ]);
+
+        ContributionDue::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'plan_id' => $plan->id,
+            'period_label' => $nextStart->format('Y-m'),
+            'period_start' => $nextStart->toDateString(),
+            'period_end' => $nextEnd->toDateString(),
+            'due_date' => $nextEnd->toDateString(),
+            'amount_due' => 100,
+            'amount_paid' => 0,
+            'status' => 'pending',
+        ]);
+
+        $response = $this->getJson("/api/tenant/donations/families/{$family->id}/financial-profile");
+
+        $response->assertOk()
+            ->assertJsonPath('data.outstanding_balances.total', 100)
+            ->assertJsonPath('data.totals.pending_due', 100)
+            ->assertJsonPath('data.mandatory_contributions.totals.pending', 100);
+
+        $this->assertCount(1, $response->json('data.mandatory_contributions.current_period_dues'));
+        $this->assertCount(1, $response->json('data.mandatory_contributions.scheduled_dues'));
+    }
+
+    #[Test]
+    public function it_classifies_fund_allocations_as_voluntary_paid_without_reducing_outstanding(): void
+    {
+        Passport::actingAs($this->tenantAdminUser);
+
+        $fund = Fund::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'General Fund',
+            'code' => 'GEN-FUND',
+            'status' => 'active',
+        ]);
+
+        $plan = ContributionPlan::create([
+            'tenant_id' => $this->tenant->id,
+            'fund_id' => $fund->id,
+            'name' => 'Monthly',
+            'code' => 'MON-FUND',
+            'plan_type' => 'uniform',
+            'frequency' => 'monthly',
+            'default_amount' => 100,
+            'status' => 'active',
+        ]);
+
+        $family = Family::factory()->create(['tenant_id' => $this->tenant->id, 'status' => 'active']);
+
+        $due = ContributionDue::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'plan_id' => $plan->id,
+            'period_label' => now()->format('Y-m'),
+            'period_start' => now()->startOfMonth()->toDateString(),
+            'period_end' => now()->endOfMonth()->toDateString(),
+            'due_date' => now()->endOfMonth()->toDateString(),
+            'amount_due' => 100,
+            'amount_paid' => 0,
+            'status' => 'pending',
+        ]);
+
+        $this->postJson('/api/tenant/donations/payments', [
+            'family_id' => $family->id,
+            'payer_name' => 'Test Family',
+            'payment_date' => now()->toDateString(),
+            'amount' => 100,
+            'method' => 'cash',
+            'allocations' => [
+                ['allocatable_type' => 'fund', 'allocatable_id' => $fund->id, 'amount' => 100],
+            ],
+        ])->assertCreated();
+
+        $response = $this->getJson("/api/tenant/donations/families/{$family->id}/financial-profile");
+
+        $response->assertOk()
+            ->assertJsonPath('data.totals.total_paid', 100)
+            ->assertJsonPath('data.totals.voluntary_paid', 100)
+            ->assertJsonPath('data.totals.mandatory_paid', 0)
+            ->assertJsonPath('data.outstanding_balances.total', 100)
+            ->assertJsonPath('data.mandatory_contributions.totals.paid', 0);
+
+        $this->assertSame('pending', $due->fresh()->status);
+    }
+
+    #[Test]
+    public function it_clears_outstanding_when_payment_is_allocated_to_due(): void
+    {
+        Passport::actingAs($this->tenantAdminUser);
+
+        $fund = Fund::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'Parish Fund',
+            'code' => 'PARISH-DUE',
+            'status' => 'active',
+        ]);
+
+        $plan = ContributionPlan::create([
+            'tenant_id' => $this->tenant->id,
+            'fund_id' => $fund->id,
+            'name' => 'Monthly',
+            'code' => 'MON-DUE',
+            'plan_type' => 'uniform',
+            'frequency' => 'monthly',
+            'default_amount' => 100,
+            'status' => 'active',
+        ]);
+
+        $family = Family::factory()->create(['tenant_id' => $this->tenant->id, 'status' => 'active']);
+
+        $due = ContributionDue::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'plan_id' => $plan->id,
+            'period_label' => now()->format('Y-m'),
+            'period_start' => now()->startOfMonth()->toDateString(),
+            'period_end' => now()->endOfMonth()->toDateString(),
+            'due_date' => now()->endOfMonth()->toDateString(),
+            'amount_due' => 100,
+            'amount_paid' => 0,
+            'status' => 'pending',
+        ]);
+
+        $this->postJson('/api/tenant/donations/payments', [
+            'family_id' => $family->id,
+            'payer_name' => 'Test Family',
+            'payment_date' => now()->toDateString(),
+            'amount' => 100,
+            'method' => 'cash',
+            'allocations' => [
+                ['allocatable_type' => 'due', 'allocatable_id' => $due->id, 'amount' => 100],
+            ],
+        ])->assertCreated();
+
+        $response = $this->getJson("/api/tenant/donations/families/{$family->id}/financial-profile");
+
+        $response->assertOk()
+            ->assertJsonPath('data.totals.total_paid', 100)
+            ->assertJsonPath('data.totals.mandatory_paid', 100)
+            ->assertJsonPath('data.outstanding_balances.total', 0)
+            ->assertJsonPath('data.totals.pending_due', 0)
+            ->assertJsonPath('data.mandatory_contributions.totals.paid', 100);
+
+        $this->assertSame('paid', $due->fresh()->status);
+        $this->assertSame('100.00', (string) $due->fresh()->amount_paid);
+    }
+
+    #[Test]
+    public function it_generates_full_schedule_catch_up_through_current_period(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-09-19 10:00:00', 'Asia/Kolkata'));
+
+        $fund = Fund::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'Monthly Fund',
+            'code' => 'MONTHLY_FUND',
+            'status' => 'active',
+        ]);
+
+        $this->createFamiliesEligibleForCatchUpSchedule(2);
+
+        $plan = ContributionPlan::create([
+            'tenant_id' => $this->tenant->id,
+            'fund_id' => $fund->id,
+            'name' => 'Monthly Family Contribution',
+            'code' => 'MONTHLY_FAMILY',
+            'plan_type' => 'uniform',
+            'frequency' => 'monthly',
+            'default_amount' => 100,
+            'start_date' => '2026-01-01',
+            'end_date' => '2026-12-31',
+            'auto_generate' => true,
+            'status' => 'active',
+        ]);
+
+        $preview = $this->getJson("/api/tenant/donations/plans/{$plan->id}/generation-preview");
+        $preview->assertOk()->assertJsonPath('data.period_count', 9);
+
+        $response = $this->postJson("/api/tenant/donations/plans/{$plan->id}/generate-dues", [
+            'generate_full_schedule' => true,
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('data.generated_count', 18)
+            ->assertJsonPath('data.period_count', 9);
+
+        $this->assertSame(18, ContributionDue::forTenant($this->tenant->id)->where('plan_id', $plan->id)->count());
+
+        $repeat = $this->postJson("/api/tenant/donations/plans/{$plan->id}/generate-dues", [
+            'generate_full_schedule' => true,
+        ]);
+
+        $repeat->assertOk()
+            ->assertJsonPath('data.generated_count', 0)
+            ->assertJsonPath('data.unchanged_count', 18);
+
+        $this->assertSame(18, ContributionDue::forTenant($this->tenant->id)->where('plan_id', $plan->id)->count());
+
+        Carbon::setTestNow();
+    }
+
+    #[Test]
+    public function scheduled_generation_catch_up_creates_all_eligible_periods(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-09-19 10:00:00', 'Asia/Kolkata'));
+
+        $fund = Fund::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'Scheduled Fund',
+            'code' => 'SCHED_FUND',
+            'status' => 'active',
+        ]);
+
+        $this->createFamiliesEligibleForCatchUpSchedule(1);
+
+        $plan = ContributionPlan::create([
+            'tenant_id' => $this->tenant->id,
+            'fund_id' => $fund->id,
+            'name' => 'Auto Monthly',
+            'code' => 'AUTO_MONTHLY',
+            'plan_type' => 'uniform',
+            'frequency' => 'monthly',
+            'default_amount' => 100,
+            'start_date' => '2026-01-01',
+            'end_date' => '2026-12-31',
+            'auto_generate' => true,
+            'status' => 'active',
+        ]);
+
+        $response = $this->postJson('/api/tenant/donations/contributions/generate-scheduled');
+
+        $response->assertOk()->assertJsonPath('data.generated', 9);
+        $this->assertSame(9, ContributionDue::forTenant($this->tenant->id)->where('plan_id', $plan->id)->count());
+
+        Carbon::setTestNow();
+    }
+
+    #[Test]
+    public function full_schedule_generation_preserves_paid_installment(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-09-19 10:00:00', 'Asia/Kolkata'));
+
+        $fund = Fund::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'Preserve Fund',
+            'code' => 'PRESERVE_FUND',
+            'status' => 'active',
+        ]);
+
+        $family = Family::factory()->create(['tenant_id' => $this->tenant->id, 'status' => 'active']);
+
+        $plan = ContributionPlan::create([
+            'tenant_id' => $this->tenant->id,
+            'fund_id' => $fund->id,
+            'name' => 'Preserve Paid',
+            'code' => 'PRESERVE_PAID',
+            'plan_type' => 'uniform',
+            'frequency' => 'monthly',
+            'default_amount' => 100,
+            'start_date' => '2026-01-01',
+            'end_date' => '2026-12-31',
+            'status' => 'active',
+        ]);
+
+        $januaryDue = ContributionDue::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'plan_id' => $plan->id,
+            'period_label' => '2026-01',
+            'period_start' => '2026-01-01',
+            'period_end' => '2026-01-31',
+            'due_date' => '2026-01-31',
+            'amount_due' => 100,
+            'amount_paid' => 100,
+            'status' => 'paid',
+        ]);
+
+        $this->postJson("/api/tenant/donations/plans/{$plan->id}/generate-dues", [
+            'generate_full_schedule' => true,
+        ])->assertOk();
+
+        $januaryDue->refresh();
+        $this->assertSame('paid', $januaryDue->status);
+        $this->assertSame('100.00', (string) $januaryDue->amount_paid);
+
+        Carbon::setTestNow();
+    }
+
+    /**
+     * Uniform plans only issue catch-up dues for periods on or after the family joined.
+     */
+    private function createFamiliesEligibleForCatchUpSchedule(int $count): void
+    {
+        Family::factory()->count($count)->create([
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+            'created_at' => Carbon::parse('2026-01-01 08:00:00', 'Asia/Kolkata'),
+            'updated_at' => Carbon::parse('2026-01-01 08:00:00', 'Asia/Kolkata'),
+        ]);
+    }
+
+    private function seedOfficialAddressForTenant(Tenant $tenant, Country $country): void
+    {
+        Address::query()->create([
+            'addressable_id' => $tenant->id,
+            'addressable_type' => Tenant::class,
+            'address_type' => 'official',
+            'line1' => '1 Parish Way',
+            'district' => 'City',
+            'state_province' => 'Region',
+            'country' => $country->name,
+            'country_id' => $country->id,
+            'pin_zip_code' => '00000',
+            'active' => 1,
+            'is_default' => true,
+        ]);
     }
 }

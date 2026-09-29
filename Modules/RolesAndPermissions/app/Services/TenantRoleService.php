@@ -4,6 +4,8 @@ namespace Modules\RolesAndPermissions\Services;
 
 use Modules\Authentication\Models\Role;
 use Modules\Authentication\Models\User;
+use Modules\Authentication\Services\PasswordAuthorizationService;
+use Modules\RolesAndPermissions\Models\Permission;
 
 class TenantRoleService
 {
@@ -33,6 +35,15 @@ class TenantRoleService
             'active' => $payload['active'] ?? 1,
         ]);
 
+        $changeSelf = Permission::query()
+            ->where('name', PasswordAuthorizationService::PERMISSION_CHANGE_SELF)
+            ->where('active', 1)
+            ->first();
+
+        if ($changeSelf) {
+            $role->givePermissionTo($changeSelf);
+        }
+
         $this->auditService->logRoleCreated($role, $actor);
 
         return $role;
@@ -47,7 +58,18 @@ class TenantRoleService
         }
 
         if ($role->isProtectedSystemRole()) {
-            throw new \RuntimeException('Protected tenant roles cannot be modified.', 403);
+            $allowedKeys = ['description'];
+            $attemptedKeys = array_keys($payload);
+            $disallowed = array_values(array_diff($attemptedKeys, $allowedKeys));
+
+            if (!empty($disallowed)) {
+                throw new \RuntimeException('Protected tenant roles cannot be modified.', 403);
+            }
+
+            // Description-only updates are allowed for parish clarity (name/level locked).
+            if (!array_key_exists('description', $payload)) {
+                return $role;
+            }
         }
 
         if (isset($payload['active']) && (int) $payload['active'] === 0 && $role->isTenantAdministratorRole()) {

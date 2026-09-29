@@ -27,16 +27,20 @@ class BCCRepository
         // Apply filters
         if (!empty($filters['search'])) {
             $search = $filters['search'];
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'ILIKE', "%{$search}%")
-                    ->orWhere('bcc_code', 'ILIKE', "%{$search}%")
-                    ->orWhere('contact_phone', 'ILIKE', "%{$search}%")
-                    ->orWhere('contact_email', 'ILIKE', "%{$search}%");
+            $like = \Modules\BCC\Support\BccAgeBands::likeOperator();
+            $query->where(function ($q) use ($search, $like) {
+                $q->where('name', $like, "%{$search}%")
+                    ->orWhere('bcc_code', $like, "%{$search}%")
+                    ->orWhere('location', $like, "%{$search}%");
             });
         }
 
         if (!empty($filters['status'])) {
             $query->where('status', $filters['status']);
+        }
+
+        if (!empty($filters['meeting_day'])) {
+            $query->where('meeting_day', $filters['meeting_day']);
         }
 
         // Parish Zone removed
@@ -383,8 +387,7 @@ class BCCRepository
      */
     public function canAcceptFamilies(BCC $bcc, int $count = 1): bool
     {
-        $currentCount = $bcc->current_family_count;
-        return ($currentCount + $count) <= $bcc->max_families;
+        return $bcc->status === 'active';
     }
 }
 

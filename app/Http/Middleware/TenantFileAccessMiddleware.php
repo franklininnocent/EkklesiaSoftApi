@@ -196,19 +196,22 @@ class TenantFileAccessMiddleware
      */
     protected function userHasAccessToTenant($user, int $tenantId): bool
     {
-        // SuperAdmin and EkklesiaAdmin can access all tenant files
-        if (in_array($user->user_type, [0, 1])) { // 0 = SuperAdmin, 1 = EkklesiaAdmin
+        $effectiveTenantId = app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId();
+        if ($effectiveTenantId !== null && $effectiveTenantId === $tenantId) {
             return true;
         }
 
-        // Regular users can only access their own tenant's files
+        // SuperAdmin and EkklesiaAdmin can access all tenant files
+        // (Phase 1: prefer support-session elevation over silent SuperAdmin open access.)
+        if (in_array($user->user_type, [0, 1], true)) { // 0 = SuperAdmin, 1 = EkklesiaAdmin
+            return true;
+        }
+
+        // Regular users can only access their own home tenant's files
         if ($user->tenant_id === $tenantId) {
             return true;
         }
 
-        // Check if user has explicit permission (e.g., shared access)
-        // This can be extended with a permissions table
-        
         return false;
     }
 

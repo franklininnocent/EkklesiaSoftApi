@@ -96,6 +96,8 @@ return [
             'prefix_indexes' => true,
             'search_path' => 'public',
             'sslmode' => 'prefer',
+            // App timezone is UTC; align PG session TZ so timestamptz round-trips correctly.
+            'timezone' => env('DB_TIMEZONE', 'UTC'),
         ],
 
         'sqlsrv' => [

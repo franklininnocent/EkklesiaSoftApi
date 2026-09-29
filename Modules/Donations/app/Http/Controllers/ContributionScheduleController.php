@@ -15,7 +15,7 @@ class ContributionScheduleController extends Controller
 
     public function generateScheduled(): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $userId = (int) Auth::id();
 
         $result = $this->dueService->generateScheduledDuesForTenant($tenantId, $userId);

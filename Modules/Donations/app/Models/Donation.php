@@ -7,10 +7,11 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Donations\Models\Concerns\BelongsToTenant;
+use Modules\Family\Models\Family;
 
 class Donation extends Model
 {
-    use HasUuids, SoftDeletes, BelongsToTenant;
+    use BelongsToTenant, HasUuids, SoftDeletes;
 
     protected $table = 'donations';
 
@@ -39,6 +40,11 @@ class Donation extends Model
         'received_at' => 'date',
         'is_anonymous' => 'boolean',
     ];
+
+    public function family(): BelongsTo
+    {
+        return $this->belongsTo(Family::class, 'family_id');
+    }
 
     public function donor(): BelongsTo
     {

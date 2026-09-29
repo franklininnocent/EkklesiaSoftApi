@@ -11,6 +11,9 @@ class DonationAuditLog extends Model
     protected $fillable = [
         'tenant_id',
         'actor_user_id',
+        'support_session_id',
+        'request_id',
+        'idempotency_key',
         'event',
         'target_type',
         'target_id',

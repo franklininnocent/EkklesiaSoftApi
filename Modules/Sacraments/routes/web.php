@@ -1,12 +1,15 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Sacraments\Exceptions\SacramentBusinessRuleException;
+use Modules\Sacraments\Services\Certificates\SacramentCertificateService;
 
-/*
- * Sacraments Module - Web Routes
- * 
- * This module is API-only with an Angular frontend.
- * All routes are defined in api.php
- * 
- * No web routes are needed for this module.
- */
+Route::get('/verify/certificate/{token}', function (string $token) {
+    try {
+        $data = app(SacramentCertificateService::class)->publicVerify($token);
+    } catch (SacramentBusinessRuleException $e) {
+        abort($e->httpStatus(), $e->getMessage());
+    }
+
+    return response()->view('sacraments::certificates.verify', ['data' => $data]);
+})->where('token', '[A-Za-z0-9]+')->name('sacrament-certificates.verify');

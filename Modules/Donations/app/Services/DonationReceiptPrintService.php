@@ -5,12 +5,12 @@ namespace Modules\Donations\Services;
 use Modules\Donations\Models\DonationPayment;
 use Modules\Donations\Models\DonationReceipt;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Services\ChurchCurrencyResolver;
+use Modules\Tenants\Support\ChurchMoneyFormatter;
 
 class DonationReceiptPrintService
 {
-    public function __construct(private readonly DonationReceiptService $receiptService)
-    {
-    }
+    public function __construct(private readonly DonationReceiptService $receiptService) {}
 
     /**
      * @return array<string, mixed>
@@ -21,6 +21,7 @@ class DonationReceiptPrintService
         $tenant = Tenant::query()->whereKey($tenantId)->first();
 
         return array_merge($payload, [
+            'tenant_id' => $tenantId,
             'organization' => [
                 'name' => $tenant?->name ?? 'Parish',
                 'printed_at' => now()->toDateTimeString(),
@@ -29,7 +30,7 @@ class DonationReceiptPrintService
     }
 
     /**
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $payload
      */
     public function renderHtml(array $payload): string
     {
@@ -40,9 +41,13 @@ class DonationReceiptPrintService
         $organization = $payload['organization'] ?? [];
         $tax = $payload['tax_acknowledgement'] ?? [];
         $lineItems = $payload['line_items'] ?? [];
+        $tenantId = (int) ($payload['tenant_id'] ?? $payment['tenant_id'] ?? 0);
+        $churchCurrency = $tenantId > 0
+            ? app(ChurchCurrencyResolver::class)->forTenantId($tenantId)
+            : null;
 
-        $amount = number_format((float) ($totals['amount'] ?? 0), 2);
-        $currency = htmlspecialchars((string) ($totals['currency'] ?? 'INR'));
+        $amount = htmlspecialchars(ChurchMoneyFormatter::format($totals['amount'] ?? 0, $churchCurrency));
+        $currency = htmlspecialchars((string) ($churchCurrency?->currencyCodeOrNull() ?? $totals['currency'] ?? ''));
         $receiptNumber = htmlspecialchars((string) ($receipt['receipt_number'] ?? ''));
         $issuedOn = htmlspecialchars((string) ($receipt['issued_on'] ?? ''));
         $payerName = htmlspecialchars((string) ($payer['name'] ?? 'Donor'));
@@ -51,10 +56,10 @@ class DonationReceiptPrintService
         $orgName = htmlspecialchars((string) ($organization['name'] ?? 'Parish'));
 
         $linesHtml = '';
-        if (!empty($lineItems)) {
+        if (! empty($lineItems)) {
             foreach ($lineItems as $item) {
                 $label = htmlspecialchars((string) ($item['description'] ?? 'Contribution'));
-                $lineAmount = number_format((float) ($item['amount'] ?? 0), 2);
+                $lineAmount = htmlspecialchars(ChurchMoneyFormatter::format($item['amount'] ?? 0, $churchCurrency));
                 $linesHtml .= "<tr><td>{$label}</td><td style=\"text-align:right\">{$lineAmount}</td></tr>";
             }
         } else {
@@ -62,9 +67,13 @@ class DonationReceiptPrintService
         }
 
         $taxNote = '';
-        if (!empty($tax['note'])) {
-            $taxNote = '<p class="note">' . htmlspecialchars((string) $tax['note']) . '</p>';
+        if (! empty($tax['note'])) {
+            $taxNote = '<p class="note">'.htmlspecialchars((string) $tax['note']).'</p>';
         }
+
+        $voidBanner = ! empty($payload['void']['is_void'])
+            ? '<p class="void">VOID — '.htmlspecialchars((string) ($payload['void']['void_reason'] ?? 'This receipt is voided.')).'</p>'
+            : '';
 
         return <<<HTML
 <!DOCTYPE html>
@@ -81,11 +90,13 @@ class DonationReceiptPrintService
     th, td { border-bottom: 1px solid #e5e7eb; padding: 8px 4px; text-align: left; }
     .total { font-size: 1.1rem; font-weight: 700; margin-top: 12px; }
     .note { font-size: 0.85rem; color: #374151; margin-top: 16px; }
+    .void { color: #991b1b; font-weight: 700; border: 2px solid #991b1b; padding: 8px; }
     @media print { body { margin: 0; } .receipt { border: 0; } }
   </style>
 </head>
 <body>
   <div class="receipt">
+    {$voidBanner}
     <h1>{$orgName}</h1>
     <div class="meta">Official Contribution Receipt</div>
     <p><strong>Receipt #:</strong> {$receiptNumber}<br>
@@ -97,7 +108,7 @@ class DonationReceiptPrintService
       <thead><tr><th>Description</th><th style="text-align:right">Amount</th></tr></thead>
       <tbody>{$linesHtml}</tbody>
     </table>
-    <div class="total">Total: {$amount} {$currency}</div>
+    <div class="total">Total: {$amount}</div>
     {$taxNote}
   </div>
 </body>

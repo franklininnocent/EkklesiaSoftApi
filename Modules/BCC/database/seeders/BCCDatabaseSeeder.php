@@ -11,6 +11,8 @@ class BCCDatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // $this->call([]);
+        $this->call([
+            BccPermissionSeeder::class,
+        ]);
     }
 }

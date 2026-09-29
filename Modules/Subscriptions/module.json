@@ -1,0 +1,11 @@
+{
+    "name": "Subscriptions",
+    "alias": "subscriptions",
+    "description": "Database-driven subscription plans, plan versions, feature catalog and tenant entitlements",
+    "keywords": [],
+    "priority": 1,
+    "providers": [
+        "Modules\\Subscriptions\\Providers\\SubscriptionsServiceProvider"
+    ],
+    "files": []
+}

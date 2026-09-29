@@ -35,6 +35,8 @@ class PermissionAuditServiceTest extends TestCase
         $this->assertDatabaseHas('permission_audit_logs', [
             'action' => 'role_created',
             'tenant_id' => $tenant->id,
+            'role_id' => $role->id,
+            'assigned_by' => $actor->id,
         ]);
 
         $entry = \Illuminate\Support\Facades\DB::table('permission_audit_logs')
@@ -43,6 +45,8 @@ class PermissionAuditServiceTest extends TestCase
             ->first();
 
         $this->assertNotNull($entry);
+        $this->assertSame($role->id, (int) $entry->role_id);
+        $this->assertSame($actor->id, (int) $entry->assigned_by);
         $metadata = json_decode((string) $entry->metadata, true);
         $this->assertSame($role->id, $metadata['role_id'] ?? null);
         $this->assertSame($actor->id, $metadata['created_by'] ?? null);

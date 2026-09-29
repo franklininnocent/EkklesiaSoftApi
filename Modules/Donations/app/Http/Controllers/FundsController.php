@@ -18,7 +18,7 @@ class FundsController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
 
         $query = Fund::forTenant($tenantId)->orderBy('name');
         if ($request->filled('status')) {
@@ -33,7 +33,7 @@ class FundsController extends Controller
 
     public function store(StoreFundRequest $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $payload = $request->validated();
         $payload['tenant_id'] = $tenantId;
 

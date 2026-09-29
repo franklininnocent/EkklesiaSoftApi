@@ -5,15 +5,16 @@ namespace Modules\EcclesiasticalData\Http\Controllers;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Modules\Sacraments\Models\SacramentType;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
+use Modules\Sacraments\Models\SacramentType;
 
 /**
  * SacramentTypeController - Master Data Management for Ekklesia Roles
- * 
+ *
  * This controller handles CRUD operations for Sacrament Types (master data).
  * Only Ekklesia roles (SuperAdmin, EkklesiaAdmin, EkklesiaManager) can access.
- * 
+ *
  * Sacrament Types are system-wide reference data used by all tenants.
  */
 class SacramentTypeController extends Controller
@@ -26,7 +27,7 @@ class SacramentTypeController extends Controller
         try {
             // Verify user has Ekklesia role
             $user = $request->user();
-            if (!$user->hasEkklesiaRole()) {
+            if (! $user->hasEkklesiaRole()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Only Ekklesia roles can manage Sacrament Types.',
@@ -40,8 +41,8 @@ class SacramentTypeController extends Controller
                 $search = $request->input('search');
                 $query->where(function ($q) use ($search) {
                     $q->where('name', 'ilike', "%{$search}%")
-                      ->orWhere('description', 'ilike', "%{$search}%")
-                      ->orWhere('code', 'ilike', "%{$search}%");
+                        ->orWhere('description', 'ilike', "%{$search}%")
+                        ->orWhere('code', 'ilike', "%{$search}%");
                 });
             }
 
@@ -55,16 +56,23 @@ class SacramentTypeController extends Controller
                 $query->where('category', $request->input('category'));
             }
 
-            // Sorting
-            $sortBy = $request->input('sort_by', 'display_order');
-            $sortDir = $request->input('sort_dir', 'asc');
+            $allowedSorts = ['display_order', 'name', 'code', 'category', 'active', 'created_at'];
+            $requestedSort = $request->input('sort_by', 'display_order');
+            $requestedDir = $request->input('sort_dir', 'asc');
+            $sortBy = is_string($requestedSort) && in_array($requestedSort, $allowedSorts, true)
+                ? $requestedSort
+                : 'display_order';
+            $sortDir = is_string($requestedDir) && in_array(strtolower($requestedDir), ['asc', 'desc'], true)
+                ? strtolower($requestedDir)
+                : 'asc';
             $query->orderBy($sortBy, $sortDir);
 
             // Pagination
             $perPage = $request->input('per_page', 15);
-            
+
             if ($perPage === 'all') {
                 $types = $query->get();
+
                 return response()->json([
                     'success' => true,
                     'data' => $types,
@@ -86,13 +94,13 @@ class SacramentTypeController extends Controller
         } catch (\Exception $e) {
             Log::error('Error fetching sacrament types', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve sacrament types',
-                'error' => config('app.debug') ? $e->getMessage() : 'An error occurred'
+                'error' => config('app.debug') ? $e->getMessage() : 'An error occurred',
             ], 500);
         }
     }
@@ -105,7 +113,7 @@ class SacramentTypeController extends Controller
         try {
             // Verify user has Ekklesia role
             $user = $request->user();
-            if (!$user->hasEkklesiaRole()) {
+            if (! $user->hasEkklesiaRole()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Only Ekklesia roles can manage Sacrament Types.',
@@ -114,7 +122,7 @@ class SacramentTypeController extends Controller
 
             $type = SacramentType::find($id);
 
-            if (!$type) {
+            if (! $type) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Sacrament Type not found',
@@ -129,7 +137,7 @@ class SacramentTypeController extends Controller
         } catch (\Exception $e) {
             Log::error('Error fetching sacrament type', [
                 'id' => $id,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
 
             return response()->json([
@@ -147,7 +155,7 @@ class SacramentTypeController extends Controller
         try {
             // Verify user has Ekklesia role
             $user = $request->user();
-            if (!$user->hasEkklesiaRole()) {
+            if (! $user->hasEkklesiaRole()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Only Ekklesia roles can create Sacrament Types.',
@@ -188,16 +196,16 @@ class SacramentTypeController extends Controller
                 'data' => $type,
             ], 201);
 
-        } catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validation failed',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             Log::error('Error creating sacrament type', [
                 'error' => $e->getMessage(),
-                'user_id' => $request->user()->id ?? null
+                'user_id' => $request->user()->id ?? null,
             ]);
 
             return response()->json([
@@ -215,7 +223,7 @@ class SacramentTypeController extends Controller
         try {
             // Verify user has Ekklesia role
             $user = $request->user();
-            if (!$user->hasEkklesiaRole()) {
+            if (! $user->hasEkklesiaRole()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Only Ekklesia roles can update Sacrament Types.',
@@ -224,7 +232,7 @@ class SacramentTypeController extends Controller
 
             $type = SacramentType::find($id);
 
-            if (!$type) {
+            if (! $type) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Sacrament Type not found',
@@ -232,8 +240,8 @@ class SacramentTypeController extends Controller
             }
 
             $validated = $request->validate([
-                'name' => 'sometimes|string|max:100|unique:sacrament_types,name,' . $id,
-                'code' => 'sometimes|string|max:50|unique:sacrament_types,code,' . $id,
+                'name' => 'sometimes|string|max:100|unique:sacrament_types,name,'.$id,
+                'code' => 'sometimes|string|max:50|unique:sacrament_types,code,'.$id,
                 'description' => 'nullable|string',
                 'category' => 'sometimes|in:initiation,healing,service,other',
                 'theological_significance' => 'nullable|string',
@@ -259,16 +267,16 @@ class SacramentTypeController extends Controller
                 'data' => $type,
             ]);
 
-        } catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validation failed',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             Log::error('Error updating sacrament type', [
                 'id' => $id,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
 
             return response()->json([
@@ -286,7 +294,7 @@ class SacramentTypeController extends Controller
         try {
             // Verify user has Ekklesia role
             $user = $request->user();
-            if (!$user->hasEkklesiaRole()) {
+            if (! $user->hasEkklesiaRole()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Only Ekklesia roles can delete Sacrament Types.',
@@ -295,7 +303,7 @@ class SacramentTypeController extends Controller
 
             $type = SacramentType::find($id);
 
-            if (!$type) {
+            if (! $type) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Sacrament Type not found',
@@ -326,7 +334,7 @@ class SacramentTypeController extends Controller
         } catch (\Exception $e) {
             Log::error('Error deleting sacrament type', [
                 'id' => $id,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
 
             return response()->json([
@@ -344,7 +352,7 @@ class SacramentTypeController extends Controller
         try {
             // Verify user has Ekklesia role
             $user = $request->user();
-            if (!$user->hasEkklesiaRole()) {
+            if (! $user->hasEkklesiaRole()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized.',
@@ -354,7 +362,7 @@ class SacramentTypeController extends Controller
             $total = SacramentType::count();
             $active = SacramentType::where('active', true)->count();
             $inactive = SacramentType::where('active', false)->count();
-            
+
             $byCategory = SacramentType::selectRaw('category, COUNT(*) as count')
                 ->groupBy('category')
                 ->get();
@@ -371,7 +379,7 @@ class SacramentTypeController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Error fetching sacrament type statistics', [
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
 
             return response()->json([
@@ -381,5 +389,3 @@ class SacramentTypeController extends Controller
         }
     }
 }
-
-

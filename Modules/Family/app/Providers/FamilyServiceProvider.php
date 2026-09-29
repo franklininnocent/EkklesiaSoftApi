@@ -4,6 +4,11 @@ namespace Modules\Family\Providers;
 
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\ServiceProvider;
+use Modules\Family\app\Console\Commands\DeleteDuplicateFamilyMembers;
+use Modules\Family\app\Console\Commands\SeedBccDummyFamiliesCommand;
+use Modules\Family\Support\Usage\FamilyUsageProvider;
+use Modules\Family\Support\Usage\PeopleUsageProvider;
+use Modules\Tenants\Support\UsageMetricRegistry;
 use Nwidart\Modules\Traits\PathNamespace;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -36,6 +41,11 @@ class FamilyServiceProvider extends ServiceProvider
     {
         $this->app->register(EventServiceProvider::class);
         $this->app->register(RouteServiceProvider::class);
+
+        $this->callAfterResolving(UsageMetricRegistry::class, static function ($registry): void {
+            $registry->register(new PeopleUsageProvider);
+            $registry->register(new FamilyUsageProvider);
+        });
     }
 
     /**
@@ -44,7 +54,8 @@ class FamilyServiceProvider extends ServiceProvider
     protected function registerCommands(): void
     {
         $this->commands([
-            \Modules\Family\app\Console\Commands\DeleteDuplicateFamilyMembers::class,
+            DeleteDuplicateFamilyMembers::class,
+            SeedBccDummyFamiliesCommand::class,
         ]);
     }
 
@@ -131,7 +142,7 @@ class FamilyServiceProvider extends ServiceProvider
 
         $this->loadViewsFrom(array_merge($this->getPublishableViewPaths(), [$sourcePath]), $this->nameLower);
 
-        Blade::componentNamespace(config('modules.namespace').'\\' . $this->name . '\\View\\Components', $this->nameLower);
+        Blade::componentNamespace(config('modules.namespace').'\\'.$this->name.'\\View\\Components', $this->nameLower);
     }
 
     /**

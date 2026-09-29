@@ -28,7 +28,7 @@ class WhatsAppOutreachController extends Controller
         return response()->json([
             'success' => true,
             'data' => $this->outreachService->preview(
-                (int) Auth::user()->tenant_id,
+                app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                 $validated['family_ids'] ?? null,
                 (int) ($validated['limit'] ?? 20)
             ),
@@ -44,7 +44,7 @@ class WhatsAppOutreachController extends Controller
         ]);
 
         $result = $this->outreachService->queue(
-            (int) Auth::user()->tenant_id,
+            app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
             $validated['family_ids'],
             $validated['message'] ?? null
         );
@@ -63,7 +63,7 @@ class WhatsAppOutreachController extends Controller
         ]);
 
         $result = $this->deliveryService->deliverPending(
-            (int) Auth::user()->tenant_id,
+            app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
             (int) ($validated['limit'] ?? 25)
         );
 
@@ -78,7 +78,7 @@ class WhatsAppOutreachController extends Controller
     {
         return response()->json([
             'success' => true,
-            'data' => $this->deliveryService->summary((int) Auth::user()->tenant_id),
+            'data' => $this->deliveryService->summary(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId()),
         ]);
     }
 }

@@ -55,7 +55,7 @@ GET /api/tenants
 
 Query Parameters:
 - active: Filter by active status (0 or 1)
-- plan: Filter by subscription plan (free, basic, premium, enterprise)
+- plan: Filter by subscription plan (free, starter, standard, professional, enterprise)
 - search: Search by name, email, or slug
 - per_page: Items per page (default: 15)
 
@@ -70,7 +70,7 @@ Response (200):
       "name": "First Baptist Church",
       "slug": "first-baptist-church",
       "email": "admin@firstbaptist.com",
-      "plan": "premium",
+      "plan": "standard",
       "active": 1,
       ...
     }
@@ -121,7 +121,7 @@ Body:
   "state": "TX",
   "country": "USA",
   "postal_code": "73301",
-  "plan": "basic",
+  "plan": "starter",
   "max_users": 50,
   "max_storage_mb": 1000,
   "trial_ends_at": "2025-11-24",
@@ -242,8 +242,8 @@ Response (200):
   "inactive_tenants": 5,
   "tenants_by_plan": {
     "free": 80,
-    "basic": 40,
-    "premium": 20,
+    "starter": 40,
+    "standard": 20,
     "enterprise": 10
   },
   "in_trial": 25,
@@ -359,9 +359,9 @@ if ($tenant->hasFeature('messaging')) {
 ### Query Tenants
 
 ```php
-// Get active premium tenants
-$premiumTenants = Tenant::active()
-    ->byPlan('premium')
+// Get active standard-plan tenants
+$standardTenants = Tenant::active()
+    ->byPlan('standard')
     ->get();
 
 // Get tenants in trial

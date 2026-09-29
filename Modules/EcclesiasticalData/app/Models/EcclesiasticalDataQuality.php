@@ -34,6 +34,7 @@ class EcclesiasticalDataQuality extends Model
         'is_resolved' => 'boolean',
         'flagged_at' => 'datetime',
         'resolved_at' => 'datetime',
+        'entity_id' => 'string',
     ];
 
     protected static function boot()

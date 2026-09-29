@@ -12,7 +12,7 @@ class UsersSeeder extends Seeder
     public function run(): void
     {
         // Super admin (no tenant)
-        User::firstOrCreate(
+       /* User::firstOrCreate(
             ['email' => 'admin@ekklesiasoft.test'],
             [
                 'name' => 'System Admin',
@@ -33,6 +33,6 @@ class UsersSeeder extends Seeder
                 ]);
             }
             User::factory()->count(3)->create([ 'tenant_id' => $tenant->id ]);
-        }
+        }*/
     }
 }

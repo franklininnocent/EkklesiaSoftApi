@@ -10,7 +10,7 @@ use Modules\Donations\Models\Concerns\BelongsToTenant;
 
 class DonationReceipt extends Model
 {
-    use HasUuids, SoftDeletes, BelongsToTenant;
+    use BelongsToTenant, HasUuids, SoftDeletes;
 
     protected $table = 'donation_receipts';
 
@@ -21,6 +21,11 @@ class DonationReceipt extends Model
         'issued_on',
         'is_void',
         'void_reason',
+        'snapshot',
+        'replaces_receipt_id',
+        'replaced_by_receipt_id',
+        'voided_at',
+        'voided_by',
         'issued_by',
         'created_by',
         'updated_by',
@@ -29,6 +34,8 @@ class DonationReceipt extends Model
     protected $casts = [
         'issued_on' => 'date',
         'is_void' => 'boolean',
+        'snapshot' => 'array',
+        'voided_at' => 'datetime',
     ];
 
     public function payment(): BelongsTo

@@ -3,6 +3,7 @@
 namespace Modules\RolesAndPermissions\Policies;
 
 use Modules\Authentication\Models\User;
+use Modules\Tenants\Support\EffectiveTenant;
 use Modules\RolesAndPermissions\Models\Permission;
 
 class PermissionPolicy
@@ -18,7 +19,8 @@ class PermissionPolicy
             return true;
         }
 
-        if (!$user->tenant_id) {
+        $effective = EffectiveTenant::id($user);
+        if ($effective === null) {
             return false;
         }
 
@@ -26,7 +28,7 @@ class PermissionPolicy
             return false;
         }
 
-        return is_null($permission->tenant_id) || $permission->tenant_id === $user->tenant_id;
+        return is_null($permission->tenant_id) || $permission->tenant_id === $effective;
     }
 
     public function assign(User $user): bool

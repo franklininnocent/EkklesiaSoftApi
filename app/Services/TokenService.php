@@ -2,24 +2,29 @@
 
 namespace App\Services;
 
+use App\Events\OAuth\AccessTokenCreated;
+use App\Events\OAuth\AccessTokenRevoked;
+use App\Events\OAuth\AccessTokenRotated;
+use App\Events\OAuth\AllUserTokensRevoked;
+use Carbon\Carbon;
+use Firebase\JWT\JWT;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Laravel\Passport\Client;
 use Laravel\Passport\Token;
-use Carbon\Carbon;
+use Modules\Authentication\Models\User;
 
 class TokenService
 {
-
     /**
      * Create access and refresh tokens for a user
      */
-    public function createTokens($user, $clientId = null, $scopes = [])
+    public function createTokens($user, $clientId = null, $scopes = [], $previousAccessTokenId = null, $authContext = null)
     {
         // Get or create password grant client
         $client = $this->getPasswordClient($clientId);
 
-        if (!$client) {
+        if (! $client) {
             throw new \Exception('Password grant client not found. Please run: php artisan passport:install');
         }
 
@@ -51,13 +56,20 @@ class TokenService
         ]);
 
         // Create token objects for response
-        $accessToken = (object)[
+        $accessToken = (object) [
             'id' => $accessTokenId,
             'user_id' => $user->id,
             'client_id' => $client->id,
             'scopes' => $scopes,
             'expires_at' => $expiresAt,
         ];
+
+        event(new AccessTokenCreated(
+            userId: (int) $user->id,
+            accessTokenId: $accessTokenId,
+            previousAccessTokenId: $previousAccessTokenId,
+            authContext: $authContext,
+        ));
 
         return [
             'access_token' => $accessToken,
@@ -77,7 +89,7 @@ class TokenService
             ->where('revoked', false)
             ->first();
 
-        if (!$refreshToken) {
+        if (! $refreshToken) {
             throw new \Exception('Invalid or revoked refresh token');
         }
 
@@ -91,8 +103,17 @@ class TokenService
             ->where('id', $refreshToken->access_token_id)
             ->first();
 
-        if (!$oldAccessToken) {
+        if (! $oldAccessToken) {
             throw new \Exception('Access token not found');
+        }
+
+        $user = User::with('role')->find($oldAccessToken->user_id);
+        $roleInactive = $user && $user->role && (int) $user->role->active !== 1;
+
+        if (! $user || (int) $user->active !== 1 || $roleInactive) {
+            $this->revokeAllTokens($oldAccessToken->user_id);
+
+            throw new \Exception('Invalid or revoked refresh token');
         }
 
         // Revoke old tokens
@@ -104,15 +125,19 @@ class TokenService
             ->where('id', $refreshTokenId)
             ->update(['revoked' => true]);
 
-        // Get user
-        $user = \Modules\Authentication\Models\User::find($oldAccessToken->user_id);
-
-        if (!$user) {
-            throw new \Exception('User not found');
-        }
+        event(new AccessTokenRotated(
+            userId: (int) $user->id,
+            previousAccessTokenId: (string) $refreshToken->access_token_id,
+        ));
 
         // Create new tokens
-        return $this->createTokens($user, $oldAccessToken->client_id);
+        return $this->createTokens(
+            $user,
+            $oldAccessToken->client_id,
+            [],
+            (string) $refreshToken->access_token_id,
+            'refresh'
+        );
     }
 
     /**
@@ -131,6 +156,8 @@ class TokenService
                     ->where('user_id', $userId);
             })
             ->update(['revoked' => true]);
+
+        event(new AllUserTokensRevoked((int) $userId));
     }
 
     /**
@@ -144,12 +171,12 @@ class TokenService
 
         // Get the first password grant client using raw DB query to avoid Eloquent type issues
         $clients = DB::table('oauth_clients')
-            ->where(function($query) {
+            ->where(function ($query) {
                 $query->where('revoked', false)
-                      ->orWhereNull('revoked');
+                    ->orWhereNull('revoked');
             })
             ->get();
-        
+
         foreach ($clients as $client) {
             $grantTypes = json_decode($client->grant_types, true);
             if (is_array($grantTypes) && in_array('password', $grantTypes)) {
@@ -166,19 +193,19 @@ class TokenService
     protected function generateTokenString($accessToken, $client)
     {
         $privateKey = file_get_contents(storage_path('oauth-private.key'));
-        
+
         // Handle both objects and arrays from different sources
         $clientId = is_object($client) ? $client->id : $client['id'];
         $tokenId = is_object($accessToken) ? $accessToken->id : $accessToken['id'];
         $userId = is_object($accessToken) ? $accessToken->user_id : $accessToken['user_id'];
         $expiresAt = is_object($accessToken) ? $accessToken->expires_at : $accessToken['expires_at'];
         $scopes = is_object($accessToken) ? $accessToken->scopes : ($accessToken['scopes'] ?? []);
-        
+
         // Convert Carbon to timestamp if needed
-        $expiryTimestamp = $expiresAt instanceof \Carbon\Carbon 
-            ? $expiresAt->timestamp 
+        $expiryTimestamp = $expiresAt instanceof Carbon
+            ? $expiresAt->timestamp
             : (is_string($expiresAt) ? strtotime($expiresAt) : $expiresAt);
-        
+
         $payload = [
             'aud' => $clientId,
             'jti' => $tokenId,
@@ -189,7 +216,7 @@ class TokenService
             'scopes' => $scopes,
         ];
 
-        return \Firebase\JWT\JWT::encode($payload, $privateKey, 'RS256');
+        return JWT::encode($payload, $privateKey, 'RS256');
     }
 
     /**
@@ -197,6 +224,8 @@ class TokenService
      */
     public function revokeAccessToken($tokenId)
     {
+        $row = DB::table('oauth_access_tokens')->where('id', $tokenId)->first();
+
         DB::table('oauth_access_tokens')
             ->where('id', $tokenId)
             ->update(['revoked' => true]);
@@ -204,6 +233,10 @@ class TokenService
         DB::table('oauth_refresh_tokens')
             ->where('access_token_id', $tokenId)
             ->update(['revoked' => true]);
+
+        event(new AccessTokenRevoked(
+            accessTokenId: (string) $tokenId,
+            userId: $row ? (int) $row->user_id : null,
+        ));
     }
 }
-

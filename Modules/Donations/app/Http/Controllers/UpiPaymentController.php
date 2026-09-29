@@ -25,7 +25,7 @@ class UpiPaymentController extends Controller
         return response()->json([
             'success' => true,
             'data' => $this->upiService->build(
-                (int) Auth::user()->tenant_id,
+                app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                 (float) $validated['amount'],
                 $validated['family_id'] ?? null,
                 $validated['note'] ?? null

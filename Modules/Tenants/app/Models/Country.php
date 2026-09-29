@@ -2,13 +2,15 @@
 
 namespace Modules\Tenants\Models;
 
-use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Modules\Tenants\Database\Factories\CountryFactory;
 
 /**
  * Country Model
- * 
+ *
  * Represents a country with ISO codes, currency, and geographic information.
  * Related to states/provinces for cascading dropdown functionality.
  */
@@ -19,12 +21,13 @@ class Country extends Model
     /**
      * Create a new factory instance for the model.
      *
-     * @return \Illuminate\Database\Eloquent\Factories\Factory
+     * @return Factory
      */
     protected static function newFactory()
     {
-        return \Modules\Tenants\Database\Factories\CountryFactory::new();
+        return CountryFactory::new();
     }
+
     /**
      * The table associated with the model.
      */
@@ -43,6 +46,8 @@ class Country extends Model
         'currency',
         'currency_name',
         'currency_symbol',
+        'fiscal_year_start_month',
+        'fiscal_year_start_day',
         'tld',
         'native',
         'latitude',
@@ -121,5 +126,3 @@ class Country extends Model
         return "{$this->name} ({$this->iso2})";
     }
 }
-
-

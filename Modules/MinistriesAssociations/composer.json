@@ -1,0 +1,21 @@
+{
+    "name": "nwidart/ministriesassociations",
+    "description": "Ministries and associations organization management",
+    "extra": {
+        "laravel": {
+            "providers": [],
+            "aliases": {}
+        }
+    },
+    "autoload": {
+        "psr-4": {
+            "Modules\\MinistriesAssociations\\": "app/",
+            "Modules\\MinistriesAssociations\\Database\\Seeders\\": "database/seeders/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Modules\\MinistriesAssociations\\Tests\\": "tests/"
+        }
+    }
+}

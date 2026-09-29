@@ -47,7 +47,6 @@ class PopeDetails extends Model
     public static function getCurrent(): ?self
     {
         return Cache::remember(self::CACHE_KEY, self::CACHE_TTL, function () {
-            // Use limit(1) for better performance and ensure we only get one record
             return self::orderBy('updated_at', 'desc')
                 ->limit(1)
                 ->first();

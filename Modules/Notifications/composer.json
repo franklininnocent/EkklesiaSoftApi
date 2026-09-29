@@ -1,0 +1,21 @@
+{
+    "name": "nwidart/notifications",
+    "description": "Enterprise in-app notification platform",
+    "extra": {
+        "laravel": {
+            "providers": [],
+            "aliases": {}
+        }
+    },
+    "autoload": {
+        "psr-4": {
+            "Modules\\Notifications\\": "app/",
+            "Modules\\Notifications\\Database\\Seeders\\": "database/seeders/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Modules\\Notifications\\Tests\\": "tests/"
+        }
+    }
+}

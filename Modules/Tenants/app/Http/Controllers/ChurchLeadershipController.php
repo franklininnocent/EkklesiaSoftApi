@@ -4,15 +4,15 @@ namespace Modules\Tenants\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use Modules\Authentication\Models\User;
 use Modules\Tenants\Models\ChurchLeadership;
+use Modules\Tenants\Http\Requests\UploadLeadershipPhotoRequest;
+use Modules\Tenants\Services\ChurchMediaImageService;
+use Modules\Tenants\Services\Media\ImageMediaException;
 
 /**
  * Church Leadership Controller
@@ -22,6 +22,10 @@ use Modules\Tenants\Models\ChurchLeadership;
  */
 class ChurchLeadershipController extends Controller
 {
+    public function __construct(
+        private readonly ChurchMediaImageService $churchMediaImageService,
+    ) {}
+
     /**
      * Get all church leaders for the tenant.
      * 
@@ -32,7 +36,7 @@ class ChurchLeadershipController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -44,11 +48,11 @@ class ChurchLeadershipController extends Controller
                 'role' => $request->get('role'),
                 'current' => $request->get('current'),
             ];
-            $cacheKey = $this->leadershipCacheKey($user->tenant_id, $filters);
+            $cacheKey = $this->leadershipCacheKey(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(), $filters);
 
             // Try to get from cache first (cache for 5 minutes)
             $leaders = Cache::remember($cacheKey, 300, function () use ($user, $request) {
-                $query = ChurchLeadership::where('tenant_id', $user->tenant_id);
+                $query = ChurchLeadership::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId());
 
                 // Filter by active status
                 if ($request->has('active')) {
@@ -99,7 +103,7 @@ class ChurchLeadershipController extends Controller
         try {
             $user = auth()->user();
             
-            $leader = ChurchLeadership::where('tenant_id', $user->tenant_id)
+            $leader = ChurchLeadership::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId())
                 ->findOrFail($id);
 
             return response()->json([
@@ -130,7 +134,7 @@ class ChurchLeadershipController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -156,13 +160,13 @@ class ChurchLeadershipController extends Controller
                 'start_date' => 'nullable|date',
                 'end_date' => 'nullable|date|after:start_date',
                 'biography' => 'nullable|string|max:2000',
-                'photo_url' => 'nullable|string|max:255',
+                'photo_url' => 'prohibited',
                 'is_primary' => 'nullable|boolean',
                 'display_order' => 'nullable|integer|min:0',
                 'active' => 'nullable|boolean',
             ]);
 
-            $validated['tenant_id'] = $user->tenant_id;
+            $validated['tenant_id'] = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $validated['is_primary'] = $validated['is_primary'] ?? 0;
             // If relieved_date is set, automatically set active to 0
             if (!empty($validated['relieved_date'])) {
@@ -178,11 +182,11 @@ class ChurchLeadershipController extends Controller
 
                 DB::commit();
 
-                $this->clearLeadershipCache($user->tenant_id);
+                $this->clearLeadershipCache(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId());
 
                 Log::info('Church leader created', [
                     'leader_id' => $leader->id,
-                    'tenant_id' => $user->tenant_id,
+                    'tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                     'created_by' => $user->id,
                 ]);
 
@@ -225,7 +229,7 @@ class ChurchLeadershipController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -239,7 +243,7 @@ class ChurchLeadershipController extends Controller
                 ], 403);
             }
 
-            $leader = ChurchLeadership::where('tenant_id', $user->tenant_id)
+            $leader = ChurchLeadership::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId())
                 ->findOrFail($id);
 
             // Validation
@@ -254,7 +258,7 @@ class ChurchLeadershipController extends Controller
                 'start_date' => 'nullable|date',
                 'end_date' => 'nullable|date|after:start_date',
                 'biography' => 'nullable|string|max:2000',
-                'photo_url' => 'nullable|string|max:255',
+                'photo_url' => 'prohibited',
                 'is_primary' => 'nullable|boolean',
                 'display_order' => 'nullable|integer|min:0',
                 'active' => 'nullable|boolean',
@@ -265,11 +269,6 @@ class ChurchLeadershipController extends Controller
                 $validated['active'] = 0;
             }
 
-            if (array_key_exists('photo_url', $validated) && empty($validated['photo_url'])) {
-                $this->deleteLeaderPhotoFile($leader->photo_url);
-                $validated['photo_url'] = null;
-            }
-
             DB::beginTransaction();
             try {
                 $leader->update($validated);
@@ -277,11 +276,11 @@ class ChurchLeadershipController extends Controller
                 DB::commit();
 
                 // Clear cache for this tenant's leadership
-                $this->clearLeadershipCache($user->tenant_id);
+                $this->clearLeadershipCache(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId());
 
                 Log::info('Church leader updated', [
                     'leader_id' => $leader->id,
-                    'tenant_id' => $user->tenant_id,
+                    'tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                     'updated_by' => $user->id,
                 ]);
 
@@ -319,76 +318,43 @@ class ChurchLeadershipController extends Controller
      *
      * @route POST /api/church-leadership/{id}/upload-photo
      */
-    public function uploadPhoto(Request $request, $id): JsonResponse
+    public function uploadPhoto(UploadLeadershipPhotoRequest $request, $id): JsonResponse
     {
         try {
             $user = auth()->user();
 
-            if (!$user || !$user->tenant_id) {
+            if (! $user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
                 ], 404);
             }
 
-            if (!$this->canManageChurchSettings($user, 'edit')) {
+            if (! $this->canManageChurchSettings($user, 'edit')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized. Only church administrators can manage leadership.',
                 ], 403);
             }
 
-            $leader = ChurchLeadership::where('tenant_id', $user->tenant_id)
-                ->findOrFail($id);
+            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+            $leader = ChurchLeadership::where('tenant_id', $tenantId)->findOrFail($id);
 
-            $validated = $request->validate([
-                'image' => 'required|image|mimes:jpeg,jpg,png,webp|max:2048',
+            $this->churchMediaImageService->replaceLeadershipPhoto($request->file('image'), $leader);
+            $this->clearLeadershipCache($tenantId);
+
+            $leader->refresh();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Leader photo uploaded successfully',
+                'data' => $leader,
             ]);
-
-            $file = $request->file('image');
-            if (!$file instanceof UploadedFile) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Invalid file upload',
-                ], 422);
-            }
-
-            DB::beginTransaction();
-            try {
-                $this->deleteLeaderPhotoFile($leader->photo_url);
-
-                $filename = $this->generateLeaderPhotoFilename($file, $user->tenant_id, (int) $leader->id);
-                $directory = "tenants/{$user->tenant_id}/leadership";
-                $storedPath = Storage::disk('public')->putFileAs(
-                    $directory,
-                    $file,
-                    $filename,
-                    ['visibility' => 'public']
-                );
-
-                if (!$storedPath) {
-                    DB::rollBack();
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Failed to upload leader photo',
-                    ], 500);
-                }
-
-                $leader->photo_url = $storedPath;
-                $leader->save();
-
-                DB::commit();
-                $this->clearLeadershipCache($user->tenant_id);
-
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Leader photo uploaded successfully',
-                    'data' => $leader->fresh(),
-                ]);
-            } catch (\Exception $e) {
-                DB::rollBack();
-                throw $e;
-            }
+        } catch (ImageMediaException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->publicMessage(),
+            ], 422);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
@@ -396,7 +362,7 @@ class ChurchLeadershipController extends Controller
                 'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
-            Log::error('Error uploading church leader photo: ' . $e->getMessage(), [
+            Log::error('Error uploading church leader photo: '.$e->getMessage(), [
                 'leader_id' => $id,
                 'user_id' => auth()->id(),
                 'trace' => $e->getTraceAsString(),
@@ -420,7 +386,7 @@ class ChurchLeadershipController extends Controller
         try {
             $user = auth()->user();
             
-            if (!$user || !$user->tenant_id) {
+            if (!$user || app(\Modules\Tenants\Support\TenantContext::class)->effectiveTenantId() === null) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User is not associated with a tenant/church',
@@ -434,22 +400,22 @@ class ChurchLeadershipController extends Controller
                 ], 403);
             }
 
-            $leader = ChurchLeadership::where('tenant_id', $user->tenant_id)
+            $leader = ChurchLeadership::where('tenant_id', app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId())
                 ->findOrFail($id);
 
             DB::beginTransaction();
             try {
-                $this->deleteLeaderPhotoFile($leader->photo_url);
+                $this->churchMediaImageService->deleteLeadershipPhoto($leader);
                 $leader->delete();
 
                 DB::commit();
 
                 // Clear cache for this tenant's leadership
-                $this->clearLeadershipCache($user->tenant_id);
+                $this->clearLeadershipCache(app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId());
 
                 Log::info('Church leader deleted', [
                     'leader_id' => $id,
-                    'tenant_id' => $user->tenant_id,
+                    'tenant_id' => app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId(),
                     'deleted_by' => $user->id,
                 ]);
 
@@ -503,32 +469,6 @@ class ChurchLeadershipController extends Controller
         }
 
         Cache::put($versionKey, 1, 86400 * 30);
-    }
-
-    private function generateLeaderPhotoFilename(UploadedFile $file, int $tenantId, int $leaderId): string
-    {
-        $extension = strtolower($file->getClientOriginalExtension());
-        $allowedExtensions = ['jpg', 'jpeg', 'png', 'webp'];
-
-        if (!in_array($extension, $allowedExtensions, true)) {
-            $extension = 'jpg';
-        }
-
-        $timestamp = now()->format('YmdHis');
-        $random = Str::random(12);
-
-        return "leader_t{$tenantId}_{$leaderId}_{$timestamp}_{$random}.{$extension}";
-    }
-
-    private function deleteLeaderPhotoFile(?string $photoPath): void
-    {
-        if (!$photoPath || str_starts_with($photoPath, 'http://') || str_starts_with($photoPath, 'https://')) {
-            return;
-        }
-
-        if (Storage::disk('public')->exists($photoPath)) {
-            Storage::disk('public')->delete($photoPath);
-        }
     }
 
     private function canManageChurchSettings(User $user, string $action): bool

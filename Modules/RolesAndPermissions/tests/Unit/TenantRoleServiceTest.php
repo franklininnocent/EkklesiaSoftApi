@@ -71,6 +71,28 @@ class TenantRoleServiceTest extends TestCase
     }
 
     #[Test]
+    public function it_allows_description_only_update_on_protected_administrator_role(): void
+    {
+        $updated = $this->service->updateTenantRole($this->tenantAdmin, $this->adminRole, [
+            'description' => 'Parish church administrator',
+        ]);
+
+        $this->assertSame('Parish church administrator', $updated->description);
+        $this->assertSame(Role::TENANT_ADMINISTRATOR, $updated->name);
+    }
+
+    #[Test]
+    public function it_blocks_level_change_on_protected_administrator_role(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Protected tenant roles cannot be modified.');
+
+        $this->service->updateTenantRole($this->tenantAdmin, $this->adminRole, [
+            'level' => 9,
+        ]);
+    }
+
+    #[Test]
     public function it_blocks_deleting_role_with_assigned_users(): void
     {
         $customRole = $this->service->createTenantRole($this->tenantAdmin, [

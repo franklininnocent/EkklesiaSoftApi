@@ -22,8 +22,11 @@ class BCCService
      *
      * @param BCCRepository $bccRepository
      */
-    public function __construct(BCCRepository $bccRepository)
-    {
+    public function __construct(
+        BCCRepository $bccRepository,
+        protected BccFamilyMembershipService $membershipService,
+        protected BccAuditService $auditService,
+    ) {
         $this->bccRepository = $bccRepository;
     }
 
@@ -97,6 +100,16 @@ class BCCService
             }
 
             DB::commit();
+
+            $this->auditService->log(
+                (int) $tenantId,
+                'bcc.created',
+                'bcc',
+                (string) $bcc->id,
+                null,
+                ['name' => $bcc->name, 'bcc_code' => $bcc->bcc_code, 'status' => $bcc->status],
+                $bcc->id,
+            );
 
             Log::info('BCC created', [
                 'bcc_id' => $bcc->id,
@@ -189,14 +202,22 @@ class BCCService
 
             DB::beginTransaction();
 
-            // Unassign families from BCC before deletion
             if ($bcc->families->isNotEmpty()) {
                 $familyIds = $bcc->families->pluck('id')->toArray();
-                $this->bccRepository->removeFamilies($familyIds);
+                $this->membershipService->removeFamilies((int) $tenantId, $familyIds, $bcc->id);
             }
 
-            // Delete BCC (this will cascade to leaders)
             $result = $this->bccRepository->delete($bcc);
+
+            $this->auditService->log(
+                (int) $tenantId,
+                'bcc.deleted',
+                'bcc',
+                (string) $bcc->id,
+                ['name' => $bcc->name, 'bcc_code' => $bcc->bcc_code],
+                null,
+                $bcc->id,
+            );
 
             DB::commit();
 
@@ -354,6 +375,8 @@ class BCCService
 
             DB::beginTransaction();
 
+            $data = $this->normalizeLeadershipTermPayload($data);
+
             // Add audit info
             $data['updated_by'] = $userId;
 
@@ -382,6 +405,35 @@ class BCCService
             ]);
             throw $e;
         }
+    }
+
+    /**
+     * Accept the canonical Ministries-style term field names while preserving
+     * the established bcc_leaders storage columns.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function normalizeLeadershipTermPayload(array $data): array
+    {
+        $aliases = [
+            'appointment_date' => 'appointed_date',
+            'effective_from' => 'term_start_date',
+            'effective_to' => 'term_end_date',
+        ];
+
+        foreach ($aliases as $source => $target) {
+            if (array_key_exists($source, $data)) {
+                $data[$target] = $data[$source];
+                unset($data[$source]);
+            }
+        }
+
+        if (array_key_exists('remarks', $data)) {
+            $data['notes'] = $data['remarks'];
+        }
+
+        return $data;
     }
 
     /**
@@ -450,52 +502,21 @@ class BCCService
      */
     public function assignFamilies(string $bccId, array $familyIds, string $tenantId, string $userId): array
     {
-        try {
-            $bcc = $this->bccRepository->findById($bccId, $tenantId);
-            if (!$bcc) {
-                return ['success' => false, 'message' => 'BCC not found'];
-            }
+        $result = $this->membershipService->assignFamilies((int) $tenantId, $bccId, $familyIds);
 
-            // Check capacity
-            if (!$this->bccRepository->canAcceptFamilies($bcc, count($familyIds))) {
-                return [
-                    'success' => false,
-                    'message' => 'BCC does not have enough capacity for the requested families',
-                    'current_count' => $bcc->current_family_count,
-                    'max_families' => $bcc->max_families,
-                    'available_space' => $bcc->max_families - $bcc->current_family_count
-                ];
-            }
+        Log::info('Families assigned to BCC', [
+            'bcc_id' => $bccId,
+            'family_count' => $result['assigned'],
+            'tenant_id' => $tenantId,
+            'user_id' => $userId
+        ]);
 
-            DB::beginTransaction();
-
-            $assignedCount = $this->bccRepository->assignFamilies($bccId, $familyIds);
-
-            DB::commit();
-
-            Log::info('Families assigned to BCC', [
-                'bcc_id' => $bccId,
-                'family_count' => $assignedCount,
-                'tenant_id' => $tenantId,
-                'user_id' => $userId
-            ]);
-
-            return [
-                'success' => true,
-                'message' => "{$assignedCount} families assigned successfully",
-                'assigned_count' => $assignedCount
-            ];
-
-        } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error('Failed to assign families to BCC', [
-                'bcc_id' => $bccId,
-                'error' => $e->getMessage(),
-                'tenant_id' => $tenantId,
-                'user_id' => $userId
-            ]);
-            throw $e;
-        }
+        return [
+            'success' => true,
+            'message' => "{$result['assigned']} families assigned successfully",
+            'assigned_count' => $result['assigned'],
+            'transferred' => $result['transferred'],
+        ];
     }
 
     /**
@@ -512,7 +533,7 @@ class BCCService
         try {
             DB::beginTransaction();
 
-            $removedCount = $this->bccRepository->removeFamilies($familyIds);
+            $removedCount = $this->membershipService->removeFamilies((int) $tenantId, $familyIds);
 
             DB::commit();
 

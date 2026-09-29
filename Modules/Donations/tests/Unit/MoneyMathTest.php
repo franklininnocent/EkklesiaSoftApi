@@ -28,4 +28,13 @@ class MoneyMathTest extends TestCase
         $this->assertSame('0.00', MoneyMath::outstanding('100.00', '150.00'));
         $this->assertSame('25.50', MoneyMath::outstanding('100.00', '74.50'));
     }
+
+    #[Test]
+    public function it_compares_and_floors_at_zero(): void
+    {
+        $this->assertSame(-1, MoneyMath::compare('1.00', '1.01'));
+        $this->assertSame('0.00', MoneyMath::floorAtZero('-0.01'));
+        $this->assertTrue(MoneyMath::equals('10', '10.00'));
+        $this->assertSame('1.25', MoneyMath::min('1.25', '9.00'));
+    }
 }

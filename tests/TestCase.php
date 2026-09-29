@@ -2,10 +2,11 @@
 
 namespace Tests;
 
-use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Modules\Authentication\Models\User;
+use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Laravel\Passport\Passport;
+use Modules\Authentication\Models\User;
+use Modules\Tenants\Models\Tenant;
 
 abstract class TestCase extends BaseTestCase
 {
@@ -17,9 +18,7 @@ abstract class TestCase extends BaseTestCase
     protected function setUp(): void
     {
         parent::setUp();
-        
-        // Note: RefreshDatabase trait handles all migrations including Passport
-        // No need to run passport:install in tests
+        User::flushRequestPermissionCache();
     }
 
     /**
@@ -29,7 +28,7 @@ abstract class TestCase extends BaseTestCase
     {
         $user = $user ?? User::factory()->create();
         Passport::actingAs($user, ['*']);
-        
+
         return $this;
     }
 
@@ -43,9 +42,9 @@ abstract class TestCase extends BaseTestCase
             'is_primary_admin' => true,
             'tenant_id' => null,
         ]);
-        
+
         Passport::actingAs($admin, ['*']);
-        
+
         return $this;
     }
 
@@ -56,12 +55,12 @@ abstract class TestCase extends BaseTestCase
     {
         $admin = User::factory()->create([
             'user_type' => 2, // Tenant Admin
-            'tenant_id' => $tenantId ?? \Modules\Tenants\Models\Tenant::factory()->create()->id,
+            'tenant_id' => $tenantId ?? Tenant::factory()->create()->id,
             'is_primary_admin' => true,
         ]);
-        
+
         Passport::actingAs($admin, ['*']);
-        
+
         return $this;
     }
 
@@ -73,7 +72,7 @@ abstract class TestCase extends BaseTestCase
         if ($user) {
             Passport::actingAs($user, ['*']);
         }
-        
+
         return [
             'Accept' => 'application/json',
             'Content-Type' => 'application/json',

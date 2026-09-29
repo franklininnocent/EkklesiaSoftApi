@@ -1,0 +1,69 @@
+<?php
+
+namespace Modules\Sacraments\Http\Resources;
+
+use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\JsonResource;
+
+/**
+ * Never expose raw filesystem storage_key to clients (ADR-09).
+ */
+class SacramentCertificateResource extends JsonResource
+{
+    /**
+     * @return array<string, mixed>
+     */
+    public function toArray(Request $request): array
+    {
+        return [
+            'id' => $this->id,
+            'sacrament_id' => $this->sacrament_id,
+            'certificate_number' => $this->certificate_number,
+            'certificate_type' => $this->certificate_type,
+            'status' => $this->status,
+            'version' => $this->version,
+            'language' => $this->language,
+            'locale' => $this->locale,
+            'template_code' => $this->template_code,
+            'template_version' => $this->template_version,
+            'issued_at' => optional($this->issued_at)?->toIso8601String(),
+            'issued_by' => $this->issued_by,
+            'checksum' => $this->checksum,
+            'mime_type' => $this->mime_type,
+            'size_bytes' => $this->size_bytes,
+            'has_file' => ! empty($this->storage_key),
+            'has_html' => ! empty($this->html_storage_key),
+            'pdf_engine' => data_get($this->projection_json, 'render.pdf_engine'),
+            'projection' => $this->when(
+                $this->status === 'draft_preview' || $request->boolean('include_projection'),
+                $this->clientSafeProjection($this->projection_json)
+            ),
+            'supersedes_certificate_id' => $this->supersedes_certificate_id,
+            'created_at' => optional($this->created_at)?->toIso8601String(),
+            'updated_at' => optional($this->updated_at)?->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Drop leftover logo bytes from older frozen projections. Certificates do not display a parish logo.
+     *
+     * @param  array<string, mixed>|null  $projection
+     * @return array<string, mixed>|null
+     */
+    private function clientSafeProjection(mixed $projection): mixed
+    {
+        if (! is_array($projection)) {
+            return $projection;
+        }
+
+        $out = $projection;
+        if (isset($out['church']) && is_array($out['church'])) {
+            unset($out['church']['logo_data_uri']);
+        }
+        if (isset($out['certificate_view']['church']) && is_array($out['certificate_view']['church'])) {
+            unset($out['certificate_view']['church']['logoDataUri']);
+        }
+
+        return $out;
+    }
+}

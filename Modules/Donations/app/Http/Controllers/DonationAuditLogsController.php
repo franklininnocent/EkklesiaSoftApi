@@ -18,7 +18,7 @@ class DonationAuditLogsController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $tenantId = Auth::user()->tenant_id;
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
         $query = DonationAuditLog::query()
             ->where('tenant_id', $tenantId)
             ->orderByDesc('created_at');

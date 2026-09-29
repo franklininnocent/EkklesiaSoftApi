@@ -1,7 +1,3 @@
-
-
-
-
 <?php
 
 use Monolog\Handler\NullHandler;
@@ -136,6 +132,22 @@ return [
             'path' => storage_path('logs/audit.log'),
             'level' => env('LOG_LEVEL', 'info'),
             'days' => env('AUDIT_LOG_DAYS', 90), // Keep audit logs for 90 days
+            'replace_placeholders' => true,
+        ],
+
+        'platform' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/platform.log'),
+            'level' => env('LOG_LEVEL', 'info'),
+            'days' => env('PLATFORM_LOG_DAYS', 30),
+            'replace_placeholders' => true,
+        ],
+
+        'security' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/security.log'),
+            'level' => 'warning',
+            'days' => env('SECURITY_LOG_DAYS', 90),
             'replace_placeholders' => true,
         ],
 

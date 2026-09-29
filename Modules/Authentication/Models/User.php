@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Created by PhpStorm.
  * User: franklin
@@ -8,39 +9,51 @@
 
 namespace Modules\Authentication\Models;
 
-use Illuminate\Foundation\Auth\User as Authenticatable;
-use Laravel\Passport\HasApiTokens;
-use Illuminate\Notifications\Notifiable;
+use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
-use Modules\Authentication\Models\Role;
+use Modules\Authentication\Support\UserProfileImageAuthorization;
+use Modules\Tenants\Services\Media\ImageMediaUrlSigner;
+use Laravel\Passport\HasApiTokens;
+use Modules\Authentication\Database\Factories\UserFactory;
+use Modules\Family\Models\Person;
 use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Tenants\Models\Address;
+use Modules\Tenants\Models\LeadershipAssignment;
+use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Support\LeadershipAssignmentStatus;
+use Modules\Tenants\Support\TenantContext;
+use Modules\Tenants\Support\TenantCacheVersion;
 
 class User extends Authenticatable
 {
-    use HasApiTokens, Notifiable, HasFactory, SoftDeletes;
+    use HasApiTokens, HasFactory, Notifiable, SoftDeletes;
 
     protected $table = 'users';
 
     /**
      * Create a new factory instance for the model.
      *
-     * @return \Illuminate\Database\Eloquent\Factories\Factory
+     * @return Factory
      */
     protected static function newFactory()
     {
-        return \Modules\Authentication\Database\Factories\UserFactory::new();
+        return UserFactory::new();
     }
 
     /**
      * User type constants
      */
     public const USER_TYPE_PRIMARY_CONTACT = 1;      // Primary contact for tenant
+
     public const USER_TYPE_SECONDARY_CONTACT = 2;    // Secondary contact for tenant
 
     /**
@@ -57,6 +70,7 @@ class User extends Authenticatable
         'is_primary_admin',
         'role_id',
         'tenant_id',
+        'person_id',
         'active',
         'email_verified_at',
     ];
@@ -69,6 +83,15 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
         'remember_token',
+        'profile_image_path',
+    ];
+
+    /**
+     * @var list<string>
+     */
+    protected $appends = [
+        'profile_image_full_url',
+        'profile_image_thumb_url',
     ];
 
     /**
@@ -81,16 +104,103 @@ class User extends Authenticatable
         'active' => 'integer',
         'role_id' => 'integer',
         'tenant_id' => 'integer',
+        'person_id' => 'string',
         'user_type' => 'integer',
         'is_primary_admin' => 'boolean',
         'deleted_at' => 'datetime',
+        'password_changed_at' => 'datetime',
+        'force_password_change' => 'boolean',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
 
     /**
+     * Signed display URL for the user's profile image.
+     */
+    public function getProfileImageFullUrlAttribute(): ?string
+    {
+        $storageKey = $this->resolveProfileImageStorageKey();
+        if ($storageKey === null || ! $this->tenant_id) {
+            return null;
+        }
+
+        $signer = app(ImageMediaUrlSigner::class);
+
+        return $signer->displayUrl(
+            $storageKey,
+            (int) $this->tenant_id,
+            fn (): bool => UserProfileImageAuthorization::canView($this, auth()->user())
+        );
+    }
+
+    /**
+     * Signed thumbnail URL for list views.
+     */
+    public function getProfileImageThumbUrlAttribute(): ?string
+    {
+        $storageKey = $this->resolveProfileImageStorageKey();
+        if ($storageKey === null || ! $this->tenant_id) {
+            return null;
+        }
+
+        $signer = app(ImageMediaUrlSigner::class);
+
+        return $signer->thumbUrl(
+            $storageKey,
+            (int) $this->tenant_id,
+            fn (): bool => UserProfileImageAuthorization::canView($this, auth()->user())
+        );
+    }
+
+    /**
+     * Storage key for the image shown on user profile surfaces.
+     */
+    public function displayProfileImageStorageKey(): ?string
+    {
+        return $this->resolveProfileImageStorageKey();
+    }
+
+    /**
+     * User-uploaded profile image, or linked active leadership assignment photo.
+     */
+    private function resolveProfileImageStorageKey(): ?string
+    {
+        if (! empty($this->profile_image_path)) {
+            return $this->profile_image_path;
+        }
+
+        return $this->resolveLinkedLeadershipPhotoStorageKey();
+    }
+
+    private function resolveLinkedLeadershipPhotoStorageKey(): ?string
+    {
+        if (empty($this->person_id) || ! $this->tenant_id) {
+            return null;
+        }
+
+        $photoUrl = LeadershipAssignment::query()
+            ->where('tenant_id', $this->tenant_id)
+            ->where('person_id', $this->person_id)
+            ->where('status', LeadershipAssignmentStatus::ACTIVE)
+            ->whereNotNull('photo_url')
+            ->where('photo_url', '!=', '')
+            ->orderByDesc('start_date')
+            ->value('photo_url');
+
+        return is_string($photoUrl) && $photoUrl !== '' ? $photoUrl : null;
+    }
+
+    /**
+     * Whether the user has a profile image stored.
+     */
+    public function hasProfileImage(): bool
+    {
+        return ! empty($this->profile_image_path);
+    }
+
+    /**
      * Get the role that owns the user (Legacy - single role).
-     * 
+     *
      * @deprecated Use roles() for multiple roles support
      */
     public function role()
@@ -100,12 +210,12 @@ class User extends Authenticatable
 
     /**
      * Get all roles assigned to this user (Many-to-Many).
-     * 
+     *
      * This is the primary relationship for multi-role support.
      * Users can have multiple roles, each contributing their permissions.
-     * 
+     *
      * PERFORMANCE: Orders by level for efficient permission aggregation
-     * 
+     *
      * Note: Active/soft-delete filtering should be done in queries using this relationship
      */
     public function roles(): BelongsToMany
@@ -114,10 +224,10 @@ class User extends Authenticatable
             ->withTimestamps()
             ->orderBy('level', 'asc'); // Order by role level (highest priority first)
     }
-    
+
     /**
      * Get only active roles assigned to this user.
-     * 
+     *
      * SECURITY: Filters to active, non-deleted roles only
      */
     public function activeRoles(): BelongsToMany
@@ -132,7 +242,15 @@ class User extends Authenticatable
      */
     public function tenant()
     {
-        return $this->belongsTo(\Modules\Tenants\Models\Tenant::class, 'tenant_id');
+        return $this->belongsTo(Tenant::class, 'tenant_id');
+    }
+
+    /**
+     * Parish person linked to this login (clergy or parishioner portal).
+     */
+    public function person(): BelongsTo
+    {
+        return $this->belongsTo(Person::class, 'person_id');
     }
 
     /**
@@ -146,7 +264,7 @@ class User extends Authenticatable
 
     /**
      * Cache key for user permissions
-     * 
+     *
      * SECURITY & PERFORMANCE: Includes tenant_id and role hash to prevent cache collisions
      * and ensure cache is invalidated when roles change
      */
@@ -154,13 +272,18 @@ class User extends Authenticatable
     {
         // Include tenant_id to prevent cross-tenant cache pollution
         $tenantId = $this->tenant_id ?? 'null';
-        
+
         // Include role hash to invalidate cache when roles change
         $roleHash = $this->getRoleHash();
-        
-        return "user_permissions_{$this->id}_tenant_{$tenantId}_roles_{$roleHash}";
+
+        // Include tenant cache version to invalidate when RBAC changes for the parish.
+        $cacheVersion = $this->tenant_id
+            ? TenantCacheVersion::current((int) $this->tenant_id)
+            : 0;
+
+        return "user_permissions_{$this->id}_tenant_{$tenantId}_cv_{$cacheVersion}_roles_{$roleHash}";
     }
-    
+
     /**
      * Request-level cache for permissions (per request lifecycle)
      * This prevents multiple database queries for the same user's permissions in a single request
@@ -169,15 +292,14 @@ class User extends Authenticatable
 
     /**
      * Get hash of user's active role IDs for cache versioning
-     * 
-     * @return string
      */
     private function getRoleHash(): string
     {
         $roleIds = $this->activeRoles()->pluck('roles.id')->sort()->values()->toArray();
+
         return md5(implode(',', $roleIds));
     }
-    
+
     /**
      * Clear request-level permission cache for this user
      * Called when roles/permissions are modified during the request
@@ -186,6 +308,11 @@ class User extends Authenticatable
     {
         $cacheKey = "user_{$this->id}_permissions";
         unset(self::$requestPermissionCache[$cacheKey]);
+    }
+
+    public static function flushRequestPermissionCache(): void
+    {
+        self::$requestPermissionCache = [];
     }
 
     /**
@@ -200,19 +327,19 @@ class User extends Authenticatable
 
     /**
      * Get ALL permissions for this user (from all roles + direct permissions).
-     * 
+     *
      * SECURITY ENHANCEMENTS:
      * - Filters by active status (roles and permissions must be active)
      * - Validates tenant isolation (permissions must belong to user's tenant or be system-wide)
      * - Excludes soft-deleted records
      * - Implements caching for performance
-     * 
+     *
      * This method aggregates permissions from:
      * 1. All active assigned roles (filtered by tenant)
      * 2. Direct active user permissions (filtered by tenant)
-     * 
-     * @param bool $useCache Whether to use cached permissions (default: true)
-     * @return \Illuminate\Support\Collection
+     *
+     * @param  bool  $useCache  Whether to use cached permissions (default: true)
+     * @return Collection
      */
     public function getAllPermissions(bool $useCache = true)
     {
@@ -229,21 +356,21 @@ class User extends Authenticatable
         $roleQuery = $this->roles()
             ->where('roles.active', 1)
             ->whereNull('roles.deleted_at');
-        
+
         // SECURITY: Filter roles by tenant (unless SuperAdmin)
-        if (!$this->isSuperAdmin() && $this->tenant_id) {
+        if (! $this->isSuperAdmin() && $this->tenant_id) {
             $roleQuery->where(function ($q) {
                 $q->whereNull('roles.tenant_id') // Global roles
-                  ->orWhere('roles.tenant_id', $this->tenant_id); // User's tenant roles
+                    ->orWhere('roles.tenant_id', $this->tenant_id); // User's tenant roles
             });
         }
-        
+
         // PERFORMANCE: Use eager loading with constraints to load permissions in single query
         // Get permissions from active roles (only active permissions)
         $rolePermissions = $roleQuery
             ->with(['permissions' => function ($query) {
                 $query->where('permissions.active', 1)
-                      ->whereNull('permissions.deleted_at');
+                    ->whereNull('permissions.deleted_at');
             }])
             ->get()
             ->pluck('permissions')
@@ -254,52 +381,50 @@ class User extends Authenticatable
                 if ($this->isSuperAdmin()) {
                     return true; // SuperAdmin can have any permission
                 }
-                
+
                 if (is_null($permission->tenant_id)) {
-                    if (($permission->scope ?? null) === Permission::SCOPE_PLATFORM) {
-                        return false;
-                    }
-                    return true; // System permissions are allowed
+                    // Platform scope is gated at hasPermission() check time so support-session
+                    // elevation can resolve without stale cache entries.
+                    return true;
                 }
-                
+
                 return $permission->tenant_id === $this->tenant_id;
             })
             ->unique('id');
-        
+
         // Get direct active permissions (with tenant validation)
         $directPermissionsQuery = $this->permissions()
             ->where('active', 1)
             ->whereNull('deleted_at');
-        
+
         // SECURITY: Filter direct permissions by tenant
-        if (!$this->isSuperAdmin() && $this->tenant_id) {
+        if (! $this->isSuperAdmin() && $this->tenant_id) {
             $directPermissionsQuery->where(function ($q) {
                 $q->whereNull('tenant_id') // System permissions
-                  ->orWhere('tenant_id', $this->tenant_id); // User's tenant permissions
+                    ->orWhere('tenant_id', $this->tenant_id); // User's tenant permissions
             })->where('scope', '!=', Permission::SCOPE_PLATFORM);
         }
-        
+
         $directPermissions = $directPermissionsQuery->get();
-        
+
         // Merge and remove duplicates
         $allPermissions = $rolePermissions->merge($directPermissions)->unique('id');
-        
+
         // Cache for 5 minutes (permissions don't change frequently)
         if ($useCache) {
             Cache::put($this->getPermissionsCacheKey(), $allPermissions->toArray(), 300);
         }
-        
+
         return $allPermissions;
     }
 
     /**
      * Check if user has a specific permission (from any role or direct assignment).
-     * 
+     *
      * PERFORMANCE: Uses optimized check with caching
      * SECURITY: Validates tenant isolation and active status
-     * 
-     * @param string|Permission $permission
-     * @return bool
+     *
+     * @param  string|Permission  $permission
      */
     public function hasPermission($permission): bool
     {
@@ -307,27 +432,35 @@ class User extends Authenticatable
         if ($this->isSuperAdmin()) {
             return true;
         }
-        
+
         if ($permission instanceof Permission) {
             $permissionName = $permission->name;
         } else {
             $permissionName = $permission;
         }
-        
+
         // PERFORMANCE: Use request-level cache to avoid multiple getAllPermissions() calls
         $cacheKey = "user_{$this->id}_permissions";
-        if (!isset(self::$requestPermissionCache[$cacheKey])) {
+        if (! isset(self::$requestPermissionCache[$cacheKey])) {
             self::$requestPermissionCache[$cacheKey] = $this->getAllPermissions(true);
         }
-        
-        return self::$requestPermissionCache[$cacheKey]->contains('name', $permissionName);
+
+        if (! self::$requestPermissionCache[$cacheKey]->contains('name', $permissionName)) {
+            return false;
+        }
+
+        $resolved = self::$requestPermissionCache[$cacheKey]->firstWhere('name', $permissionName);
+        if ($resolved !== null
+            && ($resolved->scope ?? null) === Permission::SCOPE_PLATFORM
+            && ! $this->canResolvePlatformPermissions()) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
      * Check if user has any of the given permissions.
-     * 
-     * @param array $permissions
-     * @return bool
      */
     public function hasAnyPermission(array $permissions): bool
     {
@@ -339,9 +472,6 @@ class User extends Authenticatable
 
     /**
      * Check if user has all of the given permissions.
-     * 
-     * @param array $permissions
-     * @return bool
      */
     public function hasAllPermissions(array $permissions): bool
     {
@@ -353,24 +483,20 @@ class User extends Authenticatable
 
     /**
      * Check if user has a specific role.
-     * 
-     * @param string|Role $role
-     * @return bool
+     *
+     * @param  string|Role  $role
      */
     public function hasRole($role): bool
     {
         if ($role instanceof Role) {
             return $this->roles->contains('id', $role->id);
         }
-        
+
         return $this->roles->contains('name', $role);
     }
 
     /**
      * Check if user has any of the given roles.
-     * 
-     * @param array $roles
-     * @return bool
      */
     public function hasAnyRole(array $roles): bool
     {
@@ -379,9 +505,6 @@ class User extends Authenticatable
 
     /**
      * Check if user has all of the given roles.
-     * 
-     * @param array $roles
-     * @return bool
      */
     public function hasAllRoles(array $roles): bool
     {
@@ -390,14 +513,14 @@ class User extends Authenticatable
 
     /**
      * Assign roles to the user.
-     * 
+     *
      * SECURITY: Validates that roles belong to user's tenant or are global
      * SECURITY: Validates roles are active and not deleted
      * PERFORMANCE: Clears permissions cache after assignment
-     * 
-     * @param mixed ...$roles
-     * @return self
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException
+     *
+     * @param  mixed  ...$roles
+     *
+     * @throws ModelNotFoundException
      * @throws \RuntimeException If role doesn't belong to user's tenant or is inactive
      */
     public function assignRoles(...$roles): self
@@ -408,13 +531,14 @@ class User extends Authenticatable
                 if ($role instanceof Role) {
                     return $role;
                 }
+
                 return Role::where('name', $role)->firstOrFail();
             });
-        
+
         // SECURITY: Validate role level hierarchy to prevent conflicts
         // Users should not have conflicting role levels (e.g., SuperAdmin + EkklesiaUser)
         $this->validateRoleHierarchy($roleObjects);
-        
+
         $roleIds = $roleObjects->map(function ($role) {
             // SECURITY: Validate tenant isolation
             // SuperAdmin can assign any role
@@ -423,45 +547,63 @@ class User extends Authenticatable
                 if ($role->active !== 1 || $role->deleted_at !== null) {
                     throw new \RuntimeException("Cannot assign inactive or deleted role: {$role->name}");
                 }
+
                 return $role->id;
             }
-            
+
             // SECURITY: Role must be active and not soft-deleted
             if ($role->active !== 1) {
                 throw new \RuntimeException("Cannot assign inactive role: {$role->name}");
             }
-            
+
             if ($role->deleted_at !== null) {
                 throw new \RuntimeException("Cannot assign deleted role: {$role->name}");
             }
-            
-            // SECURITY: Role must be global (tenant_id = null) OR belong to user's tenant
-            if (!is_null($role->tenant_id) && $role->tenant_id !== $this->tenant_id) {
-                throw new \RuntimeException(
-                    "Cannot assign role from different tenant. Role tenant_id: {$role->tenant_id}, User tenant_id: {$this->tenant_id}"
-                );
-            }
-            
+
+            $this->assertRoleAssignableToUser($role);
+
             return $role->id;
         });
-        
+
         $this->roles()->syncWithoutDetaching($roleIds);
-        
+
         // Clear permissions cache after role assignment
         $this->clearPermissionsCache();
         $this->clearRequestPermissionCache();
-        
+
         return $this;
     }
-    
+
+    /**
+     * @throws \RuntimeException
+     */
+    private function assertRoleAssignableToUser(Role $role): void
+    {
+        if ($this->tenant_id !== null) {
+            if (! $role->isTenantRole() || $role->tenant_id !== $this->tenant_id) {
+                throw new \RuntimeException(
+                    "Cannot assign role {$role->name} to a parish user. Only tenant roles for this parish are allowed."
+                );
+            }
+
+            return;
+        }
+
+        if ($role->tenant_id !== null) {
+            throw new \RuntimeException(
+                "Cannot assign parish role {$role->name} to a platform user."
+            );
+        }
+    }
+
     /**
      * Validate role level hierarchy to prevent conflicting role assignments.
-     * 
+     *
      * SECURITY: Prevents users from having conflicting roles (e.g., SuperAdmin + lower level roles)
      * Higher level roles should take precedence, but we warn about conflicts.
-     * 
-     * @param \Illuminate\Support\Collection $newRoles
-     * @return void
+     *
+     * @param  Collection  $newRoles
+     *
      * @throws \RuntimeException If role hierarchy conflict is detected
      */
     private function validateRoleHierarchy($newRoles): void
@@ -469,7 +611,7 @@ class User extends Authenticatable
         // Get existing roles
         $existingRoles = $this->activeRoles()->get();
         $allRoles = $existingRoles->merge($newRoles)->unique('id');
-        
+
         // Define role hierarchy levels (lower number = higher privilege)
         $roleLevels = [
             Role::SUPER_ADMIN => 1,
@@ -477,19 +619,19 @@ class User extends Authenticatable
             Role::EKKLESIA_MANAGER => 3,
             Role::EKKLESIA_USER => 4,
         ];
-        
+
         // Get all role levels
         $assignedLevels = [];
         foreach ($allRoles as $role) {
             $level = $role->level ?? ($roleLevels[$role->name] ?? 99);
             $assignedLevels[] = $level;
         }
-        
+
         // Check for conflicting role levels (warn if user has both high and low privilege roles)
         if (count($assignedLevels) > 1) {
             $minLevel = min($assignedLevels);
             $maxLevel = max($assignedLevels);
-            
+
             // If there's a significant gap (e.g., level 1 and level 4), log warning
             if ($maxLevel - $minLevel >= 2 && $minLevel <= 2) {
                 \Log::warning('User assigned conflicting role levels', [
@@ -505,12 +647,10 @@ class User extends Authenticatable
 
     /**
      * Sync roles for the user (replaces existing roles).
-     * 
+     *
      * SECURITY: Validates that roles belong to user's tenant or are global
      * PERFORMANCE: Clears permissions cache after sync
-     * 
-     * @param array $roleIds
-     * @return self
+     *
      * @throws \RuntimeException If any role doesn't belong to user's tenant
      */
     public function syncRoles(array $roleIds): self
@@ -520,31 +660,23 @@ class User extends Authenticatable
             ->where('active', 1)
             ->whereNull('deleted_at')
             ->get();
-        
-        // SECURITY: Validate tenant isolation for all roles
-        if (!$this->isSuperAdmin()) {
-            foreach ($roles as $role) {
-                if (!is_null($role->tenant_id) && $role->tenant_id !== $this->tenant_id) {
-                    throw new \RuntimeException(
-                        "Cannot assign role from different tenant. Role: {$role->name} (tenant_id: {$role->tenant_id}), User tenant_id: {$this->tenant_id}"
-                    );
-                }
-            }
+
+        foreach ($roles as $role) {
+            $this->assertRoleAssignableToUser($role);
         }
-        
+
         $this->roles()->sync($roleIds);
-        
+
         // Clear permissions cache after role sync
         $this->clearPermissionsCache();
-        
+
         return $this;
     }
 
     /**
      * Remove roles from the user.
-     * 
-     * @param mixed ...$roles
-     * @return self
+     *
+     * @param  mixed  ...$roles
      */
     public function removeRoles(...$roles): self
     {
@@ -554,12 +686,13 @@ class User extends Authenticatable
                 if ($role instanceof Role) {
                     return $role->id;
                 }
+
                 return Role::where('name', $role)->first()->id ?? null;
             })
             ->filter();
-        
+
         $this->roles()->detach($roles);
-        
+
         return $this;
     }
 
@@ -611,8 +744,42 @@ class User extends Authenticatable
     }
 
     /**
+     * Whether this actor may resolve SCOPE_PLATFORM permissions via hasPermission().
+     * Platform operators without a parish home always qualify; parish-home platform
+     * staff qualify only during their own active support session elevation.
+     */
+    public function canResolvePlatformPermissions(): bool
+    {
+        if ($this->isSuperAdmin()) {
+            return true;
+        }
+
+        $isPlatformSupportOperator = $this->isEkklesiaAdmin()
+            || $this->isEkklesiaManager()
+            || $this->isEkklesiaUser()
+            || $this->hasRole(Role::SUPPORT_ADMIN);
+
+        if (! $isPlatformSupportOperator) {
+            return false;
+        }
+
+        if ($this->tenant_id === null) {
+            return true;
+        }
+
+        if (! app()->bound(TenantContext::class)) {
+            return false;
+        }
+
+        $context = app(TenantContext::class);
+
+        return $context->isSupportSession()
+            && $context->actorUserId() === (int) $this->getAuthIdentifier();
+    }
+
+    /**
      * Check if user is Super Admin
-     * 
+     *
      * SECURITY FIX: Now checks both legacy role() and roles() relationship
      * to support multi-role architecture
      */
@@ -620,13 +787,13 @@ class User extends Authenticatable
     {
         // Check legacy role relationship (for backward compatibility)
         // SECURITY: Must verify role is active and not deleted
-        if ($this->role && 
-            $this->role->name === Role::SUPER_ADMIN && 
-            $this->role->active === 1 && 
+        if ($this->role &&
+            $this->role->name === Role::SUPER_ADMIN &&
+            $this->role->active === 1 &&
             $this->role->deleted_at === null) {
             return true;
         }
-        
+
         // Check roles() relationship (multi-role support)
         // SECURITY: Explicitly filter by active status and non-deleted
         return $this->activeRoles()
@@ -636,20 +803,20 @@ class User extends Authenticatable
 
     /**
      * Check if user is Ekklesia Admin
-     * 
+     *
      * SECURITY FIX: Now checks both legacy role() and roles() relationship
      */
     public function isEkklesiaAdmin(): bool
     {
         // Check legacy role relationship
         // SECURITY: Must verify role is active and not deleted
-        if ($this->role && 
-            $this->role->name === Role::EKKLESIA_ADMIN && 
-            $this->role->active === 1 && 
+        if ($this->role &&
+            $this->role->name === Role::EKKLESIA_ADMIN &&
+            $this->role->active === 1 &&
             $this->role->deleted_at === null) {
             return true;
         }
-        
+
         // Check roles() relationship
         // SECURITY: Use activeRoles() which filters by active status and non-deleted
         return $this->activeRoles()
@@ -659,20 +826,20 @@ class User extends Authenticatable
 
     /**
      * Check if user is Ekklesia Manager
-     * 
+     *
      * SECURITY FIX: Now checks both legacy role() and roles() relationship
      */
     public function isEkklesiaManager(): bool
     {
         // Check legacy role relationship
         // SECURITY: Must verify role is active and not deleted
-        if ($this->role && 
-            $this->role->name === Role::EKKLESIA_MANAGER && 
-            $this->role->active === 1 && 
+        if ($this->role &&
+            $this->role->name === Role::EKKLESIA_MANAGER &&
+            $this->role->active === 1 &&
             $this->role->deleted_at === null) {
             return true;
         }
-        
+
         // Check roles() relationship
         // SECURITY: Use activeRoles() which filters by active status and non-deleted
         return $this->activeRoles()
@@ -682,20 +849,20 @@ class User extends Authenticatable
 
     /**
      * Check if user is Ekklesia User
-     * 
+     *
      * SECURITY FIX: Now checks both legacy role() and roles() relationship
      */
     public function isEkklesiaUser(): bool
     {
         // Check legacy role relationship
         // SECURITY: Must verify role is active and not deleted
-        if ($this->role && 
-            $this->role->name === Role::EKKLESIA_USER && 
-            $this->role->active === 1 && 
+        if ($this->role &&
+            $this->role->name === Role::EKKLESIA_USER &&
+            $this->role->active === 1 &&
             $this->role->deleted_at === null) {
             return true;
         }
-        
+
         // Check roles() relationship
         // SECURITY: Use activeRoles() which filters by active status and non-deleted
         return $this->activeRoles()
@@ -706,7 +873,7 @@ class User extends Authenticatable
     /**
      * Check if user has any Ekklesia role (SuperAdmin, EkklesiaAdmin, EkklesiaManager, EkklesiaUser)
      * This is used to determine access to Ekklesia-only features like Ecclesiastical Data Management
-     * 
+     *
      * SECURITY FIX: Now checks roles() relationship for multi-role support
      */
     public function hasEkklesiaRole(): bool
@@ -717,16 +884,16 @@ class User extends Authenticatable
             Role::EKKLESIA_MANAGER,
             Role::EKKLESIA_USER,
         ];
-        
+
         // Check legacy role relationship
         // SECURITY: Must verify role is active and not deleted
-        if ($this->role && 
-            in_array($this->role->name, $ekklesiaRoles) && 
-            $this->role->active === 1 && 
+        if ($this->role &&
+            in_array($this->role->name, $ekklesiaRoles) &&
+            $this->role->active === 1 &&
             $this->role->deleted_at === null) {
             return true;
         }
-        
+
         // Check roles() relationship
         // SECURITY: Use activeRoles() which filters by active status and non-deleted
         return $this->activeRoles()
@@ -741,37 +908,38 @@ class User extends Authenticatable
     {
         // Check if user has Administrator role that belongs to their tenant
         // The role must have the same tenant_id as the user
-        if (!$this->tenant_id) {
+        if (! $this->tenant_id) {
             return false; // User without tenant cannot be tenant admin
         }
-        
+
         // First try using loaded relationship if available (more efficient)
+        $tenantId = (int) $this->tenant_id;
+
         if ($this->relationLoaded('roles')) {
-            return $this->roles->contains(function ($role) {
-                return $role->name === 'Administrator' && 
-                       $role->tenant_id === $this->tenant_id;
+            return $this->roles->contains(function ($role) use ($tenantId) {
+                return $role->name === 'Administrator' &&
+                       (int) $role->tenant_id === $tenantId;
             });
         }
-        
+
         // Fallback to query if relationship not loaded
         return $this->roles()
             ->where('name', 'Administrator')
-            ->where('tenant_id', $this->tenant_id)
+            ->where('tenant_id', $tenantId)
             ->exists();
     }
 
     /**
      * Check if user can edit another user based on hierarchical permissions
-     * 
+     *
      * Rules:
      * 1. Cannot edit self
      * 2. SuperAdmin and EkklesiaAdmin can edit anyone
      * 3. Primary admin can edit all users in their tenant
      * 4. Secondary admins cannot edit primary admin or other admins
      * 5. Must be in same tenant (tenant isolation)
-     * 
-     * @param User $targetUser The user being edited
-     * @return bool
+     *
+     * @param  User  $targetUser  The user being edited
      */
     public function canEditUser(User $targetUser): bool
     {
@@ -846,7 +1014,7 @@ class User extends Authenticatable
      */
     public function getUserTypeLabel(): string
     {
-        return match($this->user_type) {
+        return match ($this->user_type) {
             self::USER_TYPE_PRIMARY_CONTACT => 'Primary Contact',
             self::USER_TYPE_SECONDARY_CONTACT => 'Secondary Contact',
             default => 'Unknown'
@@ -925,6 +1093,7 @@ class User extends Authenticatable
     public function activate(): bool
     {
         $this->active = 1;
+
         return $this->save();
     }
 
@@ -934,18 +1103,19 @@ class User extends Authenticatable
     public function deactivate(): bool
     {
         $this->active = 0;
+
         return $this->save();
     }
 
     /**
      * Give permission directly to this user.
-     * 
+     *
      * SECURITY: Validates that permissions belong to user's tenant or are system-wide
      * PERFORMANCE: Clears permissions cache after assignment
-     * 
-     * @param mixed ...$permissions
-     * @return self
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException
+     *
+     * @param  mixed  ...$permissions
+     *
+     * @throws ModelNotFoundException
      * @throws \RuntimeException If permission doesn't belong to user's tenant
      */
     public function givePermissionTo(...$permissions): self
@@ -956,25 +1126,26 @@ class User extends Authenticatable
                 if ($permission instanceof Permission) {
                     return $permission;
                 }
+
                 return Permission::where('name', $permission)->firstOrFail();
             })
             ->each(function ($permission) {
                 // SECURITY: Validate tenant isolation
                 // SuperAdmin can assign any permission
-                if (!$this->isSuperAdmin()) {
+                if (! $this->isSuperAdmin()) {
                     // Permission must be active
                     if ($permission->active !== 1 || $permission->deleted_at !== null) {
                         throw new \RuntimeException("Cannot assign inactive or deleted permission: {$permission->name}");
                     }
-                    
+
                     // Permission must be system-wide (tenant_id = null) OR belong to user's tenant
-                    if (!is_null($permission->tenant_id) && $permission->tenant_id !== $this->tenant_id) {
+                    if (! is_null($permission->tenant_id) && $permission->tenant_id !== $this->tenant_id) {
                         throw new \RuntimeException(
                             "Cannot assign permission from different tenant. Permission: {$permission->name} (tenant_id: {$permission->tenant_id}), User tenant_id: {$this->tenant_id}"
                         );
                     }
                 }
-                
+
                 $this->permissions()->syncWithoutDetaching([$permission->id]);
             });
 
@@ -986,11 +1157,10 @@ class User extends Authenticatable
 
     /**
      * Remove permission from this user.
-     * 
+     *
      * PERFORMANCE: Clears permissions cache after revocation
-     * 
-     * @param mixed ...$permissions
-     * @return self
+     *
+     * @param  mixed  ...$permissions
      */
     public function revokePermissionTo(...$permissions): self
     {
@@ -1000,6 +1170,7 @@ class User extends Authenticatable
                 if ($permission instanceof Permission) {
                     return $permission;
                 }
+
                 return Permission::where('name', $permission)->firstOrFail();
             })
             ->each(function ($permission) {

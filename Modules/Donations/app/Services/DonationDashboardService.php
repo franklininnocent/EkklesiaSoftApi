@@ -2,16 +2,26 @@
 
 namespace Modules\Donations\Services;
 
+use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 use Modules\Donations\Models\ContributionDue;
 use Modules\Donations\Models\Donation;
 use Modules\Donations\Models\DonationPayment;
 use Modules\Donations\Models\DonationProject;
 use Modules\Donations\Models\DonationRefund;
-use Modules\Donations\Models\DonationSetting;
+use Modules\Donations\Models\ProjectInstallmentDue;
 use Modules\Donations\Models\RecurringDonationSchedule;
 use Modules\Donations\Support\ContributionBalance;
+use Modules\Donations\Support\DashboardBccFilter;
+use Modules\Donations\Support\DashboardDateRange;
+use Modules\Donations\Support\DashboardProjectFilter;
+use Modules\Donations\Support\DonationBusinessDate;
+use Modules\Donations\Support\MoneyMath;
 use Modules\Family\Models\Family;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Services\ChurchCurrencyResolver;
+use Modules\Tenants\Services\ChurchFinancialPeriodResolver;
 use Modules\Tenants\Services\TenantHierarchyService;
 
 class DonationDashboardService
@@ -19,42 +29,81 @@ class DonationDashboardService
     public function __construct(
         private readonly FinancialHealthService $healthService,
         private readonly TenantHierarchyService $hierarchyService,
-        private readonly DashboardInsightsService $insightsService
-    ) {
-    }
+        private readonly DashboardInsightsService $insightsService,
+        private readonly ExecutiveReportMetricsService $executiveMetrics,
+        private readonly DonationDashboardSnapshotBuilder $snapshotBuilder
+    ) {}
 
-    public function getSummary(int $tenantId): array
-    {
-        $base = $this->buildBaseTotals($tenantId);
-        $families = $this->buildFamilyMetrics($tenantId);
-        $periodCollections = $this->buildPeriodCollections($tenantId);
-        $trend = $this->buildCollectionTrend($tenantId);
-        $attentionList = $this->buildAttentionList($tenantId);
-        $recentActivity = $this->buildRecentActivity($tenantId);
-        $projectSummaries = $this->buildProjectSummaries($tenantId);
+    public function getSummary(
+        int $tenantId,
+        ?DashboardDateRange $range = null,
+        ?DashboardBccFilter $bccFilter = null,
+        ?DashboardProjectFilter $projectFilter = null
+    ): array {
+        $bccFilter ??= DashboardBccFilter::none();
+        $projectFilter ??= DashboardProjectFilter::none();
+        $base = $this->buildBaseTotals($tenantId, $range, $bccFilter, $projectFilter);
+        $families = $this->buildFamilyMetrics($tenantId, $range, $bccFilter, $projectFilter);
+        $periodCollections = $this->buildPeriodCollections($tenantId, $range, $bccFilter, $projectFilter);
+        $rangeCollected = (float) ($periodCollections['current_month_collected'] ?? 0);
+        $trend = $this->buildCollectionTrend($tenantId, $rangeCollected, $range, $bccFilter, $projectFilter);
+        $attentionList = $this->buildAttentionList($tenantId, $range, $bccFilter, $projectFilter);
+        $recentActivity = $this->buildRecentActivity($tenantId, $bccFilter, $projectFilter);
+        $projectSummaries = $this->buildProjectSummaries($tenantId, $projectFilter);
 
         $previousMonth = $periodCollections['previous_month_collected'];
         $currentMonth = $periodCollections['current_month_collected'];
-        $growthPct = $previousMonth > 0
-            ? round((($currentMonth - $previousMonth) / $previousMonth) * 100, 1)
-            : ($currentMonth > 0 ? 100.0 : 0.0);
+        if ($range !== null) {
+            $comparisonRange = [
+                'start' => $range->comparisonStart,
+                'end' => $range->comparisonEnd,
+            ];
+        } else {
+            $comparisonRange = $this->executiveMetrics->comparablePreviousMonthCollectionRange($tenantId);
+        }
+        $comparisonCollected = $this->executiveMetrics->sumSucceededPayments(
+            $tenantId,
+            $comparisonRange['start'],
+            $comparisonRange['end'],
+            $bccFilter,
+            $projectFilter
+        );
+        $growthAnalysis = $this->executiveMetrics->growthHealthFromCollections((float) $currentMonth, $comparisonCollected);
+        $growthPct = (float) $growthAnalysis['growth_pct'];
 
         $outstanding = (float) $base['totals']['pending_dues'];
         $overdueAmount = $attentionList['total_overdue_amount'];
         $overdueRatioPct = $outstanding > 0 ? min(100, round(($overdueAmount / $outstanding) * 100, 1)) : 0.0;
 
-        $avgProjectPct = collect($projectSummaries)->avg('funding_percentage') ?? 0;
+        $avgProjectPct = $this->executiveMetrics->averageProjectFundingPct($projectSummaries);
+        $projectApplicable = $projectSummaries !== [];
 
-        $paymentCount = DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->whereDate('payment_date', '>=', now()->startOfMonth()->toDateString())
-            ->count();
+        $monthStart = $range?->dateFrom
+            ?? (string) ($periodCollections['period']['month_start'] ?? DonationBusinessDate::monthStart($tenantId));
+        $monthEnd = $range?->collectionEnd
+            ?? (string) ($periodCollections['period']['month_end'] ?? DonationBusinessDate::monthEnd($tenantId));
+
+        if ($projectFilter->isActive) {
+            $paymentCount = $this->executiveMetrics->countDistinctPaymentsWithProjectAllocationsInRange(
+                $tenantId,
+                $monthStart,
+                $monthEnd,
+                $bccFilter,
+                $projectFilter
+            );
+        } else {
+            $paymentCountQuery = DonationPayment::forTenant($tenantId)
+                ->where('status', 'succeeded')
+                ->whereBetween('payment_date', [$monthStart, $monthEnd]);
+            $bccFilter->applyToDonationPaymentQuery($paymentCountQuery, $tenantId);
+            $paymentCount = (int) $paymentCountQuery->count();
+        }
 
         $averageContribution = $paymentCount > 0
             ? round($currentMonth / $paymentCount, 2)
             : 0.0;
 
-        $planCompliance = $this->buildPlanCompliancePct($tenantId);
+        $planCompliance = $this->buildPlanCompliancePct($tenantId, $range, $bccFilter, $projectFilter);
         $collectionPerformancePct = $this->buildCollectionPerformancePct($currentMonth, $previousMonth, $planCompliance);
         $collectionChart = $this->buildCollectionPerformanceChart($tenantId, $trend);
 
@@ -62,8 +111,11 @@ class DonationDashboardService
             'participation_rate' => $families['participation_rate'],
             'overdue_ratio_pct' => $overdueRatioPct,
             'project_momentum_pct' => (float) $avgProjectPct,
+            'project_applicable' => $projectApplicable,
             'collection_growth_pct' => $growthPct,
+            'growth_health_score' => (float) $growthAnalysis['growth_health_score'],
             'overdue_family_count' => $attentionList['count'],
+            'current_month_collected' => (float) $currentMonth,
         ]);
 
         $healthScores = [
@@ -112,6 +164,32 @@ class DonationDashboardService
         ]);
 
         $payload['proactive_insights'] = $this->insightsService->buildProactiveInsights($payload);
+        $payload['snapshot'] = $this->snapshotBuilder->build(
+            $tenantId,
+            $periodCollections,
+            $families,
+            $growthAnalysis,
+            $attentionList,
+            $recentActivity,
+            $outstanding,
+            (int) ($base['totals']['active_projects'] ?? 0),
+            $range,
+            $bccFilter,
+            $projectFilter
+        );
+        $payload['preset_windows'] = DashboardDateRange::presetWindowsForTenant($tenantId);
+        if ($range !== null) {
+            $payload['applied_range'] = $range->appliedRangePayload();
+            $payload['metric_basis'] = $range->metricBasisPayload();
+        }
+        $appliedBcc = $bccFilter->appliedPayload();
+        if ($appliedBcc !== null) {
+            $payload['applied_bcc'] = $appliedBcc;
+        }
+        $appliedProject = $projectFilter->appliedPayload();
+        if ($appliedProject !== null) {
+            $payload['applied_project'] = $appliedProject;
+        }
 
         return $payload;
     }
@@ -144,29 +222,63 @@ class DonationDashboardService
         return round(($growthScore * 0.6) + ($planCompliance * 0.4), 1);
     }
 
-    private function buildPlanCompliancePct(int $tenantId): float
-    {
-        $monthStart = now()->startOfMonth()->toDateString();
-        $monthEnd = now()->endOfMonth()->toDateString();
+    private function buildPlanCompliancePct(
+        int $tenantId,
+        ?DashboardDateRange $range = null,
+        ?DashboardBccFilter $bccFilter = null, ?DashboardProjectFilter $projectFilter = null
+    ): float {
+        $bccFilter ??= DashboardBccFilter::none();
+        $projectFilter ??= DashboardProjectFilter::none();
+        $monthStart = $range?->dateFrom ?? DonationBusinessDate::monthStart($tenantId);
+        $monthEnd = $range !== null
+            ? $range->dateTo
+            : DonationBusinessDate::monthEnd($tenantId);
+        $businessDate = $range?->asOf ?? DonationBusinessDate::today($tenantId);
+        $collectionEnd = $monthEnd > $businessDate ? $businessDate : $monthEnd;
 
-        $assessed = (float) ContributionDue::forTenant($tenantId)
-            ->whereBetween('due_date', [$monthStart, $monthEnd])
-            ->sum('amount_due');
+        if ($projectFilter->isActive) {
+            $assessedQuery = ProjectInstallmentDue::forTenant($tenantId)
+                ->whereBetween('due_date', [$monthStart, $monthEnd]);
+            $projectFilter->applyToProjectInstallmentDueQuery($assessedQuery, $tenantId);
+            $this->executiveMetrics->applyDashboardFamilyScope($assessedQuery, $tenantId, $bccFilter, $projectFilter);
+            $assessed = (float) $assessedQuery->sum('amount_due');
+            if ($assessed <= 0) {
+                return 100.0;
+            }
+            $collected = $this->executiveMetrics->sumProjectFundingAllocations(
+                $tenantId,
+                $monthStart,
+                $collectionEnd,
+                $bccFilter,
+                $projectFilter
+            );
+
+            return round(min(100, ($collected / $assessed) * 100), 1);
+        }
+
+        $assessedQuery = ContributionDue::forTenant($tenantId)
+            ->whereBetween('due_date', [$monthStart, $monthEnd]);
+        $bccFilter->applyToContributionDueQuery($assessedQuery, $tenantId);
+        $assessed = (float) $assessedQuery->sum('amount_due');
 
         if ($assessed <= 0) {
             return 100.0;
         }
 
-        $collected = (float) DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->whereBetween('payment_date', [$monthStart, $monthEnd])
-            ->sum('amount');
+        $collectedQuery = $this->scopeSucceededPaymentsThroughBusinessDate(
+            DonationPayment::forTenant($tenantId),
+            $businessDate
+        )
+            ->whereDate('payment_date', '>=', $monthStart)
+            ->whereDate('payment_date', '<=', $collectionEnd);
+        $bccFilter->applyToDonationPaymentQuery($collectedQuery, $tenantId);
+        $collected = (float) $collectedQuery->sum('amount');
 
         return round(min(100, ($collected / $assessed) * 100), 1);
     }
 
     /**
-     * @param array<int, array<string, mixed>> $trend
+     * @param  array<int, array<string, mixed>>  $trend
      * @return array<string, mixed>
      */
     private function buildCollectionPerformanceChart(int $tenantId, array $trend): array
@@ -175,15 +287,13 @@ class DonationDashboardService
         $outstandingPoints = [];
         $targetPoints = [];
 
+        $periodKeys = array_map(static fn (array $row): string => (string) $row['period'], $trend);
+        $monthlyTargets = $this->buildMonthlyDueTargets($tenantId, $periodKeys);
+
         foreach ($trend as $row) {
             $period = (string) $row['period'];
             $collected = (float) $row['collected'];
-            $monthStart = \Carbon\Carbon::createFromFormat('Y-m', $period)->startOfMonth()->toDateString();
-            $monthEnd = \Carbon\Carbon::createFromFormat('Y-m', $period)->endOfMonth()->toDateString();
-
-            $target = (float) ContributionDue::forTenant($tenantId)
-                ->whereBetween('due_date', [$monthStart, $monthEnd])
-                ->sum('amount_due');
+            $target = (float) ($monthlyTargets[$period] ?? 0);
 
             if ($target <= 0) {
                 $target = max($collected, (float) ($row['collected'] ?? 0));
@@ -206,12 +316,42 @@ class DonationDashboardService
     }
 
     /**
+     * @param  list<string>  $periodKeys  YYYY-MM values
+     * @return array<string, float>
+     */
+    private function buildMonthlyDueTargets(int $tenantId, array $periodKeys): array
+    {
+        if ($periodKeys === []) {
+            return [];
+        }
+
+        $monthExpr = $this->sqlYearMonthExpression('due_date');
+        $start = Carbon::createFromFormat('Y-m', min($periodKeys))->startOfMonth()->toDateString();
+        $end = Carbon::createFromFormat('Y-m', max($periodKeys))->endOfMonth()->toDateString();
+
+        return ContributionDue::forTenant($tenantId)
+            ->whereBetween('due_date', [$start, $end])
+            ->selectRaw("{$monthExpr} as period, COALESCE(SUM(amount_due), 0) as target")
+            ->groupBy('period')
+            ->pluck('target', 'period')
+            ->map(fn ($value) => (float) $value)
+            ->all();
+    }
+
+    private function sqlYearMonthExpression(string $column): string
+    {
+        return DB::connection()->getDriverName() === 'pgsql'
+            ? "TO_CHAR({$column}, 'YYYY-MM')"
+            : "strftime('%Y-%m', {$column})";
+    }
+
+    /**
      * @return array<string, mixed>|null
      */
     private function buildTenantContext(int $tenantId): ?array
     {
         $tenant = Tenant::query()->find($tenantId);
-        if (!$tenant) {
+        if (! $tenant) {
             return null;
         }
 
@@ -229,9 +369,8 @@ class DonationDashboardService
             'parent_tenant_id' => $this->hierarchyService->supportsHierarchy()
                 ? $tenant->parent_tenant_id
                 : null,
-            'currency_code' => ($this->hierarchyService->supportsHierarchy()
-                ? $tenant->currency_code
-                : null) ?? 'INR',
+            'currency_code' => app(ChurchCurrencyResolver::class)
+                ->currencyCodeForTenantId($tenantId),
             'visibility_scope' => $this->resolveVisibilityScope($tier),
             'supports_child_rollup' => $this->hierarchyService->supportsHierarchy()
                 && in_array($tier, ['diocese', 'parish'], true),
@@ -251,69 +390,121 @@ class DonationDashboardService
     /**
      * @return array<string, mixed>
      */
-    private function buildBaseTotals(int $tenantId): array
-    {
-        $totalCollected = (float) DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->sum('amount');
+    private function buildBaseTotals(
+        int $tenantId,
+        ?DashboardDateRange $range = null,
+        ?DashboardBccFilter $bccFilter = null, ?DashboardProjectFilter $projectFilter = null
+    ): array {
+        $bccFilter ??= DashboardBccFilter::none();
+        $projectFilter ??= DashboardProjectFilter::none();
+        $businessDate = DonationBusinessDate::today($tenantId);
+        $asOf = $range?->asOf ?? $businessDate;
 
-        $totalRefunded = (float) DonationRefund::forTenant($tenantId)
-            ->where('status', 'completed')
-            ->sum('amount');
+        if ($projectFilter->isActive) {
+            $totalCollected = MoneyMath::normalize(
+                $this->executiveMetrics->sumProjectFundingAllocations(
+                    $tenantId,
+                    '2000-01-01',
+                    $businessDate,
+                    $bccFilter,
+                    $projectFilter
+                )
+            );
+            $voluntaryCollected = '0.00';
+            $collectionsByMethod = $this->executiveMetrics->sumProjectFundingAllocationsByMethod(
+                $tenantId,
+                '2000-01-01',
+                $businessDate,
+                $bccFilter,
+                $projectFilter
+            );
+            $succeededByMethod = collect();
+        } else {
+            $succeededByMethodQuery = $this->scopeSucceededPaymentsThroughBusinessDate(
+                DonationPayment::forTenant($tenantId),
+                $businessDate
+            );
+            $bccFilter->applyToDonationPaymentQuery($succeededByMethodQuery, $tenantId);
+            $succeededByMethod = $succeededByMethodQuery
+                ->selectRaw(
+                    "method, COALESCE(SUM(amount), 0) as total, COALESCE(SUM(CASE WHEN source_type IN ('voluntary', 'recurring_schedule') THEN amount ELSE 0 END), 0) as voluntary"
+                )
+                ->groupBy('method')
+                ->get();
 
-        $pendingDues = ContributionBalance::sumOutstanding(
-            ContributionDue::forTenant($tenantId)
+            $totalCollected = '0.00';
+            $voluntaryCollected = '0.00';
+            foreach ($succeededByMethod as $row) {
+                $totalCollected = MoneyMath::add($totalCollected, $row->total);
+                $voluntaryCollected = MoneyMath::add($voluntaryCollected, $row->voluntary);
+            }
+
+            $collectionsByMethod = $succeededByMethod
+                ->pluck('total', 'method')
+                ->map(fn ($sum) => MoneyMath::toApiNumber($sum));
+        }
+
+        $totalRefunded = MoneyMath::normalize(
+            DonationRefund::forTenant($tenantId)->where('status', 'completed')->sum('amount')
         );
+        $refundsAgainstSucceededPayments = MoneyMath::normalize(
+            DonationRefund::query()
+                ->from('donation_refunds')
+                ->join('donation_payments', 'donation_payments.id', '=', 'donation_refunds.payment_id')
+                ->where('donation_refunds.tenant_id', $tenantId)
+                ->where('donation_refunds.status', 'completed')
+                ->where('donation_payments.status', 'succeeded')
+                ->sum('donation_refunds.amount')
+        );
+
+        $pendingDues = $this->executiveMetrics->sumPendingDuesCollectable($tenantId, $asOf, $bccFilter, $projectFilter);
+        $pendingProjectInstallments = $this->sumProjectInstallmentOutstanding($tenantId);
+        $futureDatedPayments = $this->futureDatedSucceededPaymentStats($tenantId, $businessDate);
 
         $activeProjects = DonationProject::forTenant($tenantId)
             ->where('status', 'active')
             ->count();
 
-        $voluntaryCollected = (float) DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->whereIn('source_type', ['voluntary', 'recurring_schedule'])
-            ->sum('amount');
-
         $voluntaryEntries = Donation::forTenant($tenantId)->count();
         $anonymousDonations = Donation::forTenant($tenantId)->where('is_anonymous', true)->count();
         $activeRecurring = RecurringDonationSchedule::forTenant($tenantId)->where('status', 'active')->count();
-        $pledgedOutstanding = Donation::forTenant($tenantId)
-            ->whereIn('status', ['pledged', 'partially_paid'])
-            ->get()
-            ->sum(fn (Donation $donation) => max((float) $donation->pledged_amount - (float) $donation->collected_amount, 0));
+        $pledgedOutstanding = MoneyMath::normalize(
+            Donation::forTenant($tenantId)
+                ->whereIn('status', ['pledged', 'partially_paid'])
+                ->selectRaw('COALESCE(SUM(CASE WHEN pledged_amount > collected_amount THEN pledged_amount - collected_amount ELSE 0 END), 0) as outstanding')
+                ->value('outstanding')
+        );
 
-        $collectionsByMethod = DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
+        $voluntaryByCategory = Donation::query()
+            ->from('donations')
+            ->leftJoin('donation_categories', 'donation_categories.id', '=', 'donations.donation_category_id')
+            ->where('donations.tenant_id', $tenantId)
+            ->where('donations.collected_amount', '>', 0)
+            ->selectRaw('donations.donation_category_id as category_id, COALESCE(donation_categories.name, ?) as category_name, COALESCE(SUM(donations.collected_amount), 0) as collected', ['Uncategorized'])
+            ->groupBy('donations.donation_category_id', 'donation_categories.name')
             ->get()
-            ->groupBy('method')
-            ->map(fn ($payments) => round((float) $payments->sum('amount'), 2));
-
-        $voluntaryByCategory = Donation::forTenant($tenantId)
-            ->with('category:id,name')
-            ->where('collected_amount', '>', 0)
-            ->get()
-            ->groupBy(fn (Donation $donation) => $donation->donation_category_id ?? 'uncategorized')
-            ->map(function ($group, $categoryId) {
-                $first = $group->first();
-
-                return [
-                    'category_id' => $categoryId === 'uncategorized' ? null : $categoryId,
-                    'category_name' => $first->category?->name ?? 'Uncategorized',
-                    'collected' => round((float) $group->sum('collected_amount'), 2),
-                ];
-            })
+            ->map(fn ($row) => [
+                'category_id' => $row->category_id,
+                'category_name' => (string) $row->category_name,
+                'collected' => MoneyMath::toApiNumber($row->collected),
+            ])
             ->values()
             ->all();
 
         return [
             'totals' => [
-                'collected' => round($totalCollected, 2),
-                'refunded' => round($totalRefunded, 2),
-                'net' => round($totalCollected - $totalRefunded, 2),
-                'pending_dues' => round($pendingDues, 2),
+                'collected' => MoneyMath::toApiNumber($totalCollected),
+                'refunded' => MoneyMath::toApiNumber($totalRefunded),
+                'net' => MoneyMath::toApiNumber(MoneyMath::subtract($totalCollected, $refundsAgainstSucceededPayments)),
+                'pending_dues' => MoneyMath::toApiNumber($pendingDues),
+                'pending_project_installments' => MoneyMath::toApiNumber($pendingProjectInstallments),
+                'future_dated_payments' => [
+                    'count' => $futureDatedPayments['count'],
+                    'amount' => MoneyMath::toApiNumber($futureDatedPayments['amount']),
+                ],
                 'active_projects' => $activeProjects,
-                'voluntary_collected' => round($voluntaryCollected, 2),
-                'voluntary_pledged_outstanding' => round((float) $pledgedOutstanding, 2),
+                'voluntary_collected' => MoneyMath::toApiNumber($voluntaryCollected),
+                'voluntary_pledged_outstanding' => MoneyMath::toApiNumber($pledgedOutstanding),
                 'voluntary_entries' => $voluntaryEntries,
                 'anonymous_donations' => $anonymousDonations,
                 'active_recurring_schedules' => $activeRecurring,
@@ -326,33 +517,50 @@ class DonationDashboardService
     /**
      * @return array<string, mixed>
      */
-    private function buildFamilyMetrics(int $tenantId): array
-    {
-        $totalFamilies = Family::query()->where('tenant_id', $tenantId)->count();
-        $activeFamilies = Family::query()->where('tenant_id', $tenantId)->where('status', 'active')->count();
+    private function buildFamilyMetrics(
+        int $tenantId,
+        ?DashboardDateRange $range = null,
+        ?DashboardBccFilter $bccFilter = null, ?DashboardProjectFilter $projectFilter = null
+    ): array {
+        $bccFilter ??= DashboardBccFilter::none();
+        $projectFilter ??= DashboardProjectFilter::none();
+        $familyCountsQuery = Family::query()->where('tenant_id', $tenantId);
+        $bccFilter->applyToFamilyQuery($familyCountsQuery, $tenantId);
+        $projectFilter->applyToFamilyQuery($familyCountsQuery, $tenantId);
+        $familyCounts = (clone $familyCountsQuery)
+            ->selectRaw('COUNT(*) as total, COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as active', ['active'])
+            ->first();
+        $totalFamilies = (int) ($familyCounts->total ?? 0);
+        $activeFamilies = (int) ($familyCounts->active ?? 0);
+        $activeFamilyIds = Family::query()
+            ->select('id')
+            ->where('tenant_id', $tenantId)
+            ->where('status', 'active');
+        $bccFilter->applyToFamilyQuery($activeFamilyIds, $tenantId);
+        $projectFilter->applyToFamilyQuery($activeFamilyIds, $tenantId);
 
-        $participatingFamilies = DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->whereNotNull('family_id')
-            ->whereDate('payment_date', '>=', now()->subDays(90)->toDateString())
-            ->pluck('family_id')
-            ->unique()
-            ->count();
+        if ($range !== null) {
+            $previous = $range->priorEqualLengthWindow();
+            $previousWindowStart = $previous['start'];
+            $previousWindowEnd = $previous['end'];
+            $participatingFamilies = $this->executiveMetrics->countDistinctParticipatingFamilies($tenantId, $range, $bccFilter, $projectFilter);
+        } else {
+            $previousWindowStart = DonationBusinessDate::subDays($tenantId, 179);
+            $previousWindowEnd = DonationBusinessDate::subDays($tenantId, 90);
+            $participatingFamilies = $this->executiveMetrics->countDistinctParticipatingFamilies($tenantId, null, $bccFilter, $projectFilter);
+        }
+        $previousParticipatingFamilies = $this->countDistinctPayingFamilies(
+            $tenantId,
+            clone $activeFamilyIds,
+            $previousWindowStart,
+            $previousWindowEnd,
+            $bccFilter,
+            $projectFilter
+        );
 
-        $previousParticipatingFamilies = DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->whereNotNull('family_id')
-            ->whereBetween('payment_date', [
-                now()->subDays(180)->toDateString(),
-                now()->subDays(91)->toDateString(),
-            ])
-            ->pluck('family_id')
-            ->unique()
-            ->count();
-
-        $participationRate = $activeFamilies > 0
-            ? round(($participatingFamilies / $activeFamilies) * 100, 1)
-            : 0.0;
+        $participationRate = $activeFamilies <= 0
+            ? 0.0
+            : min(100.0, round(($participatingFamilies / $activeFamilies) * 100, 1));
 
         return [
             'total' => $totalFamilies,
@@ -364,119 +572,353 @@ class DonationDashboardService
     }
 
     /**
+     * Distinct active families with a succeeded payment in the window.
+     * Two payments for one family count as one family.
+     */
+    private function countDistinctPayingFamilies(
+        int $tenantId,
+        Builder $activeFamilyIds,
+        string $start,
+        ?string $end = null,
+        ?DashboardBccFilter $bccFilter = null, ?DashboardProjectFilter $projectFilter = null
+    ): int {
+        $bccFilter ??= DashboardBccFilter::none();
+        $projectFilter ??= DashboardProjectFilter::none();
+        $query = DonationPayment::forTenant($tenantId)
+            ->where('status', 'succeeded')
+            ->whereNotNull('family_id')
+            ->whereIn('family_id', $activeFamilyIds);
+        $bccFilter->applyToDonationPaymentQuery($query, $tenantId);
+        $projectFilter->applyToDonationPaymentQuery($query, $tenantId);
+
+        if ($end === null) {
+            $query->whereDate('payment_date', '>=', $start)
+                ->whereDate('payment_date', '<=', DonationBusinessDate::today($tenantId));
+        } else {
+            $query->whereBetween('payment_date', [$start, $end]);
+        }
+
+        return (int) $query->selectRaw('COUNT(DISTINCT family_id) as aggregate')->value('aggregate');
+    }
+
+    /**
      * @return array<string, mixed>
      */
-    private function buildPeriodCollections(int $tenantId): array
-    {
-        $fyStart = $this->resolveFinancialYearStart($tenantId);
-        $currentMonthStart = now()->startOfMonth();
-        $previousMonthStart = now()->copy()->subMonth()->startOfMonth();
-        $previousMonthEnd = now()->copy()->subMonth()->endOfMonth();
+    private function buildPeriodCollections(
+        int $tenantId,
+        ?DashboardDateRange $range = null,
+        ?DashboardBccFilter $bccFilter = null, ?DashboardProjectFilter $projectFilter = null
+    ): array {
+        $bccFilter ??= DashboardBccFilter::none();
+        $projectFilter ??= DashboardProjectFilter::none();
+        $timezone = DonationBusinessDate::timezoneForTenant($tenantId);
+        $today = DonationBusinessDate::today($tenantId);
+        $currentMonthStart = $range?->dateFrom ?? DonationBusinessDate::monthStart($tenantId);
+        $currentMonthEnd = $range?->collectionEnd ?? $today;
+        if ($range !== null) {
+            $previousMonthStart = $range->comparisonStart;
+            $previousMonthEnd = $range->comparisonEnd;
+        } else {
+            $previousRange = $this->executiveMetrics->previousMonthCollectionRange($tenantId);
+            $previousMonthStart = $previousRange['start'];
+            $previousMonthEnd = $previousRange['end'];
+        }
+        $fyPeriod = app(ChurchFinancialPeriodResolver::class)->currentFiscalYear($tenantId, $today);
+        $fyStart = $fyPeriod->start;
+        $fyBounds = ['start' => $fyPeriod->start, 'end' => $fyPeriod->end];
 
-        $currentMonthCollected = (float) DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->whereDate('payment_date', '>=', $currentMonthStart->toDateString())
-            ->sum('amount');
-
-        $previousMonthCollected = (float) DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->whereBetween('payment_date', [$previousMonthStart->toDateString(), $previousMonthEnd->toDateString()])
-            ->sum('amount');
-
-        $annualCollected = (float) DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->whereDate('payment_date', '>=', $fyStart->toDateString())
-            ->sum('amount');
+        $currentMonthCollected = $this->sumSucceededPayments($tenantId, $currentMonthStart, $currentMonthEnd, $bccFilter, $projectFilter);
+        $previousMonthCollected = $this->sumSucceededPayments($tenantId, $previousMonthStart, $previousMonthEnd, $bccFilter, $projectFilter);
+        $fyCollectionEnd = $fyBounds['end'] > $today ? $today : $fyBounds['end'];
+        $annualCollected = $this->sumSucceededPayments($tenantId, $fyStart, $fyCollectionEnd, $bccFilter, $projectFilter);
 
         return [
-            'financial_year' => sprintf('%s-%s', $fyStart->format('Y'), $fyStart->copy()->addYear()->subDay()->format('Y')),
-            'current_month_collected' => round($currentMonthCollected, 2),
-            'previous_month_collected' => round($previousMonthCollected, 2),
-            'annual_collected' => round($annualCollected, 2),
+            'financial_year' => $fyPeriod->label,
+            'financial_year_key' => $fyPeriod->key,
+            'financial_year_start' => $fyPeriod->start,
+            'financial_year_end' => $fyPeriod->end,
+            'current_month_collected' => MoneyMath::toApiNumber($currentMonthCollected),
+            'previous_month_collected' => MoneyMath::toApiNumber($previousMonthCollected),
+            'annual_collected' => MoneyMath::toApiNumber($annualCollected),
+            'collections_by_method_this_month' => $this->buildCollectionsByMethodForRange($tenantId, $currentMonthStart, $currentMonthEnd, $bccFilter, $projectFilter),
+            'period' => [
+                'month_start' => $currentMonthStart,
+                'month_end' => $currentMonthEnd,
+                'timezone' => $timezone,
+            ],
         ];
     }
 
     /**
      * @return array<int, array<string, mixed>>
      */
-    private function buildCollectionTrend(int $tenantId): array
-    {
-        $start = now()->subMonths(11)->startOfMonth();
-        $payments = DonationPayment::forTenant($tenantId)
-            ->where('status', 'succeeded')
-            ->whereDate('payment_date', '>=', $start->toDateString())
-            ->get();
-
-        $buckets = [];
-        for ($i = 0; $i < 12; $i++) {
-            $month = $start->copy()->addMonths($i);
-            $key = $month->format('Y-m');
-            $buckets[$key] = [
-                'period' => $key,
-                'label' => $month->format('M Y'),
-                'collected' => 0.0,
-            ];
+    private function buildCollectionTrend(
+        int $tenantId,
+        float $currentMonthCollected,
+        ?DashboardDateRange $range = null,
+        ?DashboardBccFilter $bccFilter = null, ?DashboardProjectFilter $projectFilter = null
+    ): array {
+        $bccFilter ??= DashboardBccFilter::none();
+        $projectFilter ??= DashboardProjectFilter::none();
+        $buckets = $this->executiveMetrics->trendMonthBuckets($tenantId, $range);
+        if ($buckets === []) {
+            return [];
         }
+        $firstStart = $buckets[0]['start'];
+        $lastEnd = $buckets[count($buckets) - 1]['end'];
 
-        foreach ($payments as $payment) {
-            $key = $payment->payment_date?->format('Y-m');
-            if ($key && isset($buckets[$key])) {
-                $buckets[$key]['collected'] += (float) $payment->amount;
+        if ($projectFilter->isActive) {
+            $collectedByMonth = $this->executiveMetrics->sumProjectFundingAllocationsByMonth(
+                $tenantId,
+                $firstStart,
+                $lastEnd,
+                $bccFilter,
+                $projectFilter
+            );
+        } else {
+            $monthExpr = $this->executiveMetrics->sqlYearMonthExpression('payment_date');
+            $rowsQuery = DonationPayment::forTenant($tenantId)
+                ->where('status', 'succeeded')
+                ->whereBetween('payment_date', [$firstStart, $lastEnd]);
+            $bccFilter->applyToDonationPaymentQuery($rowsQuery, $tenantId);
+            $rows = $rowsQuery
+                ->selectRaw("{$monthExpr} as period, COALESCE(SUM(amount), 0) as collected")
+                ->groupByRaw($monthExpr)
+                ->get();
+
+            $collectedByMonth = [];
+            foreach ($rows as $row) {
+                $key = trim((string) $row->period);
+                if ($key === '') {
+                    continue;
+                }
+                $collectedByMonth[$key] = MoneyMath::toApiNumber($row->collected);
             }
         }
 
-        return array_values(array_map(function (array $row): array {
-            $row['collected'] = round($row['collected'], 2);
+        $result = [];
+        foreach ($buckets as $bucket) {
+            $key = $bucket['period'];
+            $result[] = [
+                'period' => $key,
+                'label' => $bucket['label'],
+                'start' => $bucket['start'],
+                'end' => $bucket['end'],
+                'is_current' => $bucket['is_current'],
+                'collected' => $this->resolveTrendBucketCollected(
+                    $bucket,
+                    $range,
+                    $currentMonthCollected,
+                    $collectedByMonth,
+                    $key
+                ),
+            ];
+        }
 
-            return $row;
-        }, $buckets));
+        return $result;
+    }
+
+    /**
+     * @param  array{period: string, label: string, start: string, end: string, is_current: bool}  $bucket
+     * @param  array<string, float>  $collectedByMonth
+     */
+    private function resolveTrendBucketCollected(
+        array $bucket,
+        ?DashboardDateRange $range,
+        float $currentMonthCollected,
+        array $collectedByMonth,
+        string $periodKey
+    ): float {
+        if ($bucket['is_current']) {
+            if ($range === null) {
+                return $currentMonthCollected;
+            }
+            if ($bucket['end'] === $range->collectionEnd) {
+                return $currentMonthCollected;
+            }
+        }
+
+        return (float) ($collectedByMonth[$periodKey] ?? 0);
+    }
+
+    private function sumSucceededPayments(
+        int $tenantId,
+        string $startDate,
+        string $endDate,
+        ?DashboardBccFilter $bccFilter = null, ?DashboardProjectFilter $projectFilter = null
+    ): string {
+        $bccFilter ??= DashboardBccFilter::none();
+        $projectFilter ??= DashboardProjectFilter::none();
+        $businessDate = DonationBusinessDate::today($tenantId);
+        $effectiveEnd = $endDate > $businessDate ? $businessDate : $endDate;
+
+        $query = $this->scopeSucceededPaymentsThroughBusinessDate(
+            DonationPayment::forTenant($tenantId),
+            $businessDate
+        )
+            ->whereDate('payment_date', '>=', $startDate)
+            ->whereDate('payment_date', '<=', $effectiveEnd);
+        if ($projectFilter->isActive) {
+            return MoneyMath::normalize(
+                $this->executiveMetrics->sumSucceededPayments($tenantId, $startDate, $effectiveEnd, $bccFilter, $projectFilter)
+            );
+        }
+        $bccFilter->applyToDonationPaymentQuery($query, $tenantId);
+
+        return MoneyMath::normalize($query->sum('amount'));
+    }
+
+    /**
+     * @return array{count: int, amount: string}
+     */
+    private function futureDatedSucceededPaymentStats(int $tenantId, string $businessDate): array
+    {
+        $row = DonationPayment::forTenant($tenantId)
+            ->where('status', 'succeeded')
+            ->whereDate('payment_date', '>', $businessDate)
+            ->selectRaw('COUNT(*) as payment_count, COALESCE(SUM(amount), 0) as amount_total')
+            ->first();
+
+        return [
+            'count' => (int) ($row->payment_count ?? 0),
+            'amount' => MoneyMath::normalize($row->amount_total ?? 0),
+        ];
+    }
+
+    private function sumProjectInstallmentOutstanding(int $tenantId): string
+    {
+        return MoneyMath::normalize(
+            ProjectInstallmentDue::forTenant($tenantId)
+                ->whereIn('status', ['pending', 'partially_paid'])
+                ->selectRaw(ContributionBalance::flooredOutstandingSumSqlExpression().' as outstanding')
+                ->value('outstanding')
+        );
+    }
+
+    private function scopeSucceededPaymentsThroughBusinessDate(Builder $query, string $businessDate): Builder
+    {
+        return $query
+            ->where('status', 'succeeded')
+            ->whereDate('payment_date', '<=', $businessDate);
     }
 
     /**
      * @return array{families: array<int, array<string, mixed>>, count: int, total_overdue_amount: float}
      */
-    private function buildAttentionList(int $tenantId): array
-    {
-        $today = now()->toDateString();
-        $dues = ContributionDue::forTenant($tenantId)
-            ->whereIn('status', ['pending', 'partially_paid'])
-            ->whereDate('due_date', '<', $today)
-            ->with(['family:id,family_name,family_code', 'plan:id,name'])
-            ->get();
+    private function buildAttentionList(
+        int $tenantId,
+        ?DashboardDateRange $range = null,
+        ?DashboardBccFilter $bccFilter = null, ?DashboardProjectFilter $projectFilter = null
+    ): array {
+        $bccFilter ??= DashboardBccFilter::none();
+        $projectFilter ??= DashboardProjectFilter::none();
+        $businessDate = $range?->asOf ?? DonationBusinessDate::today($tenantId);
+        $timezone = DonationBusinessDate::timezoneForTenant($tenantId);
+        $outstandingExpr = $this->outstandingSumExpression();
 
-        $grouped = $dues->groupBy('family_id')->map(function ($familyDues, $familyId) {
-            $firstDue = $familyDues->sortBy('due_date')->first();
-            $overdueAmount = round((float) $familyDues->sum(fn (ContributionDue $due) => ContributionBalance::outstandingForDue($due)), 2);
-            $daysOverdue = $firstDue?->due_date
-                ? (int) $firstDue->due_date->diffInDays(now()->startOfDay())
+        $overdueTotals = $this->executiveMetrics->overdueAttentionTotals($tenantId, $businessDate, $bccFilter, $projectFilter);
+        $familyCount = $overdueTotals['count'];
+        $totalOverdueAmount = $overdueTotals['total_overdue_amount'];
+
+        if ($projectFilter->isActive) {
+            $overdueQuery = ProjectInstallmentDue::forTenant($tenantId);
+            $projectFilter->applyToProjectInstallmentDueQuery($overdueQuery, $tenantId);
+            $this->executiveMetrics->applyDashboardFamilyScope($overdueQuery, $tenantId, $bccFilter, $projectFilter);
+            ContributionBalance::scopeOverdue($overdueQuery, $businessDate);
+        } else {
+            $overdueQuery = ContributionDue::forTenant($tenantId);
+            $bccFilter->applyToContributionDueQuery($overdueQuery, $tenantId);
+            ContributionBalance::scopeOverdue($overdueQuery, $businessDate);
+        }
+
+        $topAggregates = (clone $overdueQuery)
+            ->selectRaw("family_id, {$outstandingExpr} as overdue_amount, COUNT(*) as overdue_count, MIN(due_date) as oldest_due_date")
+            ->groupBy('family_id')
+            ->orderByDesc('overdue_amount')
+            ->limit(10)
+            ->get();
+        $topFamilyIds = $topAggregates->pluck('family_id')->filter()->values()->all();
+
+        $oldestDueByFamily = [];
+        if ($topFamilyIds !== []) {
+            if ($projectFilter->isActive) {
+                $detailQuery = ProjectInstallmentDue::forTenant($tenantId)
+                    ->whereIn('family_id', $topFamilyIds);
+                $projectFilter->applyToProjectInstallmentDueQuery($detailQuery, $tenantId);
+                $this->executiveMetrics->applyDashboardFamilyScope($detailQuery, $tenantId, $bccFilter, $projectFilter);
+                ContributionBalance::scopeOverdue($detailQuery, $businessDate);
+                $detailQuery
+                    ->with(['family:id,family_name,family_code', 'project:id,name'])
+                    ->orderBy('due_date')
+                    ->get()
+                    ->groupBy('family_id')
+                    ->each(function ($dues, $familyId) use (&$oldestDueByFamily): void {
+                        $oldestDueByFamily[$familyId] = $dues->first();
+                    });
+            } else {
+                $detailQuery = ContributionDue::forTenant($tenantId)
+                    ->whereIn('family_id', $topFamilyIds);
+                $bccFilter->applyToContributionDueQuery($detailQuery, $tenantId);
+                ContributionBalance::scopeOverdue($detailQuery, $businessDate);
+                $detailQuery
+                    ->with(['family:id,family_name,family_code', 'plan:id,name'])
+                    ->orderBy('due_date')
+                    ->get()
+                    ->groupBy('family_id')
+                    ->each(function ($dues, $familyId) use (&$oldestDueByFamily): void {
+                        $oldestDueByFamily[$familyId] = $dues->first();
+                    });
+            }
+        }
+
+        $businessDay = Carbon::parse($businessDate, $timezone)->startOfDay();
+
+        $families = $topAggregates->map(function ($aggregate) use ($oldestDueByFamily, $businessDay) {
+            $familyId = $aggregate->family_id;
+            $firstDue = $oldestDueByFamily[$familyId] ?? null;
+            $oldestDueDate = $aggregate->oldest_due_date;
+            $daysOverdue = $oldestDueDate
+                ? (int) Carbon::parse($oldestDueDate)->diffInDays($businessDay)
                 : 0;
 
             return [
                 'family_id' => $familyId,
                 'family_name' => $firstDue?->family?->family_name,
                 'family_code' => $firstDue?->family?->family_code,
-                'overdue_amount' => $overdueAmount,
-                'overdue_count' => $familyDues->count(),
+                'overdue_amount' => MoneyMath::toApiNumber($aggregate->overdue_amount),
+                'overdue_count' => (int) $aggregate->overdue_count,
                 'days_overdue' => $daysOverdue,
-                'oldest_due_label' => $firstDue?->plan?->name ?? $firstDue?->period_label,
+                'oldest_due_label' => $firstDue?->plan?->name
+                    ?? $firstDue?->installment_label
+                    ?? $firstDue?->project?->name
+                    ?? $firstDue?->period_label,
             ];
-        })->sortByDesc('overdue_amount')->values();
-
-        $top = $grouped->take(10)->values()->all();
+        })->values()->all();
 
         return [
-            'families' => $top,
-            'count' => $grouped->count(),
-            'total_overdue_amount' => round((float) $grouped->sum('overdue_amount'), 2),
+            'families' => $families,
+            'count' => $familyCount,
+            'total_overdue_amount' => $totalOverdueAmount,
         ];
     }
 
     /**
      * @return array<int, array<string, mixed>>
      */
-    private function buildRecentActivity(int $tenantId): array
+    private function buildRecentActivity(int $tenantId, ?DashboardBccFilter $bccFilter = null, ?DashboardProjectFilter $projectFilter = null): array
     {
-        return DonationPayment::forTenant($tenantId)
+        $bccFilter ??= DashboardBccFilter::none();
+        $projectFilter ??= DashboardProjectFilter::none();
+        $businessDate = DonationBusinessDate::today($tenantId);
+
+        $query = $this->scopeSucceededPaymentsThroughBusinessDate(
+            DonationPayment::forTenant($tenantId),
+            $businessDate
+        );
+        $bccFilter->applyToDonationPaymentQuery($query, $tenantId);
+        $projectFilter->applyToDonationPaymentQuery($query, $tenantId);
+
+        return $query
             ->with(['family:id,family_name,family_code', 'receipt'])
             ->orderByDesc('payment_date')
             ->limit(10)
@@ -501,29 +943,9 @@ class DonationDashboardService
     /**
      * @return array<int, array<string, mixed>>
      */
-    private function buildProjectSummaries(int $tenantId): array
+    private function buildProjectSummaries(int $tenantId, ?DashboardProjectFilter $projectFilter = null): array
     {
-        return DonationProject::forTenant($tenantId)
-            ->where('status', 'active')
-            ->orderByDesc('updated_at')
-            ->limit(5)
-            ->get()
-            ->map(function (DonationProject $project): array {
-                $target = max((float) $project->target_amount, 1);
-                $raised = (float) $project->raised_amount;
-
-                return [
-                    'project_id' => $project->id,
-                    'name' => $project->name,
-                    'code' => $project->code,
-                    'target_amount' => round($target, 2),
-                    'collected' => round($raised, 2),
-                    'remaining' => round(max(0, $target - $raised), 2),
-                    'funding_percentage' => round(min(100, ($raised / $target) * 100), 1),
-                ];
-            })
-            ->values()
-            ->all();
+        return $this->executiveMetrics->executiveProjectSummaries($tenantId, $projectFilter);
     }
 
     /**
@@ -566,18 +988,48 @@ class DonationDashboardService
         ];
     }
 
-    private function resolveFinancialYearStart(int $tenantId): \Carbon\Carbon
-    {
-        $settings = DonationSetting::forTenant($tenantId)->first();
-        $month = (int) ($settings?->financial_year_start_month ?? 1);
-        $day = (int) ($settings?->financial_year_start_day ?? 1);
-        $now = now();
-        $fyStart = $now->copy()->setMonth($month)->setDay($day)->startOfDay();
+    /**
+     * @return array<string, float>
+     */
+    private function buildCollectionsByMethodForRange(
+        int $tenantId,
+        string $startDate,
+        string $endDate,
+        ?DashboardBccFilter $bccFilter = null, ?DashboardProjectFilter $projectFilter = null
+    ): array {
+        $bccFilter ??= DashboardBccFilter::none();
+        $projectFilter ??= DashboardProjectFilter::none();
+        $businessDate = DonationBusinessDate::today($tenantId);
+        $effectiveEnd = $endDate > $businessDate ? $businessDate : $endDate;
 
-        if ($now->lt($fyStart)) {
-            $fyStart->subYear();
+        if ($projectFilter->isActive) {
+            return $this->executiveMetrics->sumProjectFundingAllocationsByMethod(
+                $tenantId,
+                $startDate,
+                $effectiveEnd,
+                $bccFilter,
+                $projectFilter
+            );
         }
 
-        return $fyStart;
+        $query = $this->scopeSucceededPaymentsThroughBusinessDate(
+            DonationPayment::forTenant($tenantId),
+            $businessDate
+        )
+            ->whereDate('payment_date', '>=', $startDate)
+            ->whereDate('payment_date', '<=', $effectiveEnd);
+        $bccFilter->applyToDonationPaymentQuery($query, $tenantId);
+
+        return $query
+            ->selectRaw('method, COALESCE(SUM(amount), 0) as total')
+            ->groupBy('method')
+            ->pluck('total', 'method')
+            ->map(fn ($sum) => MoneyMath::toApiNumber($sum))
+            ->all();
+    }
+
+    private function outstandingSumExpression(): string
+    {
+        return ContributionBalance::flooredOutstandingSumSqlExpression();
     }
 }

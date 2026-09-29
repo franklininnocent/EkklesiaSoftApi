@@ -2,8 +2,14 @@
 
 namespace Modules\Donations\Providers;
 
-use Nwidart\Modules\Support\ModuleServiceProvider;
 use Illuminate\Console\Scheduling\Schedule;
+use Modules\Donations\Console\Commands\BackfillDonationDueStatusChangedCommand;
+use Modules\Donations\Console\Commands\ExpireDonationReportExportsCommand;
+use Modules\Donations\Console\Commands\GenerateScheduledContributionDuesCommand;
+use Modules\Donations\Console\Commands\SeedStewardshipDemoCommand;
+use Modules\Donations\DefaultSeeds\DonationCategoriesDefaultSeedDefinition;
+use Modules\Tenants\DefaultSeeds\DefaultSeedRegistry;
+use Nwidart\Modules\Support\ModuleServiceProvider;
 
 class DonationsServiceProvider extends ModuleServiceProvider
 {
@@ -23,7 +29,10 @@ class DonationsServiceProvider extends ModuleServiceProvider
      * @var string[]
      */
     protected array $commands = [
-        \Modules\Donations\Console\Commands\GenerateScheduledContributionDuesCommand::class,
+        GenerateScheduledContributionDuesCommand::class,
+        SeedStewardshipDemoCommand::class,
+        ExpireDonationReportExportsCommand::class,
+        BackfillDonationDueStatusChangedCommand::class,
     ];
 
     /**
@@ -38,11 +47,19 @@ class DonationsServiceProvider extends ModuleServiceProvider
 
     /**
      * Define module schedules.
-     * 
-     * @param $schedule
      */
     protected function configureSchedules(Schedule $schedule): void
     {
-        $schedule->command('donations:generate-scheduled-dues')->dailyAt('01:00');
+        $schedule->command('donations:generate-scheduled-dues')->dailyAt('01:00')->withoutOverlapping();
+        $schedule->command('donations:expire-report-exports')->dailyAt('02:30')->withoutOverlapping();
+    }
+
+    public function boot(): void
+    {
+        parent::boot();
+
+        $this->app->afterResolving(DefaultSeedRegistry::class, function (DefaultSeedRegistry $registry): void {
+            $registry->register($this->app->make(DonationCategoriesDefaultSeedDefinition::class));
+        });
     }
 }

@@ -9,8 +9,10 @@ use Modules\Donations\Models\ContributionPlanRevisionHistory;
 
 class ContributionPlanService
 {
-    public function __construct(private readonly DonationAuditService $auditService)
-    {
+    public function __construct(
+        private readonly DonationAuditService $auditService,
+        private readonly ContributionDueService $dueService
+    ) {
     }
 
     public function create(int $tenantId, int $userId, array $payload): ContributionPlan
@@ -42,6 +44,14 @@ class ContributionPlanService
             unset($payload['assignments']);
 
             $oldDefaultAmount = (float) $plan->default_amount;
+            $scheduleSnapshot = $plan->only([
+                'frequency',
+                'start_date',
+                'end_date',
+                'grace_days',
+                'default_amount',
+                'custom_interval_days',
+            ]);
 
             $plan->fill($payload);
             $plan->updated_by = $userId;
@@ -63,6 +73,32 @@ class ContributionPlanService
 
             if ($assignments !== null) {
                 $this->syncAssignments($tenantId, $userId, $plan, $assignments);
+            }
+
+            $scheduleFields = ['frequency', 'start_date', 'end_date', 'grace_days', 'default_amount', 'custom_interval_days'];
+            $needsReconcile = false;
+            foreach ($scheduleFields as $field) {
+                if (!array_key_exists($field, $payload)) {
+                    continue;
+                }
+
+                $old = $scheduleSnapshot[$field];
+                $new = $plan->{$field};
+                if ($old instanceof \DateTimeInterface) {
+                    $old = $old->format('Y-m-d');
+                }
+                if ($new instanceof \DateTimeInterface) {
+                    $new = $new->format('Y-m-d');
+                }
+
+                if ((string) $old !== (string) $new) {
+                    $needsReconcile = true;
+                    break;
+                }
+            }
+
+            if ($needsReconcile) {
+                $this->dueService->reconcileScheduleOnPlanUpdate($tenantId, $userId, $plan->fresh());
             }
 
             $this->auditService->log(

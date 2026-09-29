@@ -4,6 +4,7 @@ namespace Modules\RolesAndPermissions\Policies;
 
 use Modules\Authentication\Models\Role;
 use Modules\Authentication\Models\User;
+use Modules\Tenants\Support\EffectiveTenant;
 
 class RolePolicy
 {
@@ -18,11 +19,12 @@ class RolePolicy
             return true;
         }
 
-        if (!$user->tenant_id) {
+        $effective = EffectiveTenant::id($user);
+        if ($effective === null) {
             return false;
         }
 
-        return $role->tenant_id === $user->tenant_id || $role->isGlobal();
+        return $role->tenant_id === $effective || $role->isGlobal();
     }
 
     public function create(User $user): bool
@@ -36,11 +38,12 @@ class RolePolicy
             return true;
         }
 
-        if (!$user->tenant_id) {
+        $effective = EffectiveTenant::id($user);
+        if ($effective === null) {
             return false;
         }
 
-        return $role->tenant_id === $user->tenant_id && $user->hasPermission('roles.update');
+        return $role->tenant_id === $effective && $user->hasPermission('roles.update');
     }
 
     public function delete(User $user, Role $role): bool
@@ -49,10 +52,11 @@ class RolePolicy
             return true;
         }
 
-        if (!$user->tenant_id) {
+        $effective = EffectiveTenant::id($user);
+        if ($effective === null) {
             return false;
         }
 
-        return $role->tenant_id === $user->tenant_id && $user->hasPermission('roles.delete');
+        return $role->tenant_id === $effective && $user->hasPermission('roles.delete');
     }
 }
