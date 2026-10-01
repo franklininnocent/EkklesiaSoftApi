@@ -17,8 +17,8 @@ class MassIntentionAuditService
         ?string $requestId = null,
         ?string $celebrationId = null,
         array $payload = []
-    ): void {
-        MassIntentionAudit::query()->create([
+    ): string {
+        $audit = MassIntentionAudit::query()->create([
             'tenant_id' => $tenantId,
             'event_type' => $eventType,
             'request_id' => $requestId,
@@ -27,5 +27,7 @@ class MassIntentionAuditService
             'payload' => $payload === [] ? null : $payload,
             'created_at' => now(),
         ]);
+
+        return (string) $audit->id;
     }
 }

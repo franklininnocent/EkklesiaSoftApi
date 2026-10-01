@@ -177,6 +177,17 @@ class TenantMinistriesLifecycleApiTest extends TestCase
 
         $termId = $assign->json('data.id');
 
+        $this->patchJson("/api/tenant/ministries/organizations/{$orgId}/leadership/{$termId}", [
+            'membership_id' => $membershipId,
+            'position_id' => $position->id,
+            'appointment_date' => '2026-01-15',
+            'effective_from' => '2026-01-15',
+            'term_label' => '2026 term',
+            'is_interim' => true,
+        ])->assertOk()
+            ->assertJsonPath('data.term_label', '2026 term')
+            ->assertJsonPath('data.is_interim', true);
+
         $this->postJson("/api/tenant/ministries/organizations/{$orgId}/leadership/assign", [
             'membership_id' => $membershipId,
             'position_id' => $position->id,

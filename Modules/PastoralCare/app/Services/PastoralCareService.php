@@ -342,6 +342,6 @@ class PastoralCareService
             return 'Tomorrow';
         }
 
-        return $due->toFormattedDateString();
+        return \App\Support\UserFacingDate::formatDate($due);
     }
 }

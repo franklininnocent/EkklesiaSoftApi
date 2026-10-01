@@ -30,6 +30,7 @@ Route::middleware('auth:api')->group(function () {
     Route::prefix('tenant')->name('subscriptions.tenant.')->group(function () {
         Route::get('/entitlements', [TenantEntitlementController::class, 'entitlements'])->name('entitlements');
         Route::get('/subscription/overview', [TenantEntitlementController::class, 'subscription'])->name('overview');
+        Route::get('/subscription/comparison', [TenantEntitlementController::class, 'comparison'])->name('comparison');
         Route::get('/subscription/usage', [TenantEntitlementController::class, 'usage'])->name('usage');
         Route::get('/subscription/upgrade-requests', [TenantUpgradeRequestController::class, 'index'])->name('upgrade-requests.index');
         Route::post('/subscription/upgrade-requests', [TenantUpgradeRequestController::class, 'store'])

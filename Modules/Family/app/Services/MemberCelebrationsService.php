@@ -2,9 +2,11 @@
 
 namespace Modules\Family\app\Services;
 
+use App\Support\UserFacingDate;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Modules\Family\app\Support\ParishCalendar;
+use Modules\Family\Support\FamilyQueryFilters;
 use Modules\Family\Models\FamilyMember;
 
 class MemberCelebrationsService
@@ -15,25 +17,109 @@ class MemberCelebrationsService
     public function weekCelebrations(int $tenantId): array
     {
         $bounds = ParishCalendar::currentWeekBounds($tenantId);
-        $weekStart = $bounds['start'];
-        $weekEnd = $bounds['end'];
-        $weekDays = ParishCalendar::weekDayOccurrences($weekStart, $weekEnd);
+        $windowDays = ParishCalendar::weekDayOccurrences($bounds['start'], $bounds['end']);
 
-        $birthdayMembers = $this->membersMatchingMonthDays($tenantId, 'date_of_birth', $weekDays, $weekEnd);
-        $anniversaryMembers = $this->membersMatchingMonthDays($tenantId, 'marriage_date', $weekDays, $weekEnd);
-
-        $birthdays = $this->mapBirthdays($birthdayMembers, $weekDays);
-        $anniversaries = $this->mapAnniversaries($anniversaryMembers, $weekDays);
+        $birthdayMembers = $this->membersMatchingMonthDays($tenantId, 'date_of_birth', $windowDays, $bounds['end']);
+        $anniversaryMembers = $this->membersMatchingMonthDays($tenantId, 'marriage_date', $windowDays, $bounds['end']);
 
         return [
             'week' => [
-                'start' => $weekStart->toDateString(),
-                'end' => $weekEnd->toDateString(),
-                'label' => ParishCalendar::weekRangeLabel($weekStart, $weekEnd),
+                'start' => $bounds['start']->toDateString(),
+                'end' => $bounds['end']->toDateString(),
+                'label' => ParishCalendar::weekRangeLabel($bounds['start'], $bounds['end']),
                 'timezone' => $bounds['timezone'],
             ],
-            'birthdays' => $birthdays,
-            'anniversaries' => $anniversaries,
+            'birthdays' => $this->mapBirthdays($birthdayMembers, $windowDays),
+            'anniversaries' => $this->mapAnniversaries($anniversaryMembers, $windowDays),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     * @return array<string, mixed>
+     */
+    public function paginatedCelebrations(int $tenantId, string $type, array $filters, int $page, int $perPage): array
+    {
+        $from = isset($filters['from']) && is_string($filters['from']) ? $filters['from'] : null;
+        $to = isset($filters['to']) && is_string($filters['to']) ? $filters['to'] : null;
+        $bounds = ParishCalendar::resolveCelebrationWindowBounds($tenantId, $from, $to);
+        $windowDays = ParishCalendar::weekDayOccurrences($bounds['start'], $bounds['end']);
+        $bccId = isset($filters['bcc_id']) && $filters['bcc_id'] !== '' ? (string) $filters['bcc_id'] : null;
+
+        $dateColumn = $type === 'anniversaries' ? 'marriage_date' : 'date_of_birth';
+        $members = $this->membersMatchingMonthDays($tenantId, $dateColumn, $windowDays, $bounds['end'], $bccId);
+
+        $items = $type === 'anniversaries'
+            ? $this->mapAnniversaries($members, $windowDays)
+            : $this->mapBirthdays($members, $windowDays);
+
+        $search = trim((string) ($filters['search'] ?? ''));
+        if ($search !== '') {
+            $needle = mb_strtolower($search);
+            $items = array_values(array_filter(
+                $items,
+                fn (array $item): bool => str_contains(mb_strtolower((string) $item['name']), $needle)
+                    || str_contains(mb_strtolower((string) ($item['family_name'] ?? '')), $needle)
+            ));
+        }
+
+        $eventDateFrom = $filters['event_date_from'] ?? null;
+        $eventDateTo = $filters['event_date_to'] ?? null;
+        $windowStart = $bounds['start']->toDateString();
+        $windowEnd = $bounds['end']->toDateString();
+        $eventRangeDiffersFromWindow = ! is_string($eventDateFrom) || $eventDateFrom === ''
+            || ! is_string($eventDateTo) || $eventDateTo === ''
+            || $eventDateFrom !== $windowStart
+            || $eventDateTo !== $windowEnd;
+
+        if ($eventRangeDiffersFromWindow && is_string($eventDateFrom) && $eventDateFrom !== '' && is_string($eventDateTo) && $eventDateTo !== '') {
+            $items = array_values(array_filter(
+                $items,
+                fn (array $item): bool => ($item['event_date'] ?? '') >= $eventDateFrom
+                    && ($item['event_date'] ?? '') <= $eventDateTo
+            ));
+        } else {
+            $eventDate = $filters['event_date'] ?? null;
+            if (is_string($eventDate) && $eventDate !== '') {
+                $items = array_values(array_filter(
+                    $items,
+                    fn (array $item): bool => ($item['event_date'] ?? '') === $eventDate
+                ));
+            }
+        }
+
+        if ($bccId !== null && $bccId !== '') {
+            $items = array_values(array_filter(
+                $items,
+                fn (array $item): bool => (string) ($item['bcc_id'] ?? '') === $bccId
+            ));
+        }
+
+        $sortBy = (string) ($filters['sort_by'] ?? 'event_date');
+        $sortOrder = strtolower((string) ($filters['sort_order'] ?? 'asc')) === 'desc' ? 'desc' : 'asc';
+        $items = $this->sortCelebrationItems($items, $sortBy, $sortOrder);
+
+        $total = count($items);
+        $page = max(1, $page);
+        $perPage = max(1, min(100, $perPage));
+        $offset = ($page - 1) * $perPage;
+        $slice = array_slice($items, $offset, $perPage);
+
+        return [
+            'window' => [
+                'start' => $bounds['start']->toDateString(),
+                'end' => $bounds['end']->toDateString(),
+                'label' => ParishCalendar::weekRangeLabel($bounds['start'], $bounds['end']),
+                'timezone' => $bounds['timezone'],
+            ],
+            'type' => $type,
+            'data' => $slice,
+            'total' => $total,
+            'current_page' => $page,
+            'last_page' => max(1, (int) ceil($total / $perPage)),
+            'per_page' => $perPage,
+            'from' => $total === 0 ? null : $offset + 1,
+            'to' => $total === 0 ? null : min($offset + $perPage, $total),
         ];
     }
 
@@ -45,14 +131,24 @@ class MemberCelebrationsService
         int $tenantId,
         string $dateColumn,
         array $weekDays,
-        Carbon $weekEnd
+        Carbon $weekEnd,
+        ?string $bccId = null
     ) {
         return FamilyMember::query()
             ->forTenant($tenantId)
             ->active()
             ->whereNotNull($dateColumn)
-            ->whereHas('family', function (Builder $query) use ($tenantId): void {
-                $query->where('tenant_id', $tenantId)->where('status', 'active');
+            ->with(['family:id,tenant_id,family_name,family_code,bcc_id,status', 'family.bcc:id,name'])
+            ->whereIn('family_id', function ($query) use ($tenantId, $bccId): void {
+                $query->select('id')
+                    ->from('families')
+                    ->where('tenant_id', $tenantId)
+                    ->whereNull('deleted_at')
+                    ->where('status', 'active');
+
+                if ($bccId !== null && $bccId !== '') {
+                    FamilyQueryFilters::applyBcc($query, $bccId);
+                }
             })
             ->where(function (Builder $query) use ($dateColumn, $weekDays, $weekEnd): void {
                 foreach ($weekDays as $day) {
@@ -75,7 +171,7 @@ class MemberCelebrationsService
             })
             ->orderBy('last_name')
             ->orderBy('first_name')
-            ->get(['id', 'family_id', 'first_name', 'middle_name', 'last_name', 'date_of_birth', 'marriage_date', 'marriage_spouse_name', 'relationship_to_head', 'status']);
+            ->get(['id', 'family_id', 'first_name', 'middle_name', 'last_name', 'gender', 'date_of_birth', 'marriage_date', 'marriage_spouse_name', 'relationship_to_head', 'status']);
     }
 
     /**
@@ -99,15 +195,18 @@ class MemberCelebrationsService
 
             $turningAge = $this->upcomingAge($member->date_of_birth, $eventDate);
 
-            $items[] = [
-                'id' => $member->id,
-                'family_id' => $member->family_id,
-                'name' => $member->full_name_display,
-                'day_label' => $eventDate->format('D'),
-                'date_label' => $eventDate->format('M j'),
-                'detail' => $turningAge !== null ? "Turning {$turningAge}" : 'Birthday',
-                'event_date' => $eventDate->toDateString(),
-            ];
+            $items[] = array_merge(
+                $this->familyContext($member),
+                [
+                    'id' => $member->id,
+                    'family_id' => $member->family_id,
+                    'name' => $member->full_name_display,
+                    'day_label' => $eventDate->format('D'),
+                    'date_label' => UserFacingDate::formatDayMonth($eventDate),
+                    'detail' => $turningAge !== null ? "Turning {$turningAge}" : 'Birthday',
+                    'event_date' => $eventDate->toDateString(),
+                ]
+            );
         }
 
         return $this->sortCelebrations($items);
@@ -120,6 +219,16 @@ class MemberCelebrationsService
      */
     private function mapAnniversaries($members, array $weekDays): array
     {
+        $partnersByKey = [];
+        foreach ($members as $member) {
+            if (! $member->marriage_date) {
+                continue;
+            }
+            $key = $member->family_id.'|'.$member->marriage_date->toDateString();
+            $partnersByKey[$key] ??= [];
+            $partnersByKey[$key][] = $member;
+        }
+
         $grouped = [];
 
         foreach ($members as $member) {
@@ -148,20 +257,22 @@ class MemberCelebrationsService
             }
 
             $years = max(0, $eventDate->year - $member->marriage_date->year);
-            $spouse = trim((string) $member->marriage_spouse_name);
-            $name = $spouse !== ''
-                ? "{$member->full_name_display} & {$spouse}"
-                : $member->full_name_display;
+            $key = $member->family_id.'|'.$member->marriage_date->toDateString();
+            $coupleMembers = $partnersByKey[$key] ?? [$member];
+            $name = $this->formatAnniversaryCoupleName($coupleMembers);
 
-            $items[] = [
-                'id' => "{$member->id}-anniversary",
-                'family_id' => $member->family_id,
-                'name' => $name,
-                'day_label' => $eventDate->format('D'),
-                'date_label' => $eventDate->format('M j'),
-                'detail' => $years > 0 ? "{$years} years together" : 'Wedding anniversary',
-                'event_date' => $eventDate->toDateString(),
-            ];
+            $items[] = array_merge(
+                $this->familyContext($member),
+                [
+                    'id' => "{$member->id}-anniversary",
+                    'family_id' => $member->family_id,
+                    'name' => $name,
+                    'day_label' => $eventDate->format('D'),
+                    'date_label' => UserFacingDate::formatDayMonth($eventDate),
+                    'detail' => $years > 0 ? "{$years} years together" : 'Wedding anniversary',
+                    'event_date' => $eventDate->toDateString(),
+                ]
+            );
         }
 
         return $this->sortCelebrations($items);
@@ -218,24 +329,101 @@ class MemberCelebrationsService
     }
 
     /**
+     * @param  list<FamilyMember>  $members  Same family and marriage date (one or both spouses).
+     */
+    private function formatAnniversaryCoupleName(array $members): string
+    {
+        $unique = [];
+        foreach ($members as $member) {
+            $unique[(string) $member->id] = $member;
+        }
+        $members = array_values($unique);
+
+        $maleName = null;
+        $femaleName = null;
+        foreach ($members as $member) {
+            if ($member->gender === 'male' && $maleName === null) {
+                $maleName = $member->full_name_display;
+            } elseif ($member->gender === 'female' && $femaleName === null) {
+                $femaleName = $member->full_name_display;
+            }
+        }
+
+        if ($maleName !== null && $femaleName !== null) {
+            return "{$maleName} & {$femaleName}";
+        }
+
+        $member = $members[0];
+        $spouseName = trim((string) $member->marriage_spouse_name);
+        if ($spouseName === '') {
+            return $member->full_name_display;
+        }
+
+        if ($member->gender === 'female') {
+            return "{$spouseName} & {$member->full_name_display}";
+        }
+
+        if ($member->gender === 'male') {
+            return "{$member->full_name_display} & {$spouseName}";
+        }
+
+        return "{$member->full_name_display} & {$spouseName}";
+    }
+
+    /**
      * @param  list<array<string, mixed>>  $items
      * @return list<array<string, mixed>>
      */
     private function sortCelebrations(array $items): array
     {
-        $weekdayOrder = ['Mon' => 0, 'Tue' => 1, 'Wed' => 2, 'Thu' => 3, 'Fri' => 4, 'Sat' => 5, 'Sun' => 6];
+        return $this->sortCelebrationItems($items, 'event_date', 'asc');
+    }
 
-        usort($items, function (array $left, array $right) use ($weekdayOrder): int {
-            $leftDay = $weekdayOrder[$left['day_label']] ?? 99;
-            $rightDay = $weekdayOrder[$right['day_label']] ?? 99;
+    /**
+     * @param  list<array<string, mixed>>  $items
+     * @return list<array<string, mixed>>
+     */
+    private function sortCelebrationItems(array $items, string $sortBy, string $sortOrder): array
+    {
+        $direction = $sortOrder === 'desc' ? -1 : 1;
 
-            if ($leftDay !== $rightDay) {
-                return $leftDay <=> $rightDay;
+        usort($items, function (array $left, array $right) use ($sortBy, $direction): int {
+            $leftValue = match ($sortBy) {
+                'name' => (string) ($left['name'] ?? ''),
+                'family_name' => (string) ($left['family_name'] ?? ''),
+                'bcc_name' => (string) ($left['bcc_name'] ?? ''),
+                default => (string) ($left['event_date'] ?? ''),
+            };
+            $rightValue = match ($sortBy) {
+                'name' => (string) ($right['name'] ?? ''),
+                'family_name' => (string) ($right['family_name'] ?? ''),
+                'bcc_name' => (string) ($right['bcc_name'] ?? ''),
+                default => (string) ($right['event_date'] ?? ''),
+            };
+
+            $cmp = strcmp($leftValue, $rightValue);
+            if ($cmp === 0) {
+                $cmp = strcmp((string) ($left['name'] ?? ''), (string) ($right['name'] ?? ''));
             }
 
-            return strcmp((string) $left['name'], (string) $right['name']);
+            return $cmp * $direction;
         });
 
         return $items;
+    }
+
+    /**
+     * @return array<string, string|null>
+     */
+    private function familyContext(FamilyMember $member): array
+    {
+        $family = $member->family;
+
+        return [
+            'family_name' => $family?->family_name,
+            'family_code' => $family?->family_code,
+            'bcc_id' => $family?->bcc_id,
+            'bcc_name' => $family?->bcc?->name,
+        ];
     }
 }

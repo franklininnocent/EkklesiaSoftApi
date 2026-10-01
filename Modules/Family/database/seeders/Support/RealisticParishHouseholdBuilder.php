@@ -381,25 +381,18 @@ class RealisticParishHouseholdBuilder
         return $this->faker->randomElement([
             'School teacher', 'Nurse', 'Accountant', 'Software engineer', 'Shop owner',
             'Auto driver', 'Bank clerk', 'Electrician', 'Government servant', 'Homemaker',
-            'Pharmacist', 'Civil engineer', 'Parish secretary', 'Fisherman', 'Tailor',
+            'Pharmacist', 'Civil engineer', 'Fisherman', 'Tailor',
         ]);
     }
 
     private function educationForAge(int $age): ?string
     {
-        if ($age < 5) {
+        if ($age < 17) {
             return null;
-        }
-        if ($age < 18) {
-            return $this->faker->randomElement([
-                'St. Mary\'s LP School', 'Sacred Heart High School', 'Don Bosco HS',
-            ]);
         }
 
         return $this->faker->randomElement([
-            'Plus Two — Science', 'B.Com, Mahatma Gandhi University',
-            'B.Tech — Computer Science', 'Diploma in Nursing', 'B.Ed',
-            'M.Com', 'ITI — Electrician', 'BA English Literature',
+            'Plus Two', 'B.Com', 'B.Tech', 'Diploma', 'B.Ed', 'M.Com', 'ITI', 'BA',
         ]);
     }
 }

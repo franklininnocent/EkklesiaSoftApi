@@ -16,6 +16,7 @@ use Modules\Tenants\Http\Controllers\PlatformHealthController;
 use Modules\Tenants\Http\Controllers\PopeDetailsController;
 use Modules\Tenants\Http\Controllers\SecureFileController;
 use Modules\Tenants\Http\Controllers\TenantDataExportController;
+use Modules\Tenants\Http\Controllers\TenantExecutiveDashboardController;
 use Modules\Tenants\Http\Controllers\TenantsController;
 use Modules\Tenants\Http\Middleware\VerifyPlatformHealthToken;
 
@@ -51,6 +52,8 @@ Route::middleware('auth:api')->group(function () {
 
     // Get tenant statistics
     Route::get('/tenant/statistics', [TenantsController::class, 'statistics']);
+
+    Route::get('/tenant/dashboard/executive', [TenantExecutiveDashboardController::class, 'executive']);
 
     // Church Profile endpoints - for tenant users to view/edit their own church
     Route::get('/tenant/church-profile', [TenantsController::class, 'getChurchProfile']);

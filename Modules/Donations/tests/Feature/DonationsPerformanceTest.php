@@ -90,4 +90,54 @@ class DonationsPerformanceTest extends DonationsCertificationTestCase
         $profileQueries = count(DB::getQueryLog());
         $this->assertLessThan(50, $profileQueries, 'Family profile query budget exceeded: '.$profileQueries);
     }
+
+    #[Test]
+    public function project_and_campaign_indexes_use_batch_summaries(): void
+    {
+        $ctx = $this->actingAsTenantWith(['donations.view']);
+        $tenantId = (int) $ctx['tenant']->id;
+
+        \Modules\Family\Models\Family::factory()->count(15)->create([
+            'tenant_id' => $tenantId,
+            'status' => 'active',
+        ]);
+
+        for ($i = 0; $i < 8; $i++) {
+            \Modules\Donations\Models\DonationProject::create([
+                'tenant_id' => $tenantId,
+                'entity_kind' => 'project',
+                'name' => 'Project '.$i,
+                'code' => 'PROJ-'.$i,
+                'assignment_mode' => 'uniform',
+                'default_family_target' => 100,
+                'target_amount' => 1500,
+                'status' => 'active',
+                'raised_amount' => 100 * $i,
+            ]);
+            \Modules\Donations\Models\DonationProject::create([
+                'tenant_id' => $tenantId,
+                'entity_kind' => 'campaign',
+                'name' => 'Campaign '.$i,
+                'code' => 'CAMP-'.$i,
+                'campaign_type' => 'general',
+                'assignment_mode' => 'uniform',
+                'default_family_target' => 0,
+                'target_amount' => 2000,
+                'status' => 'active',
+                'raised_amount' => 50 * $i,
+            ]);
+        }
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $this->getJson('/api/tenant/donations/projects')->assertOk();
+        $projectQueries = count(DB::getQueryLog());
+
+        DB::flushQueryLog();
+        $this->getJson('/api/tenant/donations/campaigns')->assertOk();
+        $campaignQueries = count(DB::getQueryLog());
+
+        $this->assertLessThan(40, $projectQueries, 'Project index query budget exceeded: '.$projectQueries);
+        $this->assertLessThan(40, $campaignQueries, 'Campaign index query budget exceeded: '.$campaignQueries);
+    }
 }

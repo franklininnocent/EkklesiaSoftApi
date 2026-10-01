@@ -8,6 +8,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Modules\Authentication\Models\User;
 use Modules\MassIntentions\Http\Requests\AcceptMassIntentionRequest;
+use Modules\MassIntentions\Http\Requests\BulkMoveMassIntentionRequest;
+use Modules\MassIntentions\Http\Requests\MoveMassIntentionRequest;
 use Modules\MassIntentions\Http\Requests\RequestMassIntentionClarificationRequest;
 use Modules\MassIntentions\Http\Requests\RecordMassOfferingReceiptRequest;
 use Modules\MassIntentions\Http\Requests\ScheduleMassIntentionRequest;
@@ -16,6 +18,8 @@ use Modules\MassIntentions\Http\Requests\UpdateMassIntentionRequest;
 use Modules\MassIntentions\Services\MassIntentionOfferingService;
 use Modules\MassIntentions\Services\MassIntentionOfficeCloseService;
 use Modules\MassIntentions\Services\MassIntentionOfficeRegisterPdfExportService;
+use Modules\MassIntentions\Services\MassIntentionAssignmentService;
+use Modules\MassIntentions\Services\MassIntentionRequestHistoryService;
 use Modules\MassIntentions\Services\MassIntentionRequestListQuery;
 use Modules\MassIntentions\Services\MassIntentionRequestService;
 use Modules\MassIntentions\Services\MassIntentionSchedulingService;
@@ -35,7 +39,48 @@ class MassIntentionRequestController extends Controller
         private readonly MassIntentionOfficeCloseService $officeClose,
         private readonly MassIntentionRequestListQuery $listQuery,
         private readonly MassIntentionOfficeRegisterPdfExportService $registerPdf,
+        private readonly MassIntentionAssignmentService $assignments,
+        private readonly MassIntentionRequestHistoryService $requestHistory,
     ) {
+    }
+
+    public function move(MoveMassIntentionRequest $request, string $id): JsonResponse
+    {
+        $validated = $request->validated();
+        $result = $this->assignments->moveRequest(
+            $this->tenantId(),
+            $this->actor(),
+            $id,
+            (string) $validated['target_celebration_id'],
+            $validated['reason'] ?? null,
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Intention moved to the selected Mass.',
+            'data' => $this->requests->toArray($this->requests->findForTenant($this->tenantId(), $id)),
+            'meta' => $result,
+        ]);
+    }
+
+    public function bulkMove(BulkMoveMassIntentionRequest $request): JsonResponse
+    {
+        $validated = $request->validated();
+        $result = $this->assignments->bulkMoveRequests(
+            $this->tenantId(),
+            $this->actor(),
+            $validated['intention_ids'],
+            (string) $validated['target_celebration_id'],
+            $validated['reason'] ?? null,
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => $result['moved_count'] === 1
+                ? 'Intention moved to the selected Mass.'
+                : "{$result['moved_count']} intentions moved to the selected Mass.",
+            'meta' => $result,
+        ]);
     }
 
     public function index(Request $request): JsonResponse
@@ -47,6 +92,7 @@ class MassIntentionRequestController extends Controller
         $builder = $this->listQuery->forTenant($request, $tenantId);
 
         $page = $builder->paginate($perPage);
+        $this->requests->preloadMassCelebrationsForList($tenantId, $page->items());
 
         return response()->json([
             'success' => true,
@@ -64,6 +110,7 @@ class MassIntentionRequestController extends Controller
         $this->officeClose->closeExpiredForTenant($tenantId);
 
         $rows = $this->listQuery->forTenant($request, $tenantId)->get();
+        $this->requests->preloadMassCelebrationsForList($tenantId, $rows);
         if ($rows->isEmpty()) {
             throw new HttpException(404, 'No intentions match the current filters.');
         }
@@ -103,6 +150,10 @@ class MassIntentionRequestController extends Controller
 
         $meta = [
             'upcoming_celebrations' => $this->dashboard->upcomingCelebrations($tenantId),
+            'history' => [
+                'assignments' => $this->requestHistory->assignmentsForRequest($tenantId, $id),
+                'audits' => $this->requestHistory->auditsForRequest($tenantId, $id),
+            ],
         ];
 
         if ($this->actor()->hasPermission('mass.intentions.offerings.view')) {
@@ -137,7 +188,7 @@ class MassIntentionRequestController extends Controller
 
     public function update(UpdateMassIntentionRequest $request, string $id): JsonResponse
     {
-        $updated = $this->requests->update($this->tenantId(), $id, $request->validated());
+        $updated = $this->requests->update($this->tenantId(), $this->actor(), $id, $request->validated());
 
         return response()->json([
             'success' => true,

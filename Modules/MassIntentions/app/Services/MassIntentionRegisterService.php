@@ -60,13 +60,18 @@ class MassIntentionRegisterService
     /**
      * @return list<array<string, mixed>>
      */
-    public function massListReport(int $tenantId, int $limit = 500): array
+    public function massListReport(int $tenantId, string $from, string $to): array
     {
         $rows = DB::table('mass_celebrations as c')
             ->leftJoin('mass_intention_assignments as a', function ($join): void {
                 $join->on('a.celebration_id', '=', 'c.id')->whereNull('a.unassigned_at');
             })
             ->where('c.tenant_id', $tenantId)
+            ->whereBetween('c.celebrated_on', [$from, $to])
+            ->where(function ($q): void {
+                $q->where('c.generation_status', 'active')
+                    ->orWhere('c.status', 'cancelled');
+            })
             ->select([
                 'c.id',
                 'c.celebrated_on',
@@ -77,9 +82,8 @@ class MassIntentionRegisterService
                 DB::raw('count(distinct a.obligation_id) as intention_count'),
             ])
             ->groupBy('c.id', 'c.celebrated_on', 'c.celebrated_at', 'c.place', 'c.celebrant_name', 'c.status')
-            ->orderByDesc('c.celebrated_on')
-            ->orderByDesc('c.celebrated_at')
-            ->limit($limit)
+            ->orderBy('c.celebrated_on')
+            ->orderBy('c.celebrated_at')
             ->get();
 
         return $rows->map(fn ($row) => [

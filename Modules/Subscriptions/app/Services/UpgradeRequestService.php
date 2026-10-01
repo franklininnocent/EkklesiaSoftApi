@@ -23,6 +23,7 @@ class UpgradeRequestService
         private readonly SubscriptionPlanChangeService $changes,
         private readonly SubscriptionAuditService $audit,
         private readonly UpgradeRequestNotifier $notifier,
+        private readonly CurrentPlanIdentityService $currentPlan,
     ) {}
 
     /**
@@ -46,10 +47,11 @@ class UpgradeRequestService
             throw SubscriptionException::changeNotAllowed('This billing option is not offered for the selected plan.');
         }
 
-        $currentPlanId = TenantSubscription::query()->forTenant((int) $tenant->id)->current()->value('plan_id');
-        if ($currentPlanId !== null && (int) $currentPlanId === (int) $plan->id) {
+        $identity = $this->currentPlan->resolve($tenant);
+        if ($this->currentPlan->matches($plan, $identity)) {
             throw SubscriptionException::changeNotAllowed('Your church is already on this plan.');
         }
+        $currentPlanId = $identity['id'] ?? TenantSubscription::query()->forTenant((int) $tenant->id)->current()->value('plan_id');
 
         $featureCode = $this->knownFeatureCode($data['feature_code'] ?? null);
         $message = $this->cleanText($data['message'] ?? null);

@@ -680,7 +680,10 @@ class DonationsApiTest extends TestCase
         $projectId = $response->json('data.id');
 
         $generate = $this->postJson("/api/tenant/donations/projects/{$projectId}/generate-installments");
-        $generate->assertOk();
+        $generate->assertOk()
+            ->assertJsonPath('data.created', 4)
+            ->assertJsonPath('data.families', 2)
+            ->assertJsonPath('data.installments', 4);
 
         $this->assertDatabaseHas('project_installment_dues', [
             'project_id' => $projectId,
@@ -1951,6 +1954,113 @@ class DonationsApiTest extends TestCase
     }
 
     #[Test]
+    public function project_index_summary_needs_attention_matches_resolved_funding_targets(): void
+    {
+        Family::factory()->count(2)->create(['tenant_id' => $this->tenant->id, 'status' => 'active']);
+
+        DonationProject::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'On Track Hall',
+            'code' => 'ONTRACK',
+            'assignment_mode' => 'uniform',
+            'default_family_target' => 5000,
+            'target_amount' => 10000,
+            'status' => 'active',
+            'raised_amount' => 6000,
+        ]);
+
+        DonationProject::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'Behind Chapel',
+            'code' => 'BEHIND',
+            'assignment_mode' => 'uniform',
+            'default_family_target' => 5000,
+            'target_amount' => 10000,
+            'status' => 'active',
+            'raised_amount' => 1000,
+        ]);
+
+        DonationProject::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'No Target Yet',
+            'code' => 'NOTARGET',
+            'assignment_mode' => 'uniform',
+            'default_family_target' => 0,
+            'target_amount' => 0,
+            'status' => 'active',
+            'raised_amount' => 0,
+        ]);
+
+        DonationProject::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'Draft Wing',
+            'code' => 'DRAFT',
+            'assignment_mode' => 'uniform',
+            'default_family_target' => 5000,
+            'target_amount' => 10000,
+            'status' => 'draft',
+            'raised_amount' => 0,
+        ]);
+
+        $response = $this->getJson('/api/tenant/donations/projects')->assertOk();
+        $rows = collect($response->json('data'))->keyBy('code');
+
+        $this->assertCount(4, $rows);
+        $this->assertFalse($rows['ONTRACK']['needs_attention']);
+        $this->assertSame(60.0, (float) $rows['ONTRACK']['collection_percentage']);
+        $this->assertTrue($rows['BEHIND']['needs_attention']);
+        $this->assertSame(10.0, (float) $rows['BEHIND']['collection_percentage']);
+        $this->assertFalse($rows['NOTARGET']['needs_attention']);
+        $this->assertNull($rows['NOTARGET']['collection_percentage']);
+        $this->assertFalse($rows['NOTARGET']['has_funding_target']);
+        $this->assertFalse($rows['DRAFT']['needs_attention']);
+
+        $active = $rows->filter(fn (array $row): bool => $row['status'] === 'active');
+        $this->assertCount(3, $active);
+        $this->assertSame(1, $active->filter(fn (array $row): bool => (bool) $row['needs_attention'])->count());
+    }
+
+    #[Test]
+    public function campaign_index_returns_batch_list_summary_fields(): void
+    {
+        Family::factory()->count(3)->create(['tenant_id' => $this->tenant->id, 'status' => 'active']);
+
+        DonationProject::create([
+            'tenant_id' => $this->tenant->id,
+            'entity_kind' => 'campaign',
+            'name' => 'Roof Appeal',
+            'code' => 'ROOF',
+            'campaign_type' => 'building',
+            'assignment_mode' => 'uniform',
+            'default_family_target' => 0,
+            'target_amount' => 50000,
+            'status' => 'active',
+            'raised_amount' => 12500,
+        ]);
+
+        DonationProject::create([
+            'tenant_id' => $this->tenant->id,
+            'entity_kind' => 'campaign',
+            'name' => 'Charity Walk',
+            'code' => 'WALK',
+            'campaign_type' => 'charity',
+            'assignment_mode' => 'uniform',
+            'default_family_target' => 0,
+            'target_amount' => 10000,
+            'status' => 'active',
+            'raised_amount' => 1000,
+        ]);
+
+        $response = $this->getJson('/api/tenant/donations/campaigns')->assertOk();
+        $rows = collect($response->json('data'))->keyBy('code');
+
+        $this->assertCount(2, $rows);
+        $this->assertSame(25.0, (float) $rows['ROOF']['collection_percentage']);
+        $this->assertSame(3, (int) $rows['ROOF']['families_enrolled']);
+        $this->assertSame(10.0, (float) $rows['WALK']['collection_percentage']);
+    }
+
+    #[Test]
     public function it_keeps_semantic_engine_when_llm_is_disabled(): void
     {
         config(['financial_ai.llm.enabled' => false]);
@@ -2284,6 +2394,214 @@ class DonationsApiTest extends TestCase
     {
         $response = $this->getJson('/api/tenant/donations/dues?overdue_only=1&remaining_only=1');
         $response->assertStatus(422);
+    }
+
+    #[Test]
+    public function it_rejects_invalid_due_schedule_on_dues_index(): void
+    {
+        $this->getJson('/api/tenant/donations/dues?due_schedule=invalid')->assertStatus(422);
+    }
+
+    #[Test]
+    public function it_rejects_due_schedule_combined_with_overdue_only_on_dues_index(): void
+    {
+        $this->getJson('/api/tenant/donations/dues?due_schedule=overdue&overdue_only=1')->assertStatus(422);
+    }
+
+    #[Test]
+    public function it_rejects_invalid_sort_on_dues_index(): void
+    {
+        $this->getJson('/api/tenant/donations/dues?actionable=1&sort=not_a_column')->assertStatus(422);
+    }
+
+    #[Test]
+    public function it_accepts_frontend_boolean_query_strings_on_dues_index(): void
+    {
+        $this->getJson(
+            '/api/tenant/donations/dues?page=1&per_page=20&actionable=true&sort=due_date&direction=asc'
+        )->assertOk();
+    }
+
+    #[Test]
+    public function it_sorts_dues_index_by_due_date_with_actionable_true_string(): void
+    {
+        $fund = Fund::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'Fund',
+            'code' => 'F-DATE-SORT',
+            'status' => 'active',
+        ]);
+
+        $plan = ContributionPlan::create([
+            'tenant_id' => $this->tenant->id,
+            'fund_id' => $fund->id,
+            'name' => 'Monthly',
+            'code' => 'MON-DATE-SORT',
+            'plan_type' => 'uniform',
+            'frequency' => 'monthly',
+            'default_amount' => 100,
+            'status' => 'active',
+        ]);
+
+        $family = Family::factory()->create(['tenant_id' => $this->tenant->id]);
+
+        ContributionDue::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'plan_id' => $plan->id,
+            'period_label' => '2026-01',
+            'period_start' => now()->subDays(30)->toDateString(),
+            'due_date' => now()->subDays(10)->toDateString(),
+            'amount_due' => 100,
+            'amount_paid' => 0,
+            'status' => 'pending',
+        ]);
+        ContributionDue::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $family->id,
+            'plan_id' => $plan->id,
+            'period_label' => '2026-02',
+            'period_start' => now()->subDays(20)->toDateString(),
+            'due_date' => now()->subDays(3)->toDateString(),
+            'amount_due' => 100,
+            'amount_paid' => 0,
+            'status' => 'pending',
+        ]);
+
+        $sorted = $this->getJson(
+            '/api/tenant/donations/dues?actionable=true&sort=due_date&direction=asc&per_page=50'
+        )->assertOk();
+
+        $dates = collect($sorted->json('data.data'))->pluck('due_date')->all();
+        $this->assertSame($dates, collect($dates)->sort()->values()->all());
+    }
+
+    #[Test]
+    public function it_sorts_dues_index_by_family_name(): void
+    {
+        $fund = Fund::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'Fund',
+            'code' => 'F-SORT',
+            'status' => 'active',
+        ]);
+
+        $plan = ContributionPlan::create([
+            'tenant_id' => $this->tenant->id,
+            'fund_id' => $fund->id,
+            'name' => 'Monthly',
+            'code' => 'MON-SORT',
+            'plan_type' => 'uniform',
+            'frequency' => 'monthly',
+            'default_amount' => 100,
+            'status' => 'active',
+        ]);
+
+        $familyZ = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'family_name' => 'Zebra Parish Family',
+        ]);
+        $familyA = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'family_name' => 'Alpha Parish Family',
+        ]);
+
+        $dueDate = now()->subDays(5)->toDateString();
+        $periodStart = now()->subDays(10)->toDateString();
+
+        ContributionDue::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $familyZ->id,
+            'plan_id' => $plan->id,
+            'period_label' => '2026-03',
+            'period_start' => $periodStart,
+            'due_date' => $dueDate,
+            'amount_due' => 100,
+            'amount_paid' => 0,
+            'status' => 'pending',
+        ]);
+        ContributionDue::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $familyA->id,
+            'plan_id' => $plan->id,
+            'period_label' => '2026-03',
+            'period_start' => $periodStart,
+            'due_date' => $dueDate,
+            'amount_due' => 50,
+            'amount_paid' => 0,
+            'status' => 'pending',
+        ]);
+
+        $sorted = $this->getJson('/api/tenant/donations/dues?actionable=1&sort=family_name&direction=asc&per_page=50')
+            ->assertOk();
+
+        $names = collect($sorted->json('data.data'))->pluck('family.family_name')->all();
+        $this->assertSame(['Alpha Parish Family', 'Zebra Parish Family'], array_slice($names, 0, 2));
+    }
+
+    #[Test]
+    public function overdue_dues_index_meta_family_count_matches_dashboard_attention_summary(): void
+    {
+        $fund = Fund::create([
+            'tenant_id' => $this->tenant->id,
+            'name' => 'Fund',
+            'code' => 'F-OVD-META',
+            'status' => 'active',
+        ]);
+
+        $plan = ContributionPlan::create([
+            'tenant_id' => $this->tenant->id,
+            'fund_id' => $fund->id,
+            'name' => 'Monthly',
+            'code' => 'MON-OVD',
+            'plan_type' => 'uniform',
+            'frequency' => 'monthly',
+            'default_amount' => 100,
+            'status' => 'active',
+        ]);
+
+        $familyA = Family::factory()->create(['tenant_id' => $this->tenant->id]);
+        $familyB = Family::factory()->create(['tenant_id' => $this->tenant->id]);
+
+        $overdueDate = now()->subDays(10)->toDateString();
+
+        ContributionDue::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $familyA->id,
+            'plan_id' => $plan->id,
+            'period_label' => '2026-01',
+            'due_date' => $overdueDate,
+            'amount_due' => 100,
+            'amount_paid' => 0,
+            'status' => 'pending',
+        ]);
+        ContributionDue::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $familyA->id,
+            'plan_id' => $plan->id,
+            'period_label' => '2026-02',
+            'due_date' => $overdueDate,
+            'amount_due' => 50,
+            'amount_paid' => 0,
+            'status' => 'pending',
+        ]);
+        ContributionDue::create([
+            'tenant_id' => $this->tenant->id,
+            'family_id' => $familyB->id,
+            'plan_id' => $plan->id,
+            'period_label' => '2026-01',
+            'due_date' => $overdueDate,
+            'amount_due' => 75,
+            'amount_paid' => 0,
+            'status' => 'pending',
+        ]);
+
+        $dashboard = $this->getJson('/api/tenant/donations/dashboard/summary')->assertOk();
+        $attentionCount = (int) $dashboard->json('data.attention_summary.count');
+
+        $dues = $this->getJson('/api/tenant/donations/dues?overdue_only=1')->assertOk();
+        $dues->assertJsonPath('meta.overdue_family_count', $attentionCount);
+        $this->assertGreaterThanOrEqual(2, (int) $dues->json('meta.overdue_family_count'));
     }
 
     #[Test]

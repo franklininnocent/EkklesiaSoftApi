@@ -5,6 +5,7 @@ namespace Modules\Tenants\Database\Seeders\Support;
 use Modules\BCC\Models\BCC;
 use Modules\Donations\Models\ContributionPlan;
 use Modules\Family\Models\Family;
+use Modules\MinistriesAssociations\Models\Organization;
 use Modules\MinistriesAssociations\Models\OrganizationMembership;
 use Modules\PastoralCare\Models\PastoralCareRequest;
 use Modules\Tenants\Models\ChurchProfile;
@@ -55,12 +56,22 @@ final class TenantDemoVerifier
             }
         }
 
-        if (OrganizationMembership::query()
-            ->where('tenant_id', $tenantId)
-            ->where('remarks', TenantDemoMarkers::MARKER)
-            ->count() < 1
-            && $familyCount >= 1) {
-            $errors[] = 'Expected ministries membership demo rows when families exist.';
+        if ($familyCount >= 1) {
+            if (OrganizationMembership::query()
+                ->where('tenant_id', $tenantId)
+                ->where('remarks', TenantDemoMarkers::MARKER)
+                ->count() < 1) {
+                $errors[] = 'Expected ministries membership demo rows when families exist.';
+            }
+
+            $demoOrgCodes = MinistriesDemoCatalog::organizationCodes();
+            $demoOrgCount = Organization::query()
+                ->forTenant($tenantId)
+                ->whereIn('code', $demoOrgCodes)
+                ->count();
+            if ($demoOrgCount < count($demoOrgCodes)) {
+                $errors[] = 'Expected full ministries organization demo catalog when families exist.';
+            }
         }
 
         return $errors;

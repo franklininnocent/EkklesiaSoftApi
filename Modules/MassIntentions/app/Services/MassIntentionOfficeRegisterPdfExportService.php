@@ -2,7 +2,8 @@
 
 namespace Modules\MassIntentions\Services;
 
-use Carbon\Carbon;
+use App\Support\UserFacingDate;
+use App\Support\UserFacingDate;
 use Dompdf\Dompdf;
 use Dompdf\Options;
 use Illuminate\Http\Request;
@@ -12,6 +13,10 @@ use Modules\MassIntentions\Support\MassIntentionStatus;
 
 final class MassIntentionOfficeRegisterPdfExportService
 {
+    public function __construct(
+        private readonly MassIntentionRequestService $requests,
+    ) {
+    }
     /**
      * @param  Collection<int, MassIntentionRequest>  $rows
      */
@@ -67,7 +72,7 @@ final class MassIntentionOfficeRegisterPdfExportService
   <table>
     <thead>
       <tr>
-        <th>Scheduled day</th>
+        <th>Mass</th>
         <th>For</th>
         <th>Intention</th>
         <th>Description</th>
@@ -85,7 +90,7 @@ HTML;
 
     private function tableRow(MassIntentionRequest $row): string
     {
-        $day = $this->escape($this->formatScheduledDay($row));
+        $day = $this->escape($this->requests->officeRegisterMassLabel($row));
         $name = $this->beneficiaryForCell($row);
         $type = $this->escape($this->intentionTypeLabel($row));
         $description = $this->escape($this->intentionDescription($row) ?? '—');
@@ -98,15 +103,6 @@ HTML;
         <td class=\"desc\">{$description}</td>
         <td>{$status}</td>
       </tr>";
-    }
-
-    private function formatScheduledDay(MassIntentionRequest $row): string
-    {
-        if ($row->requested_date === null) {
-            return '—';
-        }
-
-        return $row->requested_date->format('M j, Y');
     }
 
     private function intentionTypeLabel(MassIntentionRequest $row): string
@@ -201,7 +197,9 @@ HTML;
     private function formatIsoDateLabel(string $isoDate): string
     {
         try {
-            return Carbon::parse($isoDate)->format('M j, Y');
+            $label = UserFacingDate::formatDate($isoDate);
+
+            return $label !== '' ? $label : $isoDate;
         } catch (\Throwable) {
             return $isoDate;
         }

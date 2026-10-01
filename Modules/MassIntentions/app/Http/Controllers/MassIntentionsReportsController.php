@@ -3,7 +3,11 @@
 namespace Modules\MassIntentions\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Modules\Donations\Support\DonationBusinessDate;
+use Modules\MassIntentions\Support\MassScheduleConstants;
 use Modules\MassIntentions\Services\MassIntentionDonationsLedgerBridgeService;
 use Modules\MassIntentions\Services\MassIntentionRegisterService;
 use Modules\Tenants\Support\TenantContext;
@@ -25,11 +29,25 @@ class MassIntentionsReportsController extends Controller
         ]);
     }
 
-    public function massList(): JsonResponse
+    public function massList(Request $request): JsonResponse
     {
+        $tenantId = $this->tenantId();
+        $from = (string) $request->query('from', '');
+        $to = (string) $request->query('to', '');
+        if ($from === '' || $to === '') {
+            throw new HttpException(422, 'from and to dates are required.');
+        }
+        if (! preg_match('/^\d{4}-\d{2}-\d{2}$/', $from) || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $to)) {
+            throw new HttpException(422, 'from and to must be YYYY-MM-DD.');
+        }
+        $days = Carbon::parse($from)->diffInDays(Carbon::parse($to));
+        if ($days > MassScheduleConstants::MAX_LIST_RANGE_DAYS) {
+            throw new HttpException(422, 'Date range cannot exceed '.MassScheduleConstants::MAX_LIST_RANGE_DAYS.' days.');
+        }
+
         return response()->json([
             'success' => true,
-            'data' => $this->register->massListReport($this->tenantId()),
+            'data' => $this->register->massListReport($tenantId, $from, $to),
         ]);
     }
 

@@ -26,6 +26,15 @@ class IndexLeadershipTimelineRequest extends FormRequest
                 LeadershipTerm::STATUS_VACATED,
                 LeadershipTerm::STATUS_TERMINATED,
             ])],
+            'sort_by' => ['sometimes', 'string', Rule::in([
+                'position_name',
+                'member_name',
+                'effective_from',
+                'effective_to',
+                'status',
+                'exit_reason',
+            ])],
+            'sort_dir' => ['sometimes', 'string', Rule::in(['asc', 'desc'])],
         ]);
     }
 }

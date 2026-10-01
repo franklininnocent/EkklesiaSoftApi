@@ -17,7 +17,7 @@ class UpdateMassCelebrationRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'celebrated_on' => ['required', 'date'],
+            'celebrated_on' => ['sometimes', 'required', 'date'],
             'celebrated_at' => ['nullable', 'date_format:H:i'],
             'place' => ['nullable', 'string', 'max:255'],
             'celebrant_name' => ['nullable', 'string', 'max:255'],

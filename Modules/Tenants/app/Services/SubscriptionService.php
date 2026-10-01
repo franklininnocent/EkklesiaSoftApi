@@ -2,6 +2,7 @@
 
 namespace Modules\Tenants\Services;
 
+use App\Support\UserFacingDate;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -584,7 +585,9 @@ class SubscriptionService
         }
 
         try {
-            return Carbon::parse((string) $value)->toFormattedDateString();
+            $label = UserFacingDate::formatDate((string) $value);
+
+            return $label !== '' ? $label : (string) $value;
         } catch (\Throwable) {
             return (string) $value;
         }

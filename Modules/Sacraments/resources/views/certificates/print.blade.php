@@ -11,7 +11,7 @@
           return '';
       }
       try {
-          return (new DateTimeImmutable((string) $value))->format('j F Y');
+          return \App\Support\UserFacingDate::formatDate((string) $value);
       } catch (Throwable) {
           return (string) $value;
       }

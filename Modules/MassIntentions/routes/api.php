@@ -13,6 +13,8 @@ use Modules\MassIntentions\Http\Controllers\MassIntentionsModuleController;
 use Modules\MassIntentions\Http\Controllers\MassIntentionsReportsController;
 use Modules\MassIntentions\Http\Controllers\MassIntentionsSettingsController;
 use Modules\MassIntentions\Http\Controllers\MassIntentionTransferController;
+use Modules\MassIntentions\Http\Controllers\MassDayOverrideController;
+use Modules\MassIntentions\Http\Controllers\MassScheduleController;
 
 Route::middleware(['auth:api', 'tenant.permission:mass.intentions.view'])
     ->prefix('tenant/mass-intentions')
@@ -79,6 +81,12 @@ Route::middleware([
         Route::put('/requests/{id}', [MassIntentionRequestController::class, 'update'])
             ->middleware('tenant.permission:mass.intentions.create')
             ->name('mass-intentions.requests.update');
+        Route::post('/requests/bulk-move', [MassIntentionRequestController::class, 'bulkMove'])
+            ->middleware('tenant.permission:mass.intentions.schedule')
+            ->name('mass-intentions.requests.bulk-move');
+        Route::post('/requests/{id}/move', [MassIntentionRequestController::class, 'move'])
+            ->middleware('tenant.permission:mass.intentions.schedule')
+            ->name('mass-intentions.requests.move');
         Route::post('/requests/{id}/accept', [MassIntentionRequestController::class, 'accept'])
             ->middleware('tenant.permission:mass.intentions.review')
             ->name('mass-intentions.requests.accept');
@@ -106,6 +114,46 @@ Route::middleware([
             ->middleware('tenant.permission:mass.intentions.schedule')
             ->name('mass-intentions.obligations.pending-schedule');
 
+        Route::get('/schedules/regular', [MassScheduleController::class, 'showRegular'])
+            ->name('mass-intentions.schedules.regular.show');
+        Route::get('/schedules/temporaries', [MassScheduleController::class, 'indexTemporaries'])
+            ->name('mass-intentions.schedules.temporaries.index');
+        Route::get('/schedules/{id}', [MassScheduleController::class, 'show'])
+            ->name('mass-intentions.schedules.show');
+        Route::get('/schedules/{id}/revisions', [MassScheduleController::class, 'indexRevisions'])
+            ->name('mass-intentions.schedules.revisions.index');
+        Route::get('/generation-status', [MassScheduleController::class, 'generationStatus'])
+            ->name('mass-intentions.generation-status');
+
+        Route::get('/day-overrides', [MassDayOverrideController::class, 'index'])
+            ->name('mass-intentions.day-overrides.index');
+        Route::get('/day-overrides/{id}', [MassDayOverrideController::class, 'show'])
+            ->name('mass-intentions.day-overrides.show');
+
+        Route::middleware('tenant.permission:mass.intentions.schedule')->group(function (): void {
+            Route::post('/day-overrides', [MassDayOverrideController::class, 'store'])
+                ->name('mass-intentions.day-overrides.store');
+            Route::post('/day-overrides/{id}/preview', [MassDayOverrideController::class, 'preview'])
+                ->name('mass-intentions.day-overrides.preview');
+            Route::post('/day-overrides/{id}/apply', [MassDayOverrideController::class, 'apply'])
+                ->name('mass-intentions.day-overrides.apply');
+            Route::post('/day-overrides/{id}/inactivate', [MassDayOverrideController::class, 'inactivate'])
+                ->name('mass-intentions.day-overrides.inactivate');
+
+            Route::post('/schedules/temporaries', [MassScheduleController::class, 'storeTemporary'])
+                ->name('mass-intentions.schedules.temporaries.store');
+            Route::put('/schedules/{id}/draft', [MassScheduleController::class, 'putDraft'])
+                ->name('mass-intentions.schedules.draft');
+            Route::post('/schedules/{id}/preview', [MassScheduleController::class, 'preview'])
+                ->name('mass-intentions.schedules.preview');
+            Route::post('/schedules/{id}/apply', [MassScheduleController::class, 'apply'])
+                ->name('mass-intentions.schedules.apply');
+            Route::post('/schedules/{id}/inactivate', [MassScheduleController::class, 'inactivate'])
+                ->name('mass-intentions.schedules.inactivate');
+            Route::post('/schedules/{id}/archive', [MassScheduleController::class, 'archive'])
+                ->name('mass-intentions.schedules.archive');
+        });
+
         Route::get('/celebrations', [MassCelebrationController::class, 'index'])
             ->name('mass-intentions.celebrations.index');
         Route::post('/celebrations', [MassCelebrationController::class, 'store'])
@@ -124,6 +172,15 @@ Route::middleware([
         Route::post('/celebrations/{id}/cancel', [MassCelebrationController::class, 'cancel'])
             ->middleware('tenant.permission:mass.intentions.schedule')
             ->name('mass-intentions.celebrations.cancel');
+        Route::post('/celebrations/{id}/keep-on-schedule', [MassCelebrationController::class, 'keepOnSchedule'])
+            ->middleware('tenant.permission:mass.intentions.schedule')
+            ->name('mass-intentions.celebrations.keep-on-schedule');
+        Route::post('/celebrations/{id}/apply-schedule-proposal', [MassCelebrationController::class, 'applyScheduleProposal'])
+            ->middleware('tenant.permission:mass.intentions.schedule')
+            ->name('mass-intentions.celebrations.apply-schedule-proposal');
+        Route::post('/celebrations/{id}/mark-schedule-changed', [MassCelebrationController::class, 'markScheduleChanged'])
+            ->middleware('tenant.permission:mass.intentions.schedule')
+            ->name('mass-intentions.celebrations.mark-schedule-changed');
         Route::post('/celebrations/{id}/confirm-said', [MassCelebrationController::class, 'confirmSaid'])
             ->middleware('tenant.permission:mass.intentions.fulfil')
             ->name('mass-intentions.celebrations.confirm-said');

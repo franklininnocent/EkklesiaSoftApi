@@ -329,14 +329,18 @@ class DonationLedgerService
         $advanceRemainder = '0.00';
 
         if ($type === 'due') {
-            $due = ContributionDue::forTenant($tenantId)->find($allocatableId);
+            $due = ContributionDue::forTenant($tenantId)->whereKey($allocatableId)->lockForUpdate()->first();
             if (! $due) {
                 throw new \RuntimeException('Invalid due allocation target for tenant.');
             }
+            $this->assertAllocatableFamily($payment, $due->family_id, $type, $allocatableId);
             if (in_array($due->status, ['waived', 'cancelled'], true)) {
                 throw new \RuntimeException('Cannot allocate a payment to a waived or cancelled contribution.');
             }
             $outstanding = ContributionBalance::outstandingString($due);
+            if (! MoneyMath::isPositive($outstanding)) {
+                throw new \RuntimeException('This contribution has no remaining balance to collect.');
+            }
             $applied = MoneyMath::min($amount, $outstanding);
             $advanceRemainder = MoneyMath::subtract($amount, $applied);
             if (MoneyMath::isPositive($applied)) {
@@ -346,11 +350,18 @@ class DonationLedgerService
                 $due->save();
             }
         } elseif ($type === 'project_installment') {
-            $installment = ProjectInstallmentDue::forTenant($tenantId)->find($allocatableId);
+            $installment = ProjectInstallmentDue::forTenant($tenantId)->whereKey($allocatableId)->lockForUpdate()->first();
             if (! $installment) {
                 throw new \RuntimeException('Invalid project installment allocation target for tenant.');
             }
+            $this->assertAllocatableFamily($payment, $installment->family_id, $type, $allocatableId);
+            if (in_array($installment->status, ['waived', 'cancelled'], true)) {
+                throw new \RuntimeException('Cannot allocate a payment to a waived or cancelled installment.');
+            }
             $outstanding = ContributionBalance::outstandingString($installment);
+            if (! MoneyMath::isPositive($outstanding)) {
+                throw new \RuntimeException('This installment has no remaining balance to collect.');
+            }
             $applied = MoneyMath::min($amount, $outstanding);
             $advanceRemainder = MoneyMath::subtract($amount, $applied);
             if (MoneyMath::isPositive($applied)) {
@@ -483,6 +494,21 @@ class DonationLedgerService
             if ($donation) {
                 $this->donationBalanceService->reversePayment($userId, $donation, $amount);
             }
+        }
+    }
+
+    private function assertAllocatableFamily(DonationPayment $payment, ?string $targetFamilyId, string $type, string $allocatableId): void
+    {
+        if (! $targetFamilyId) {
+            return;
+        }
+
+        if ((string) $payment->family_id !== (string) $targetFamilyId) {
+            $this->securityEvents->record('allocation_family_mismatch', (int) $payment->tenant_id, $type, $allocatableId, 422, [
+                'payment_family_id' => $payment->family_id,
+                'target_family_id' => $targetFamilyId,
+            ]);
+            throw new \RuntimeException('This contribution does not belong to the selected family.');
         }
     }
 

@@ -6,9 +6,13 @@ use App\Support\CaseInsensitiveSearch;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Modules\BCC\Support\BccAgeBands;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
 use Modules\Family\Services\ParishMemberMissingSacramentQuery;
+use Modules\Family\Services\OccupationClassificationService;
+use Modules\Family\Support\FamilyQueryFilters;
+use Modules\Family\Support\MemberEducationQualification;
 use Modules\Family\Support\ParishProgressionFilter;
 
 class FamilyRepository
@@ -60,14 +64,23 @@ class FamilyRepository
             $query->where('status', $filters['status']);
         }
 
-        if (! empty($filters['bcc_id'])) {
-            $query->where('bcc_id', $filters['bcc_id']);
+        FamilyQueryFilters::applyBcc($query, $filters['bcc_id'] ?? null);
+
+        if (! empty($filters['city_exact'])) {
+            FamilyQueryFilters::applyCityExact($query, $filters['city_exact']);
+        } elseif (! empty($filters['city'])) {
+            CaseInsensitiveSearch::applyColumnLike($query, 'city', "%{$filters['city']}%");
         }
 
-        // Parish Zone removed
+        FamilyQueryFilters::applyFamilyMissing($query, $tenantId, $filters['missing'] ?? null);
+        FamilyQueryFilters::applySizeBand($query, $tenantId, $filters['size_band'] ?? null);
+        FamilyQueryFilters::applyHousehold($query, $tenantId, $filters['household'] ?? null);
 
-        if (! empty($filters['city'])) {
-            CaseInsensitiveSearch::applyColumnLike($query, 'city', "%{$filters['city']}%");
+        if (! empty($filters['created_from'])) {
+            $query->whereDate('created_at', '>=', $filters['created_from']);
+        }
+        if (! empty($filters['created_to'])) {
+            $query->whereDate('created_at', '<=', $filters['created_to']);
         }
 
         if (! empty($filters['missing_sacrament'])) {
@@ -415,8 +428,19 @@ class FamilyRepository
 
         // Apply status filter
         if (! empty($filters['status'])) {
-            $query->where('status', $filters['status']);
+            $query->where('family_members.status', $filters['status']);
         }
+
+        if (! empty($filters['family_status'])) {
+            $query->whereHas('family', function ($familyQuery) use ($filters): void {
+                FamilyQueryFilters::applyFamilyStatus($familyQuery, $filters['family_status']);
+            });
+        }
+
+        FamilyQueryFilters::applyGender($query, $filters['gender'] ?? null);
+        FamilyQueryFilters::applyMemberMissing($query, $filters['missing'] ?? null);
+        OccupationClassificationService::applyListFilter($query, $filters['occupation'] ?? null);
+        MemberEducationQualification::applyListFilter($query, $filters['education'] ?? null);
 
         // Apply relationship filter (to identify family heads)
         if (! empty($filters['is_head'])) {
@@ -443,6 +467,8 @@ class FamilyRepository
                 }
             }
         }
+
+        $this->applyAgeBandFilter($query, $filters['age_band'] ?? null);
 
         [$sortBy, $sortOrder] = $this->resolveSort(
             $filters['sort_by'] ?? null,
@@ -484,6 +510,24 @@ class FamilyRepository
     }
 
     /**
+     * Restrict members to a BccAgeBands key using the same AGE() case as dashboard counts.
+     *
+     * @param  Builder<FamilyMember>  $query
+     */
+    private function applyAgeBandFilter(Builder $query, mixed $ageBand): void
+    {
+        if (! is_string($ageBand) || $ageBand === '' || ! in_array($ageBand, BccAgeBands::keys(), true)) {
+            return;
+        }
+
+        $ageYears = BccAgeBands::ageYearsSql();
+        $ageSql = BccAgeBands::sqlCase(
+            "CASE WHEN family_members.date_of_birth IS NULL THEN NULL ELSE {$ageYears} END"
+        );
+        $query->whereRaw("{$ageSql} = ?", [$ageBand]);
+    }
+
+    /**
      * Members in this tenant whose family still exists.
      * Uses family_members.tenant_id (NOT NULL) and excludes soft-deleted families.
      *
@@ -500,7 +544,7 @@ class FamilyRepository
                     ->whereNull('deleted_at');
 
                 if ($bccId !== null && $bccId !== '') {
-                    $query->where('bcc_id', $bccId);
+                    FamilyQueryFilters::applyBcc($query, $bccId);
                 }
             });
     }

@@ -84,7 +84,7 @@ class OrganizationController extends Controller
 
         $sortBy = $validated['sort_by'] ?? 'created_at';
         $sortDir = $validated['sort_dir'] ?? 'desc';
-        $query->orderBy($sortBy, $sortDir);
+        $this->applyOrganizationIndexSorting($query, $sortBy, $sortDir);
 
         $perPage = (int) ($validated['per_page'] ?? 15);
         $paginator = $query->paginate($perPage);
@@ -381,6 +381,34 @@ class OrganizationController extends Controller
     /**
      * @param  list<string>  $includes
      */
+    /**
+     * @param  \Illuminate\Database\Eloquent\Builder<Organization>  $query
+     */
+    private function applyOrganizationIndexSorting($query, string $sortBy, string $sortDir): void
+    {
+        $direction = strtolower($sortDir) === 'asc' ? 'asc' : 'desc';
+
+        if ($sortBy === 'category_name') {
+            $query
+                ->leftJoin('ma_organization_categories as sort_category', 'ma_organizations.category_id', '=', 'sort_category.id')
+                ->orderBy('sort_category.name', $direction)
+                ->select('ma_organizations.*');
+
+            return;
+        }
+
+        if ($sortBy === 'type_name') {
+            $query
+                ->leftJoin('ma_organization_types as sort_type', 'ma_organizations.type_id', '=', 'sort_type.id')
+                ->orderBy('sort_type.name', $direction)
+                ->select('ma_organizations.*');
+
+            return;
+        }
+
+        $query->orderBy($sortBy, $direction);
+    }
+
     private function applyIncludes($query, array $includes): void
     {
         $relations = [];

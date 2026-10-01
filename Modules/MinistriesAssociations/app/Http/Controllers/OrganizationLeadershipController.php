@@ -10,6 +10,7 @@ use Modules\MinistriesAssociations\Http\Requests\AssignLeadershipTermRequest;
 use Modules\MinistriesAssociations\Http\Requests\IndexLeadershipTimelineRequest;
 use Modules\MinistriesAssociations\Http\Requests\LeadershipHandoverRequest;
 use Modules\MinistriesAssociations\Http\Requests\TerminateLeadershipTermRequest;
+use Modules\MinistriesAssociations\Http\Requests\UpdateLeadershipTermRequest;
 use Modules\MinistriesAssociations\Models\LeadershipTerm;
 use Modules\MinistriesAssociations\Models\Organization;
 use Modules\MinistriesAssociations\Models\OrganizationMembership;
@@ -79,9 +80,7 @@ class OrganizationLeadershipController extends Controller
         $query = LeadershipTerm::query()
             ->forTenant($tenantId)
             ->where('organization_id', $organization->id)
-            ->with(['membership.familyMember', 'membership.guestMember', 'position'])
-            ->orderByDesc('effective_from')
-            ->orderByDesc('created_at');
+            ->with(['membership.familyMember', 'membership.guestMember', 'position']);
 
         if (! empty($validated['position_id'])) {
             $query->where('position_id', $validated['position_id']);
@@ -90,6 +89,10 @@ class OrganizationLeadershipController extends Controller
         if (! empty($validated['status'])) {
             $query->where('status', $validated['status']);
         }
+
+        $sortBy = $validated['sort_by'] ?? 'effective_from';
+        $sortDir = $validated['sort_dir'] ?? 'desc';
+        $this->applyTimelineSorting($query, $sortBy, $sortDir);
 
         $perPage = (int) ($validated['per_page'] ?? 15);
         $paginator = $query->paginate($perPage);
@@ -214,6 +217,126 @@ class OrganizationLeadershipController extends Controller
             'message' => 'Leadership term assigned successfully.',
             'data' => $this->presentLeadershipTerm($term),
         ], 201);
+    }
+
+    public function update(
+        UpdateLeadershipTermRequest $request,
+        string $organizationId,
+        string $termId,
+    ): JsonResponse {
+        $tenantId = $this->tenantId();
+        $term = LeadershipTerm::query()
+            ->forTenant($tenantId)
+            ->where('organization_id', $organizationId)
+            ->findOrFail($termId);
+
+        $this->authorize('update', $term);
+
+        if (! $term->isActive()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only active leadership terms can be edited.',
+                'errors' => [
+                    'term' => ['Leadership term is not active.'],
+                ],
+            ], 422);
+        }
+
+        $organization = $this->findOrganization($tenantId, $organizationId);
+        $payload = $request->validated();
+
+        $blocking = $this->activeOrganizationRequired($organization);
+        if ($blocking !== null) {
+            return $blocking;
+        }
+
+        $membership = $this->resolveActiveMembership($tenantId, $organization->id, $payload['membership_id']);
+        if ($membership instanceof JsonResponse) {
+            return $membership;
+        }
+
+        $position = Position::query()
+            ->forTenant($tenantId)
+            ->active()
+            ->find($payload['position_id']);
+
+        if ($position === null) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Position not found or inactive.',
+                'errors' => [
+                    'position_id' => ['Position not found or inactive.'],
+                ],
+            ], 422);
+        }
+
+        $guestBlocking = $this->guestOfficeBearerAllowed($organization, $membership);
+        if ($guestBlocking !== null) {
+            return $guestBlocking;
+        }
+
+        $multiRoleBlocking = $this->multiRoleConflict($organization, $membership->id, $term->id);
+        if ($multiRoleBlocking !== null) {
+            return $multiRoleBlocking;
+        }
+
+        if ($position->single_occupancy) {
+            $existingTerm = LeadershipTerm::query()
+                ->forTenant($tenantId)
+                ->where('organization_id', $organization->id)
+                ->where('position_id', $position->id)
+                ->where('status', LeadershipTerm::STATUS_ACTIVE)
+                ->where('id', '!=', $term->id)
+                ->with(['membership.familyMember', 'membership.guestMember'])
+                ->first();
+
+            if ($existingTerm !== null) {
+                return $this->leadershipOverlapConflict($existingTerm, $position);
+            }
+
+            $overlap = $this->findOverlappingActiveTerm(
+                $tenantId,
+                $organization->id,
+                $position->id,
+                $payload['effective_from'],
+                $payload['effective_to'] ?? null,
+                $term->id,
+            );
+
+            if ($overlap !== null) {
+                return $this->leadershipOverlapConflict($overlap, $position);
+            }
+        }
+
+        $oldValues = $this->auditSnapshot($term);
+        $term->update([
+            'membership_id' => $membership->id,
+            'position_id' => $position->id,
+            'appointment_date' => $payload['appointment_date'],
+            'effective_from' => $payload['effective_from'],
+            'effective_to' => $payload['effective_to'] ?? null,
+            'term_label' => $payload['term_label'] ?? null,
+            'appointment_reference' => $payload['appointment_reference'] ?? null,
+            'is_interim' => $payload['is_interim'] ?? false,
+            'remarks' => $payload['remarks'] ?? null,
+        ]);
+        $term->refresh()->load(['membership.familyMember', 'membership.guestMember', 'position']);
+
+        $this->auditService->log(
+            $tenantId,
+            'leadership.updated',
+            'leadership_term',
+            $term->id,
+            $oldValues,
+            $this->auditSnapshot($term),
+            $organization->id,
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Leadership term updated successfully.',
+            'data' => $this->presentLeadershipTerm($term),
+        ]);
     }
 
     public function handover(LeadershipHandoverRequest $request, string $organizationId): JsonResponse
@@ -590,6 +713,52 @@ class OrganizationLeadershipController extends Controller
         return $exitReason === LeadershipTerm::EXIT_REASON_TERM_COMPLETED
             ? LeadershipTerm::STATUS_COMPLETED
             : LeadershipTerm::STATUS_VACATED;
+    }
+
+    /**
+     * @param  \Illuminate\Database\Eloquent\Builder<LeadershipTerm>  $query
+     */
+    private function applyTimelineSorting($query, string $sortBy, string $sortDir): void
+    {
+        $direction = strtolower($sortDir) === 'asc' ? 'asc' : 'desc';
+        $termsTable = 'ma_leadership_terms';
+
+        if ($sortBy === 'position_name') {
+            $query
+                ->leftJoin('ma_positions as sort_position', "{$termsTable}.position_id", '=', 'sort_position.id')
+                ->orderBy('sort_position.name', $direction)
+                ->select("{$termsTable}.*");
+
+            return;
+        }
+
+        if ($sortBy === 'member_name') {
+            $query
+                ->leftJoin('ma_memberships as sort_membership', "{$termsTable}.membership_id", '=', 'sort_membership.id')
+                ->leftJoin('family_members as sort_family_member', 'sort_membership.family_member_id', '=', 'sort_family_member.id')
+                ->leftJoin('ma_guest_members as sort_guest_member', 'sort_membership.guest_member_id', '=', 'sort_guest_member.id')
+                ->orderByRaw(
+                    "LOWER(COALESCE(sort_guest_member.display_name, TRIM(CONCAT_WS(' ', sort_family_member.first_name, sort_family_member.middle_name, sort_family_member.last_name)))) {$direction} NULLS LAST"
+                )
+                ->select("{$termsTable}.*");
+
+            return;
+        }
+
+        if ($sortBy === 'effective_to') {
+            $nulls = $direction === 'asc' ? 'NULLS FIRST' : 'NULLS LAST';
+            $query->orderByRaw("{$termsTable}.effective_to {$direction} {$nulls}");
+
+            return;
+        }
+
+        if (in_array($sortBy, ['effective_from', 'status', 'exit_reason'], true)) {
+            $query->orderBy("{$termsTable}.{$sortBy}", $direction);
+
+            return;
+        }
+
+        $query->orderByDesc("{$termsTable}.effective_from")->orderByDesc("{$termsTable}.created_at");
     }
 
     /**

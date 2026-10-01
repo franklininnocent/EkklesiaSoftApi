@@ -21,6 +21,8 @@ class StoreMassCelebrationRequest extends FormRequest
             'celebrated_at' => ['nullable', 'date_format:H:i'],
             'place' => ['nullable', 'string', 'max:255'],
             'celebrant_name' => ['nullable', 'string', 'max:255'],
+            'occasion' => ['nullable', 'string', 'max:32'],
+            'notes' => ['nullable', 'string', 'max:5000'],
         ];
     }
 }

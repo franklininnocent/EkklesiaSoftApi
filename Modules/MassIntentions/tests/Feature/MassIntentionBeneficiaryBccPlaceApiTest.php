@@ -181,20 +181,21 @@ class MassIntentionBeneficiaryBccPlaceApiTest extends TestCase
         ]);
 
         $categoryId = $this->massIntentionCategoryIdFor($this->user);
-        $id = $this->postJson('/api/tenant/mass-intentions/requests', [
+        $createPayload = $this->validMassIntentionRequestPayload($this->user, [
             'beneficiary_name' => 'Linked First',
             'beneficiary_person_id' => $person->id,
-            'mass_intention_category_id' => $categoryId,
-            'requested_date' => Carbon::now()->addWeek()->toDateString(),
-            'mass_count' => 1,
-        ])->json('data.id');
+        ]);
+        unset($createPayload['beneficiary_place']);
+
+        $id = $this->postJson('/api/tenant/mass-intentions/requests', $createPayload)
+            ->assertCreated()
+            ->json('data.id');
 
         $this->putJson("/api/tenant/mass-intentions/requests/{$id}", [
             'beneficiary_name' => 'Now External',
             'beneficiary_person_id' => null,
             'beneficiary_place' => 'Far Town',
             'mass_intention_category_id' => $categoryId,
-            'requested_date' => Carbon::now()->addWeek()->toDateString(),
             'mass_count' => 1,
         ])
             ->assertOk()

@@ -6,7 +6,9 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Database\Eloquent\Builder;
 use Modules\Donations\Http\Controllers\Concerns\HandlesDonationIdempotency;
+use Modules\Donations\Http\Requests\IndexDonationReceiptsRequest;
 use Modules\Donations\Http\Requests\ReissueReceiptRequest;
 use Modules\Donations\Http\Requests\VoidReceiptRequest;
 use Modules\Donations\Models\DonationPayment;
@@ -27,16 +29,16 @@ class DonationReceiptsController extends Controller
         private readonly DonationIdempotencyService $idempotency
     ) {}
 
-    public function index(Request $request): JsonResponse
+    public function index(IndexDonationReceiptsRequest $request): JsonResponse
     {
         $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+        $table = (new DonationReceipt)->getTable();
         $query = DonationReceipt::forTenant($tenantId)
+            ->select("{$table}.*")
             ->with([
                 'payment:id,payment_number,payer_name,amount,payment_date,method,status,family_id,is_anonymous',
                 'payment.family:id,family_name,family_code',
-            ])
-            ->orderByDesc('issued_on')
-            ->orderByDesc('created_at');
+            ]);
 
         if ($request->filled('search')) {
             $search = $request->string('search')->toString();
@@ -69,6 +71,8 @@ class DonationReceiptsController extends Controller
         if ($request->filled('is_void')) {
             $query->where('is_void', filter_var($request->input('is_void'), FILTER_VALIDATE_BOOLEAN));
         }
+
+        $this->applyReceiptListSort($query, $request->sortColumn(), $request->sortDirection());
 
         $paginator = $query->paginate((int) $request->input('per_page', 20));
 
@@ -213,5 +217,35 @@ class DonationReceiptsController extends Controller
                 'resource_id' => $replacement->id,
             ];
         });
+    }
+
+    /**
+     * @param  Builder<DonationReceipt>  $query
+     */
+    private function applyReceiptListSort(Builder $query, string $sort, string $direction): void
+    {
+        $table = (new DonationReceipt)->getTable();
+
+        if (in_array($sort, ['receipt_number', 'issued_on'], true)) {
+            $query->orderBy("{$table}.{$sort}", $direction)
+                ->orderByDesc("{$table}.created_at");
+
+            return;
+        }
+
+        $query->leftJoin('donation_payments as receipt_sort_payments', "{$table}.payment_id", '=', 'receipt_sort_payments.id');
+
+        if ($sort === 'family_name') {
+            $query->leftJoin('families as receipt_sort_families', 'receipt_sort_payments.family_id', '=', 'receipt_sort_families.id')
+                ->orderBy('receipt_sort_families.family_name', $direction);
+        } elseif ($sort === 'amount') {
+            $query->orderBy('receipt_sort_payments.amount', $direction);
+        } elseif (in_array($sort, ['payer_name', 'method'], true)) {
+            $query->orderBy("receipt_sort_payments.{$sort}", $direction);
+        } else {
+            $query->orderByDesc("{$table}.issued_on");
+        }
+
+        $query->orderByDesc("{$table}.created_at");
     }
 }

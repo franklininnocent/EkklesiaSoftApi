@@ -30,6 +30,7 @@ class SubscriptionPresenter
         private readonly SubscriptionPolicyService $policies,
         private readonly SubscriptionService $lifecycle,
         private readonly PlanService $plans,
+        private readonly CurrentPlanIdentityService $currentPlan,
     ) {}
 
     /**
@@ -273,7 +274,7 @@ class SubscriptionPresenter
         return [
             'source' => $effective->source,
             'engine_mode' => EntitlementEngineMode::current(),
-            'plan' => $this->planSummary($resolved),
+            'plan' => $this->authoritativePlanSummary($tenant, $resolved),
             'features' => $features,
             'feature_names' => $names,
             'limits' => $limits,
@@ -292,7 +293,7 @@ class SubscriptionPresenter
     {
         $resolved = $this->resolver->resolve($tenant);
         $data = [
-            'plan' => $this->planSummary($resolved),
+            'plan' => $this->authoritativePlanSummary($tenant, $resolved),
             'entitlements_version' => $this->entitlementsVersion($this->effective($tenant, $resolved)),
             'engine_mode' => EntitlementEngineMode::current(),
         ];
@@ -334,22 +335,24 @@ class SubscriptionPresenter
         $terms = null;
         if ($includeCommercialTerms && $current && $current->version) {
             $version = $current->version;
-            $resolved = TaxPolicy::resolve($version, $this->policies->platformTax());
-            $taxRate = $resolved['rate_percent'];
-            $inclusive = $resolved['prices_include_tax'];
+            $tax = TaxPolicy::resolve($version, $this->policies->platformTax());
+            $taxRate = $tax['rate_percent'];
+            $inclusive = $tax['prices_include_tax'];
             $terms = [
                 'billing_interval' => $current->billing_interval,
                 'currency_code' => $current->currency_code,
                 'contracted_price' => $this->money($current->contracted_price),
-                'tax_label' => $resolved['label'],
+                'tax_label' => $tax['label'],
                 'tax' => TaxCalculator::breakdown($this->money($current->contracted_price), $taxRate, $inclusive),
                 'version_number' => $version->version_number,
                 'starts_at' => $current->starts_at?->toIso8601String(),
             ];
         }
 
+        $identity = $this->currentPlan->resolve($tenant);
+
         return [
-            'plan' => $this->planSummary($resolved),
+            'plan' => $this->authoritativePlanSummary($tenant, $resolved, $identity),
             'lifecycle' => $this->lifecycle->buildAccessSnapshot($tenant) + [
                 'trial_ends_at' => $tenant->trial_ends_at?->toIso8601String(),
                 'subscription_suspended_at' => $tenant->subscription_suspended_at?->toIso8601String(),
@@ -363,6 +366,50 @@ class SubscriptionPresenter
             'entitlements' => $entitlements,
             'usage' => $this->usage->summary($resolved),
             'engine_mode' => EntitlementEngineMode::current(),
+            'comparison' => $this->tenantComparison($tenant, $identity),
+        ];
+    }
+
+    /**
+     * Authenticated comparison catalog with the current plan flagged by the server.
+     *
+     * @param  array<string, mixed>|null  $identity
+     * @return array<string, mixed>
+     */
+    public function tenantComparison(Tenant $tenant, ?array $identity = null): array
+    {
+        $identity ??= $this->currentPlan->resolve($tenant);
+        $catalog = Plan::query()->publiclyListed()
+            ->with('activeVersion.entitlements.feature')
+            ->orderBy('display_order')
+            ->get();
+
+        $cards = [];
+        $currentListed = false;
+        foreach ($catalog as $plan) {
+            if ($plan->activeVersion === null) {
+                continue;
+            }
+            $isCurrent = $this->currentPlan->matches($plan, $identity);
+            if ($isCurrent) {
+                $currentListed = true;
+            }
+            $version = $this->comparisonVersion($plan, $identity, $isCurrent);
+            $cards[] = $this->comparisonCard($plan, $version, $identity, $isCurrent, true);
+        }
+
+        if (($identity['matched'] ?? false) && ! $currentListed && ($identity['id'] ?? null)) {
+            $plan = Plan::withTrashed()->with('activeVersion.entitlements.feature')->find((int) $identity['id']);
+            $version = $plan ? $this->comparisonVersion($plan, $identity, true) : null;
+            if ($plan && $version) {
+                $cards[] = $this->comparisonCard($plan, $version, $identity, true, false);
+            }
+        }
+
+        return [
+            'current_plan' => $identity,
+            'current_plan_listed' => $currentListed,
+            'plans' => $cards,
         ];
     }
 
@@ -412,6 +459,26 @@ class SubscriptionPresenter
     }
 
     /**
+     * @param  array<string, mixed>|null  $identity
+     * @return array<string, mixed>|null
+     */
+    private function authoritativePlanSummary(Tenant $tenant, ResolvedEntitlements $resolved, ?array $identity = null): ?array
+    {
+        $identity ??= $this->currentPlan->resolve($tenant);
+        $fromIdentity = $this->currentPlan->planSummary($identity);
+        $fromResolver = $this->planSummary($resolved);
+        if (($identity['matched'] ?? false) && $fromIdentity) {
+            return $fromIdentity;
+        }
+
+        if (! empty($fromIdentity['code'])) {
+            return $fromIdentity;
+        }
+
+        return $fromResolver ?? $fromIdentity;
+    }
+
+    /**
      * @return array<string, mixed>|null
      */
     private function planSummary(ResolvedEntitlements $resolved): ?array
@@ -422,12 +489,59 @@ class SubscriptionPresenter
         }
 
         return [
+            'id' => isset($plan['id']) ? (int) $plan['id'] : null,
             'code' => $plan['code'] ?? null,
             'key' => $plan['key'] ?? null,
             'name' => $plan['name'] ?? ($plan['key'] ?? null),
             'pricing_type' => $plan['pricing_type'] ?? null,
             'is_legacy' => (bool) ($plan['is_legacy'] ?? ($plan['legacy'] ?? false)),
             'version_number' => $plan['version_number'] ?? null,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $identity
+     */
+    private function comparisonVersion(Plan $plan, array $identity, bool $isCurrent): ?PlanVersion
+    {
+        if ($isCurrent && ($identity['version_id'] ?? null)) {
+            $subscribed = PlanVersion::query()->with('entitlements.feature')->find((int) $identity['version_id']);
+            if ($subscribed && (int) $subscribed->plan_id === (int) $plan->id) {
+                return $subscribed;
+            }
+        }
+
+        $plan->loadMissing('activeVersion.entitlements.feature');
+
+        return $plan->activeVersion;
+    }
+
+    /**
+     * @param  array<string, mixed>  $identity
+     * @return array<string, mixed>
+     */
+    private function comparisonCard(Plan $plan, PlanVersion $version, array $identity, bool $isCurrent, bool $listedInCatalog): array
+    {
+        $isLifetime = $isCurrent && (bool) ($identity['is_lifetime'] ?? false);
+        $primaryAction = 'request';
+        if ($isCurrent) {
+            $primaryAction = 'current';
+        } elseif ($plan->pricing_type === Plan::PRICING_CUSTOM) {
+            $primaryAction = 'quote';
+        }
+
+        $subscribedVersionId = $isCurrent ? ($identity['version_id'] ?? null) : null;
+        $activeId = $plan->activeVersion?->id;
+
+        return $this->publicPlan($plan, $version) + [
+            'id' => (int) $plan->id,
+            'is_current' => $isCurrent,
+            'listed_in_catalog' => $listedInCatalog,
+            'using_subscribed_version' => $isCurrent && $subscribedVersionId && $activeId && (int) $subscribedVersionId !== (int) $activeId,
+            'primary_action' => $primaryAction,
+            'subscription_status' => $isCurrent ? ($identity['subscription_status'] ?? null) : null,
+            'subscription_ends_at' => $isCurrent ? ($identity['subscription_ends_at'] ?? null) : null,
+            'is_lifetime' => $isLifetime,
         ];
     }
 

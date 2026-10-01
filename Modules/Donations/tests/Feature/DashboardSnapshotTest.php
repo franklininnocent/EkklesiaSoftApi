@@ -128,6 +128,7 @@ class DashboardSnapshotTest extends DonationsCertificationTestCase
         $this->assertSame(1, (int) $snapshot['overdue_families']);
         $this->assertSame(10.0, (float) $snapshot['due_next_14_days_amount']);
         $this->assertSame(1, (int) $snapshot['due_next_14_days_families']);
+        $this->assertArrayHasKey('due_later_amount', $snapshot);
         $this->assertSame(80.0, (float) $snapshot['project_installments']['overdue']);
         $this->assertSame(15.0, (float) $snapshot['project_installments']['not_yet_due']);
         $this->assertSame(95.0, (float) $snapshot['project_installments']['open']);

@@ -58,6 +58,21 @@ class DonationsReceiptLifecycleTest extends DonationsCertificationTestCase
     }
 
     #[Test]
+    public function receipt_index_supports_sort_and_rejects_unknown_columns(): void
+    {
+        $ctx = $this->actingAsTenantWith(['donations.view', 'donations.collect']);
+        $family = Family::factory()->create(['tenant_id' => $ctx['tenant']->id]);
+        $this->postJson('/api/tenant/donations/payments', $this->paymentPayload($family, '10.00'))->assertCreated();
+        $this->postJson('/api/tenant/donations/payments', $this->paymentPayload($family, '20.00'))->assertCreated();
+
+        $this->getJson('/api/tenant/donations/receipts?sort=invalid_column')->assertStatus(422);
+
+        $sorted = $this->getJson('/api/tenant/donations/receipts?sort=receipt_number&direction=asc&per_page=50')->assertOk();
+        $numbers = collect($sorted->json('data.data'))->pluck('receipt_number')->all();
+        $this->assertSame($numbers, collect($numbers)->sort()->values()->all());
+    }
+
+    #[Test]
     public function receipt_numbers_are_unique_for_sequential_issues(): void
     {
         $ctx = $this->actingAsTenantWith(['donations.view', 'donations.collect']);

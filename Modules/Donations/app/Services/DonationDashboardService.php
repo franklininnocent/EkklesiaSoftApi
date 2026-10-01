@@ -140,6 +140,8 @@ class DonationDashboardService
         $kpis = [
             'average_contribution' => $averageContribution,
             'collection_growth_pct' => $growthPct,
+            'comparison_available' => (bool) ($growthAnalysis['comparison_available'] ?? false),
+            'tiny_base' => (bool) ($growthAnalysis['tiny_base'] ?? false),
             'plan_compliance_pct' => $planCompliance,
             'contributing_families_delta' => (int) ($families['contributing_families_delta'] ?? 0),
             'previous_month_collected' => $previousMonth,

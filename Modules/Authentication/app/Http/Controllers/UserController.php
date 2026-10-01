@@ -1031,23 +1031,6 @@ class UserController extends Controller
                 is_string($search) ? $search : null
             );
 
-            // #region agent log
-            file_put_contents('/var/www/html/EkklesiaSoft/.cursor/debug-92acf4.log', json_encode([
-                'sessionId' => '92acf4',
-                'runId' => 'pre-fix',
-                'hypothesisId' => 'H1',
-                'location' => 'UserController.php:linkableClergy',
-                'message' => 'linkable clergy controller result',
-                'data' => [
-                    'tenantId' => (int) $authUser->tenant_id,
-                    'search' => is_string($search) ? $search : null,
-                    'canSearch' => $canSearch,
-                    'resultCount' => $results->count(),
-                ],
-                'timestamp' => (int) round(microtime(true) * 1000),
-            ])."\n", FILE_APPEND);
-            // #endregion
-
             return response()->json([
                 'success' => true,
                 'data' => $results->values(),

@@ -160,6 +160,8 @@ Route::prefix('tenant/ministries')
             ->middleware(['tenant.permission:ministries.manage_leadership', 'entitlement:ADVANCED_MINISTRY_MANAGEMENT']);
         Route::post('/organizations/{organizationId}/leadership/handover', [OrganizationLeadershipController::class, 'handover'])
             ->middleware(['tenant.permission:ministries.manage_leadership', 'entitlement:ADVANCED_MINISTRY_MANAGEMENT']);
+        Route::patch('/organizations/{organizationId}/leadership/{termId}', [OrganizationLeadershipController::class, 'update'])
+            ->middleware(['tenant.permission:ministries.manage_leadership', 'entitlement:ADVANCED_MINISTRY_MANAGEMENT']);
         Route::post('/organizations/{organizationId}/leadership/{termId}/terminate', [OrganizationLeadershipController::class, 'terminate'])
             ->middleware(['tenant.permission:ministries.manage_leadership', 'entitlement:ADVANCED_MINISTRY_MANAGEMENT']);
 

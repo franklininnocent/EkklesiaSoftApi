@@ -309,7 +309,7 @@ class TenantStatusAudit extends Model
      */
     public function getFormattedDateAttribute(): string
     {
-        return $this->created_at->format('M d, Y h:i A');
+        return \App\Support\UserFacingDate::formatDateTime($this->created_at);
     }
     
     /**

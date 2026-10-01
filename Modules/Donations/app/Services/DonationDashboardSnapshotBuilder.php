@@ -105,6 +105,8 @@ class DonationDashboardSnapshotBuilder
             'overdue_families' => (int) ($attention['count'] ?? 0),
             'due_next_14_days_amount' => $dueNext['amount'],
             'due_next_14_days_families' => $dueNext['families'],
+            'due_later_amount' => MoneyMath::toApiNumber($dueSchedule['later_remaining_amount']),
+            'due_later_families' => (int) $dueSchedule['later_remaining_family_count'],
             'participation' => [
                 'participating' => $participating,
                 'active' => $active,

@@ -54,6 +54,22 @@ class TenantEntitlementController extends Controller
         return response()->json(['success' => true, 'data' => $this->presenter->tenantOverview($tenant)]);
     }
 
+    /**
+     * Side-by-side public catalog with this church's current plan identified by the server.
+     */
+    public function comparison(Request $request): JsonResponse
+    {
+        $tenant = $this->tenant();
+        if (! $tenant) {
+            return $this->noTenant();
+        }
+        if (! $this->canViewSubscription($request->user())) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized to view subscription.'], 403);
+        }
+
+        return response()->json(['success' => true, 'data' => $this->presenter->tenantComparison($tenant)]);
+    }
+
     public function usage(Request $request): JsonResponse
     {
         $tenant = $this->tenant();

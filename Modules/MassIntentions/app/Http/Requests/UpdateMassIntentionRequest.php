@@ -42,11 +42,20 @@ class UpdateMassIntentionRequest extends FormRequest
             'announce_name' => ['nullable', 'boolean'],
             'requester_name' => ['nullable', 'string', 'max:255'],
             'requester_phone' => ['nullable', 'string', 'max:64'],
-            'requested_date' => ['required', 'date'],
+            'requested_date' => ['prohibited'],
+            'celebration_id' => [
+                'nullable',
+                'uuid',
+                Rule::exists('mass_celebrations', 'id')->where(function ($query) use ($tenantId) {
+                    if ($tenantId !== null) {
+                        $query->where('tenant_id', $tenantId);
+                    }
+                }),
+            ],
             'date_must_be_kept' => ['nullable', 'boolean'],
             'prohibit_transfer' => ['nullable', 'boolean'],
             'is_collective' => ['nullable', 'boolean'],
-            'mass_count' => ['nullable', 'integer', 'min:1', 'max:99'],
+            'mass_count' => ['nullable', 'integer', 'in:1'],
             'submit_for_review' => ['nullable', 'boolean'],
         ];
     }

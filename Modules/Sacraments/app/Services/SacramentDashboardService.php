@@ -2,6 +2,7 @@
 
 namespace Modules\Sacraments\Services;
 
+use App\Support\UserFacingDate;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -462,10 +463,10 @@ class SacramentDashboardService
         }
 
         if ($from->isSameMonth($to) && $from->isSameYear($to) && $from->day === 1 && $to->isLastOfMonth()) {
-            return $from->format('F Y');
+            return UserFacingDate::formatMonthYear($from);
         }
 
-        return $from->format('M j, Y').' – '.$to->format('M j, Y');
+        return UserFacingDate::formatDate($from).' – '.UserFacingDate::formatDate($to);
     }
 
     /**

@@ -1716,6 +1716,41 @@ class FamilyApiTest extends TestCase
     }
 
     #[Test]
+    public function it_filters_members_by_age_band_matching_dashboard_bands(): void
+    {
+        $family = Family::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+        ]);
+
+        $baby = FamilyMember::factory()->active()->create([
+            'family_id' => $family->id,
+            'date_of_birth' => now()->subYear()->toDateString(),
+        ]);
+        $adult = FamilyMember::factory()->active()->create([
+            'family_id' => $family->id,
+            'date_of_birth' => now()->subYears(40)->toDateString(),
+        ]);
+        $unknown = FamilyMember::factory()->active()->create([
+            'family_id' => $family->id,
+            'date_of_birth' => null,
+        ]);
+
+        $babies = $this->getJson('/api/members?age_band=babies&per_page=50');
+        $babies->assertOk();
+        $babyIds = collect($babies->json('data'))->pluck('id')->all();
+        $this->assertContains($baby->id, $babyIds);
+        $this->assertNotContains($adult->id, $babyIds);
+        $this->assertNotContains($unknown->id, $babyIds);
+
+        $unknowns = $this->getJson('/api/members?age_band=unknown&per_page=50');
+        $unknowns->assertOk();
+        $unknownIds = collect($unknowns->json('data'))->pluck('id')->all();
+        $this->assertContains($unknown->id, $unknownIds);
+        $this->assertNotContains($baby->id, $unknownIds);
+    }
+
+    #[Test]
     public function it_filters_members_by_baptized_without_confirmation_progression(): void
     {
         $family = Family::factory()->create([
