@@ -5,9 +5,11 @@ namespace Modules\Family\app\Services;
 use App\Support\UserFacingDate;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Modules\Family\app\Support\ParishCalendar;
-use Modules\Family\Support\FamilyQueryFilters;
 use Modules\Family\Models\FamilyMember;
+use Modules\Family\Support\FamilyQueryFilters;
 
 class MemberCelebrationsService
 {
@@ -31,6 +33,28 @@ class MemberCelebrationsService
             ],
             'birthdays' => $this->mapBirthdays($birthdayMembers, $windowDays),
             'anniversaries' => $this->mapAnniversaries($anniversaryMembers, $windowDays),
+        ];
+    }
+
+    /**
+     * Same week window and grouping rules as {@see weekCelebrations()}, without family/BCC payloads.
+     *
+     * @return array<string, mixed>
+     */
+    public function weekCelebrationCounts(int $tenantId): array
+    {
+        $bounds = ParishCalendar::currentWeekBounds($tenantId);
+        $windowDays = ParishCalendar::weekDayOccurrences($bounds['start'], $bounds['end']);
+
+        return [
+            'week' => [
+                'start' => $bounds['start']->toDateString(),
+                'end' => $bounds['end']->toDateString(),
+                'label' => ParishCalendar::weekRangeLabel($bounds['start'], $bounds['end']),
+                'timezone' => $bounds['timezone'],
+            ],
+            'birthdays_count' => $this->countMatchingMonthDays($tenantId, 'date_of_birth', $windowDays, $bounds['end']),
+            'anniversaries_count' => $this->countAnniversaryGroups($tenantId, $windowDays, $bounds['end']),
         ];
     }
 
@@ -124,21 +148,21 @@ class MemberCelebrationsService
     }
 
     /**
+     * Active members in active families whose month/day falls in the celebration window.
+     *
      * @param  list<array{month: int, day: int, date: Carbon}>  $weekDays
-     * @return \Illuminate\Support\Collection<int, FamilyMember>
      */
-    private function membersMatchingMonthDays(
+    private function celebrationMembersQuery(
         int $tenantId,
         string $dateColumn,
         array $weekDays,
         Carbon $weekEnd,
         ?string $bccId = null
-    ) {
-        return FamilyMember::query()
+    ): Builder {
+        $query = FamilyMember::query()
             ->forTenant($tenantId)
             ->active()
             ->whereNotNull($dateColumn)
-            ->with(['family:id,tenant_id,family_name,family_code,bcc_id,status', 'family.bcc:id,name'])
             ->whereIn('family_id', function ($query) use ($tenantId, $bccId): void {
                 $query->select('id')
                     ->from('families')
@@ -149,33 +173,94 @@ class MemberCelebrationsService
                 if ($bccId !== null && $bccId !== '') {
                     FamilyQueryFilters::applyBcc($query, $bccId);
                 }
-            })
-            ->where(function (Builder $query) use ($dateColumn, $weekDays, $weekEnd): void {
-                foreach ($weekDays as $day) {
-                    $query->orWhere(function (Builder $inner) use ($dateColumn, $day): void {
-                        $inner->whereMonth($dateColumn, $day['month'])
-                            ->whereDay($dateColumn, $day['day']);
-                    });
-                }
+            });
 
-                if (! $weekEnd->isLeapYear()) {
-                    foreach ($weekDays as $day) {
-                        if ($day['month'] === 2 && $day['day'] === 28) {
-                            $query->orWhere(function (Builder $inner) use ($dateColumn): void {
-                                $inner->whereMonth($dateColumn, 2)->whereDay($dateColumn, 29);
-                            });
-                            break;
-                        }
-                    }
-                }
-            })
-            ->orderBy('last_name')
-            ->orderBy('first_name')
-            ->get(['id', 'family_id', 'first_name', 'middle_name', 'last_name', 'gender', 'date_of_birth', 'marriage_date', 'marriage_spouse_name', 'relationship_to_head', 'status']);
+        $this->applyMonthDayWindow($query, $dateColumn, $weekDays, $weekEnd);
+
+        return $query;
     }
 
     /**
-     * @param  \Illuminate\Support\Collection<int, FamilyMember>  $members
+     * @param  list<array{month: int, day: int, date: Carbon}>  $weekDays
+     */
+    private function applyMonthDayWindow(Builder $query, string $dateColumn, array $weekDays, Carbon $weekEnd): void
+    {
+        $query->where(function (Builder $query) use ($dateColumn, $weekDays, $weekEnd): void {
+            foreach ($weekDays as $day) {
+                $query->orWhere(function (Builder $inner) use ($dateColumn, $day): void {
+                    $inner->whereMonth($dateColumn, $day['month'])
+                        ->whereDay($dateColumn, $day['day']);
+                });
+            }
+
+            if (! $weekEnd->isLeapYear()) {
+                foreach ($weekDays as $day) {
+                    if ($day['month'] === 2 && $day['day'] === 28) {
+                        $query->orWhere(function (Builder $inner) use ($dateColumn): void {
+                            $inner->whereMonth($dateColumn, 2)->whereDay($dateColumn, 29);
+                        });
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * @param  list<array{month: int, day: int, date: Carbon}>  $weekDays
+     */
+    private function countMatchingMonthDays(int $tenantId, string $dateColumn, array $weekDays, Carbon $weekEnd): int
+    {
+        return (int) $this->celebrationMembersQuery($tenantId, $dateColumn, $weekDays, $weekEnd)->count();
+    }
+
+    /**
+     * One anniversary per family and wedding date, matching {@see mapAnniversaries()} grouping.
+     *
+     * @param  list<array{month: int, day: int, date: Carbon}>  $weekDays
+     */
+    private function countAnniversaryGroups(int $tenantId, array $weekDays, Carbon $weekEnd): int
+    {
+        $grouped = $this->celebrationMembersQuery($tenantId, 'marriage_date', $weekDays, $weekEnd)
+            ->select('family_members.family_id', 'family_members.marriage_date')
+            ->groupBy('family_members.family_id', 'family_members.marriage_date');
+
+        return (int) DB::query()->fromSub($grouped->toBase(), 'anniversary_groups')->count();
+    }
+
+    private function membersMatchingMonthDays(
+        int $tenantId,
+        string $dateColumn,
+        array $weekDays,
+        Carbon $weekEnd,
+        ?string $bccId = null,
+        bool $withFamilyContext = true
+    ) {
+        $query = $this->celebrationMembersQuery($tenantId, $dateColumn, $weekDays, $weekEnd, $bccId)
+            ->orderBy('last_name')
+            ->orderBy('first_name');
+
+        if ($withFamilyContext) {
+            $query->with(['family:id,tenant_id,family_name,family_code,bcc_id,status', 'family.bcc:id,name']);
+        }
+
+        return $query->get([
+            'id',
+            'family_id',
+            'first_name',
+            'middle_name',
+            'last_name',
+            'gender',
+            'date_of_birth',
+            'marriage_date',
+            'marriage_spouse_name',
+            'relationship_to_head',
+            'status',
+        ]);
+    }
+
+    /**
+     * @param  Collection<int, FamilyMember>  $members
      * @param  list<array{month: int, day: int, date: Carbon}>  $weekDays
      * @return list<array<string, mixed>>
      */
@@ -213,7 +298,7 @@ class MemberCelebrationsService
     }
 
     /**
-     * @param  \Illuminate\Support\Collection<int, FamilyMember>  $members
+     * @param  Collection<int, FamilyMember>  $members
      * @param  list<array{month: int, day: int, date: Carbon}>  $weekDays
      * @return list<array<string, mixed>>
      */

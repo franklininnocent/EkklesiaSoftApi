@@ -3,6 +3,7 @@
 namespace Modules\Tenants\Database\Seeders;
 
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Tenants\Models\LeadershipRole;
 use Modules\Tenants\Support\LeadershipRoleCategory;
@@ -21,6 +22,9 @@ class LeadershipRolesSeeder extends Seeder
             ['title' => 'Vicar General', 'category' => LeadershipRoleCategory::CANONICAL_DIOCESAN, 'hierarchical_level' => 1, 'allows_concurrent' => false, 'is_canonical_mandate' => true],
             ['title' => 'Vicar Forane', 'category' => LeadershipRoleCategory::CANONICAL_DIOCESAN, 'hierarchical_level' => 1, 'allows_concurrent' => false, 'is_canonical_mandate' => true],
             ['title' => 'Pastor', 'category' => LeadershipRoleCategory::PARISH_CLERGY, 'hierarchical_level' => 2, 'allows_concurrent' => false, 'is_canonical_mandate' => false],
+            ['title' => 'Parish Priest', 'category' => LeadershipRoleCategory::PARISH_CLERGY, 'hierarchical_level' => 2, 'allows_concurrent' => false, 'is_canonical_mandate' => false],
+            ['title' => 'Assistant Parish Priest', 'category' => LeadershipRoleCategory::PARISH_CLERGY, 'hierarchical_level' => 2, 'allows_concurrent' => true, 'is_canonical_mandate' => false],
+            ['title' => 'Joint Parish Priest', 'category' => LeadershipRoleCategory::PARISH_CLERGY, 'hierarchical_level' => 2, 'allows_concurrent' => true, 'is_canonical_mandate' => false],
             ['title' => 'Parochial Administrator', 'category' => LeadershipRoleCategory::PARISH_CLERGY, 'hierarchical_level' => 2, 'allows_concurrent' => false, 'is_canonical_mandate' => false],
             ['title' => 'Parochial Vicar', 'category' => LeadershipRoleCategory::PARISH_CLERGY, 'hierarchical_level' => 2, 'allows_concurrent' => true, 'is_canonical_mandate' => false],
             ['title' => 'Deacon', 'category' => LeadershipRoleCategory::PARISH_CLERGY, 'hierarchical_level' => 2, 'allows_concurrent' => true, 'is_canonical_mandate' => false],
@@ -36,10 +40,20 @@ class LeadershipRolesSeeder extends Seeder
 
     public function run(): void
     {
-        foreach (self::globalRoles() as $role) {
+        self::sync(self::globalRoles());
+    }
+
+    /**
+     * Insert missing system roles and fold tenant copies of the same title into them.
+     *
+     * @param  list<array{title: string, category: string, hierarchical_level: int, allows_concurrent: bool, is_canonical_mandate: bool}>  $roles
+     */
+    public static function sync(array $roles): void
+    {
+        foreach ($roles as $role) {
             $normalizedTitle = LeadershipRoleNameNormalizer::normalize($role['title']);
 
-            LeadershipRole::query()->firstOrCreate(
+            $systemRole = LeadershipRole::query()->firstOrCreate(
                 [
                     'tenant_id' => null,
                     'normalized_title' => $normalizedTitle,
@@ -54,6 +68,24 @@ class LeadershipRolesSeeder extends Seeder
                     'is_active' => true,
                 ]
             );
+
+            self::absorbTenantCopies($systemRole);
+        }
+    }
+
+    private static function absorbTenantCopies(LeadershipRole $systemRole): void
+    {
+        $copies = LeadershipRole::query()
+            ->whereNotNull('tenant_id')
+            ->where('normalized_title', $systemRole->normalized_title)
+            ->get();
+
+        foreach ($copies as $copy) {
+            DB::table('leadership_assignments')
+                ->where('role_id', $copy->id)
+                ->update(['role_id' => $systemRole->id]);
+
+            $copy->delete();
         }
     }
 }

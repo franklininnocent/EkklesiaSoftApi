@@ -20,7 +20,9 @@ class CertificateProjectionBuilder
 {
     public function __construct(
         protected SacramentDefinitionRegistry $definitions,
-        protected CertificateViewAssembler $views
+        protected CertificateViewAssembler $views,
+        protected MarriageRegisterCertificateEnricher $marriageEnricher,
+        protected MarriageCertificateRequirementsValidator $marriageRequirements,
     ) {}
 
     /**
@@ -30,6 +32,13 @@ class CertificateProjectionBuilder
     public function build(Sacrament $sacrament, string $language = 'en', string $locale = 'en_US', array $options = []): array
     {
         $sacrament->loadMissing(['sacramentType', 'participants']);
+
+        if (SacramentTypeCode::isMatrimony($sacrament->sacramentType?->code)) {
+            $this->marriageEnricher->enrich($sacrament, (int) $sacrament->tenant_id);
+            $sacrament->refresh();
+            $sacrament->loadMissing(['sacramentType', 'participants']);
+            $this->marriageRequirements->assertReady($sacrament);
+        }
 
         $type = $sacrament->sacramentType;
         if (! $type) {

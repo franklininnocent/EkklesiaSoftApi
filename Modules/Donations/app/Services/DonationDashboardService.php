@@ -38,17 +38,24 @@ class DonationDashboardService
         int $tenantId,
         ?DashboardDateRange $range = null,
         ?DashboardBccFilter $bccFilter = null,
-        ?DashboardProjectFilter $projectFilter = null
+        ?DashboardProjectFilter $projectFilter = null,
+        bool $executiveLite = false
     ): array {
         $bccFilter ??= DashboardBccFilter::none();
         $projectFilter ??= DashboardProjectFilter::none();
-        $base = $this->buildBaseTotals($tenantId, $range, $bccFilter, $projectFilter);
+        $base = $executiveLite
+            ? $this->buildExecutiveLiteBase($tenantId, $range, $bccFilter, $projectFilter)
+            : $this->buildBaseTotals($tenantId, $range, $bccFilter, $projectFilter);
         $families = $this->buildFamilyMetrics($tenantId, $range, $bccFilter, $projectFilter);
-        $periodCollections = $this->buildPeriodCollections($tenantId, $range, $bccFilter, $projectFilter);
+        $periodCollections = $this->buildPeriodCollections($tenantId, $range, $bccFilter, $projectFilter, ! $executiveLite);
         $rangeCollected = (float) ($periodCollections['current_month_collected'] ?? 0);
-        $trend = $this->buildCollectionTrend($tenantId, $rangeCollected, $range, $bccFilter, $projectFilter);
-        $attentionList = $this->buildAttentionList($tenantId, $range, $bccFilter, $projectFilter);
-        $recentActivity = $this->buildRecentActivity($tenantId, $bccFilter, $projectFilter);
+        $trend = $executiveLite
+            ? []
+            : $this->buildCollectionTrend($tenantId, $rangeCollected, $range, $bccFilter, $projectFilter);
+        $attentionList = $this->buildAttentionList($tenantId, $range, $bccFilter, $projectFilter, ! $executiveLite);
+        $recentActivity = $executiveLite
+            ? []
+            : $this->buildRecentActivity($tenantId, $bccFilter, $projectFilter);
         $projectSummaries = $this->buildProjectSummaries($tenantId, $projectFilter);
 
         $previousMonth = $periodCollections['previous_month_collected'];
@@ -83,29 +90,35 @@ class DonationDashboardService
         $monthEnd = $range?->collectionEnd
             ?? (string) ($periodCollections['period']['month_end'] ?? DonationBusinessDate::monthEnd($tenantId));
 
-        if ($projectFilter->isActive) {
-            $paymentCount = $this->executiveMetrics->countDistinctPaymentsWithProjectAllocationsInRange(
-                $tenantId,
-                $monthStart,
-                $monthEnd,
-                $bccFilter,
-                $projectFilter
-            );
-        } else {
-            $paymentCountQuery = DonationPayment::forTenant($tenantId)
-                ->where('status', 'succeeded')
-                ->whereBetween('payment_date', [$monthStart, $monthEnd]);
-            $bccFilter->applyToDonationPaymentQuery($paymentCountQuery, $tenantId);
-            $paymentCount = (int) $paymentCountQuery->count();
+        $averageContribution = 0.0;
+        $planCompliance = 0.0;
+        $collectionPerformancePct = 0.0;
+        $collectionChart = [];
+        if (! $executiveLite) {
+            if ($projectFilter->isActive) {
+                $paymentCount = $this->executiveMetrics->countDistinctPaymentsWithProjectAllocationsInRange(
+                    $tenantId,
+                    $monthStart,
+                    $monthEnd,
+                    $bccFilter,
+                    $projectFilter
+                );
+            } else {
+                $paymentCountQuery = DonationPayment::forTenant($tenantId)
+                    ->where('status', 'succeeded')
+                    ->whereBetween('payment_date', [$monthStart, $monthEnd]);
+                $bccFilter->applyToDonationPaymentQuery($paymentCountQuery, $tenantId);
+                $paymentCount = (int) $paymentCountQuery->count();
+            }
+
+            $averageContribution = $paymentCount > 0
+                ? round($currentMonth / $paymentCount, 2)
+                : 0.0;
+
+            $planCompliance = $this->buildPlanCompliancePct($tenantId, $range, $bccFilter, $projectFilter);
+            $collectionPerformancePct = $this->buildCollectionPerformancePct($currentMonth, $previousMonth, $planCompliance);
+            $collectionChart = $this->buildCollectionPerformanceChart($tenantId, $trend);
         }
-
-        $averageContribution = $paymentCount > 0
-            ? round($currentMonth / $paymentCount, 2)
-            : 0.0;
-
-        $planCompliance = $this->buildPlanCompliancePct($tenantId, $range, $bccFilter, $projectFilter);
-        $collectionPerformancePct = $this->buildCollectionPerformancePct($currentMonth, $previousMonth, $planCompliance);
-        $collectionChart = $this->buildCollectionPerformanceChart($tenantId, $trend);
 
         $financialHealth = $this->healthService->buildChurchScore([
             'participation_rate' => $families['participation_rate'],
@@ -165,7 +178,9 @@ class DonationDashboardService
             'tenant_context' => $this->buildTenantContext($tenantId),
         ]);
 
-        $payload['proactive_insights'] = $this->insightsService->buildProactiveInsights($payload);
+        $payload['proactive_insights'] = $executiveLite
+            ? []
+            : $this->insightsService->buildProactiveInsights($payload);
         $payload['snapshot'] = $this->snapshotBuilder->build(
             $tenantId,
             $periodCollections,
@@ -177,7 +192,8 @@ class DonationDashboardService
             (int) ($base['totals']['active_projects'] ?? 0),
             $range,
             $bccFilter,
-            $projectFilter
+            $projectFilter,
+            ! $executiveLite
         );
         $payload['preset_windows'] = DashboardDateRange::presetWindowsForTenant($tenantId);
         if ($range !== null) {
@@ -387,6 +403,34 @@ class DonationDashboardService
             'parish' => 'parish_and_branches',
             default => 'tenant_only',
         };
+    }
+
+    /**
+     * Amounts the parish executive card reads from the donations snapshot.
+     * Lifetime collections, refunds, and voluntary breakdowns stay on the full dashboard.
+     *
+     * @return array<string, mixed>
+     */
+    private function buildExecutiveLiteBase(
+        int $tenantId,
+        ?DashboardDateRange $range = null,
+        ?DashboardBccFilter $bccFilter = null,
+        ?DashboardProjectFilter $projectFilter = null
+    ): array {
+        $bccFilter ??= DashboardBccFilter::none();
+        $projectFilter ??= DashboardProjectFilter::none();
+        $asOf = $range?->asOf ?? DonationBusinessDate::today($tenantId);
+        $pendingDues = $this->executiveMetrics->sumPendingDuesCollectable($tenantId, $asOf, $bccFilter, $projectFilter);
+        $activeProjects = DonationProject::forTenant($tenantId)
+            ->where('status', 'active')
+            ->count();
+
+        return [
+            'totals' => [
+                'pending_dues' => MoneyMath::toApiNumber($pendingDues),
+                'active_projects' => $activeProjects,
+            ],
+        ];
     }
 
     /**
@@ -609,7 +653,9 @@ class DonationDashboardService
     private function buildPeriodCollections(
         int $tenantId,
         ?DashboardDateRange $range = null,
-        ?DashboardBccFilter $bccFilter = null, ?DashboardProjectFilter $projectFilter = null
+        ?DashboardBccFilter $bccFilter = null,
+        ?DashboardProjectFilter $projectFilter = null,
+        bool $includeMethodBreakdown = true
     ): array {
         $bccFilter ??= DashboardBccFilter::none();
         $projectFilter ??= DashboardProjectFilter::none();
@@ -642,7 +688,9 @@ class DonationDashboardService
             'current_month_collected' => MoneyMath::toApiNumber($currentMonthCollected),
             'previous_month_collected' => MoneyMath::toApiNumber($previousMonthCollected),
             'annual_collected' => MoneyMath::toApiNumber($annualCollected),
-            'collections_by_method_this_month' => $this->buildCollectionsByMethodForRange($tenantId, $currentMonthStart, $currentMonthEnd, $bccFilter, $projectFilter),
+            'collections_by_method_this_month' => $includeMethodBreakdown
+                ? $this->buildCollectionsByMethodForRange($tenantId, $currentMonthStart, $currentMonthEnd, $bccFilter, $projectFilter)
+                : [],
             'period' => [
                 'month_start' => $currentMonthStart,
                 'month_end' => $currentMonthEnd,
@@ -810,7 +858,9 @@ class DonationDashboardService
     private function buildAttentionList(
         int $tenantId,
         ?DashboardDateRange $range = null,
-        ?DashboardBccFilter $bccFilter = null, ?DashboardProjectFilter $projectFilter = null
+        ?DashboardBccFilter $bccFilter = null,
+        ?DashboardProjectFilter $projectFilter = null,
+        bool $includeFamilyDetails = true
     ): array {
         $bccFilter ??= DashboardBccFilter::none();
         $projectFilter ??= DashboardProjectFilter::none();
@@ -821,6 +871,14 @@ class DonationDashboardService
         $overdueTotals = $this->executiveMetrics->overdueAttentionTotals($tenantId, $businessDate, $bccFilter, $projectFilter);
         $familyCount = $overdueTotals['count'];
         $totalOverdueAmount = $overdueTotals['total_overdue_amount'];
+
+        if (! $includeFamilyDetails) {
+            return [
+                'families' => [],
+                'count' => $familyCount,
+                'total_overdue_amount' => $totalOverdueAmount,
+            ];
+        }
 
         if ($projectFilter->isActive) {
             $overdueQuery = ProjectInstallmentDue::forTenant($tenantId);

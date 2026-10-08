@@ -13,9 +13,13 @@ final class FamilyDashboardCache
         $key = self::versionKey((int) $tenantId);
         if (Cache::has($key)) {
             Cache::increment($key);
-        } else {
-            Cache::forever($key, 2);
+
+            return;
         }
+
+        // Database store does not increment a missing key; Redis does. Seed a
+        // version of 2 so the first mutation invalidates the default v1 payload.
+        Cache::forever($key, 2);
     }
 
     public static function version(int $tenantId): int

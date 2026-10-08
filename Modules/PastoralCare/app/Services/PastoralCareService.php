@@ -3,6 +3,7 @@
 namespace Modules\PastoralCare\Services;
 
 use App\Support\Html\HtmlSanitizer;
+use App\Support\UserFacingDate;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
@@ -10,6 +11,9 @@ use Modules\Authentication\Models\User;
 use Modules\Family\app\Services\ParishionerFamilyAccessService;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
+use Modules\Notifications\Contracts\NotificationPublisherContract;
+use Modules\Notifications\Support\InboxScope;
+use Modules\Notifications\Support\NotificationIntent;
 use Modules\PastoralCare\Exceptions\PastoralCareException;
 use Modules\PastoralCare\Models\PastoralCareRequest;
 use Modules\PastoralCare\Support\PastoralCarePriority;
@@ -230,11 +234,31 @@ class PastoralCareService
             ];
         }
 
+        $counts = $this->executiveCounts($tenantId);
+
         return [
-            'open_count' => PastoralCareRequest::query()->forTenant($tenantId)->where('status', PastoralCareStatus::OPEN)->count(),
-            'assigned_count' => PastoralCareRequest::query()->forTenant($tenantId)->where('status', PastoralCareStatus::ASSIGNED)->count(),
+            'open_count' => $counts['open_count'],
+            'assigned_count' => $counts['assigned_count'],
             'alerts' => $alerts,
             'tasks' => $active->map(fn (PastoralCareRequest $request) => $this->toArray($request))->all(),
+        ];
+    }
+
+    /**
+     * @return array{open_count: int, assigned_count: int}
+     */
+    public function executiveCounts(int $tenantId): array
+    {
+        $counts = PastoralCareRequest::query()
+            ->forTenant($tenantId)
+            ->whereIn('status', [PastoralCareStatus::OPEN, PastoralCareStatus::ASSIGNED])
+            ->selectRaw('status, count(*) as aggregate')
+            ->groupBy('status')
+            ->pluck('aggregate', 'status');
+
+        return [
+            'open_count' => (int) ($counts[PastoralCareStatus::OPEN] ?? 0),
+            'assigned_count' => (int) ($counts[PastoralCareStatus::ASSIGNED] ?? 0),
         ];
     }
 
@@ -300,19 +324,19 @@ class PastoralCareService
 
     private function notifyAssignee(int $tenantId, User $actor, PastoralCareRequest $request, int $assigneeId): void
     {
-        if (! interface_exists(\Modules\Notifications\Contracts\NotificationPublisherContract::class)) {
+        if (! interface_exists(NotificationPublisherContract::class)) {
             return;
         }
 
         try {
-            app(\Modules\Notifications\Contracts\NotificationPublisherContract::class)->publish(
-                new \Modules\Notifications\Support\NotificationIntent(
+            app(NotificationPublisherContract::class)->publish(
+                new NotificationIntent(
                     definitionCode: 'pastoral.visit.assigned',
                     actor: $actor,
                     subjectType: 'pastoral_care_request',
                     subjectId: $request->id,
                     tenantId: $tenantId,
-                    scope: \Modules\Notifications\Support\InboxScope::Tenant,
+                    scope: InboxScope::Tenant,
                     occurrenceId: $request->id.'-assign-'.$assigneeId,
                     data: [
                         'family_name' => $request->family?->family_name ?? 'a family',
@@ -342,6 +366,6 @@ class PastoralCareService
             return 'Tomorrow';
         }
 
-        return \App\Support\UserFacingDate::formatDate($due);
+        return UserFacingDate::formatDate($due);
     }
 }

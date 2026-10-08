@@ -6,6 +6,9 @@ use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\ServiceProvider;
 use Modules\Family\app\Console\Commands\DeleteDuplicateFamilyMembers;
 use Modules\Family\app\Console\Commands\SeedBccDummyFamiliesCommand;
+use Modules\Family\Models\Family;
+use Modules\Family\Models\FamilyMember;
+use Modules\Family\Observers\InvalidateSacramentDashboardCacheObserver;
 use Modules\Family\Support\Usage\FamilyUsageProvider;
 use Modules\Family\Support\Usage\PeopleUsageProvider;
 use Modules\Tenants\Support\UsageMetricRegistry;
@@ -32,6 +35,10 @@ class FamilyServiceProvider extends ServiceProvider
         $this->registerConfig();
         $this->registerViews();
         $this->loadMigrationsFrom(module_path($this->name, 'database/migrations'));
+
+        $dashboardCacheObserver = InvalidateSacramentDashboardCacheObserver::class;
+        FamilyMember::observe($dashboardCacheObserver);
+        Family::observe($dashboardCacheObserver);
     }
 
     /**

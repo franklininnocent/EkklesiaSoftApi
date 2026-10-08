@@ -112,6 +112,8 @@ Route::prefix('tenant/donations')->middleware(['donations.security.log', 'auth:a
 
     Route::get('/dues', [ContributionDuesController::class, 'index']);
     Route::post('/dues', [ContributionDuesController::class, 'store'])->middleware('tenant.permission:donations.manage');
+    Route::post('/dues/bulk-waive', [ContributionDuesController::class, 'bulkWaive'])->middleware('tenant.permission:donations.manage');
+    Route::post('/dues/bulk-remind', [ContributionDuesController::class, 'bulkRemind'])->middleware('tenant.permission:donations.notifications');
     Route::post('/dues/{id}/waive', [ContributionDuesController::class, 'waive'])->middleware('tenant.permission:donations.manage');
     Route::post('/dues/{id}/cancel', [ContributionDuesController::class, 'cancel'])->middleware('tenant.permission:donations.manage');
     Route::post('/dues/{id}/remind', [ContributionDuesController::class, 'sendReminder'])->middleware('tenant.permission:donations.notifications');

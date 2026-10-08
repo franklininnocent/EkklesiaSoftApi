@@ -21,6 +21,7 @@ use Modules\Tenants\Contracts\TenantEntitlementGate;
 use Modules\Tenants\Contracts\TenantPlanAssigner;
 use Modules\Tenants\Http\Requests\StoreTenantRequest;
 use Modules\Tenants\Http\Requests\UpdateTenantRequest;
+use Modules\Tenants\Http\Requests\UploadChurchProfileLogoRequest;
 use Modules\Tenants\Http\Requests\UploadTenantLogoRequest;
 use Modules\Tenants\Http\Resources\TenantDetailsResource;
 use Modules\Tenants\Models\ChurchProfile;
@@ -1307,6 +1308,152 @@ class TenantsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error fetching church profile',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
+        }
+    }
+
+    /**
+     * Upload or replace the signed-in parish's logo.
+     * Tenant id comes from the session, not the request.
+     *
+     * @route POST /api/tenant/church-profile/logo
+     */
+    public function uploadChurchLogo(UploadChurchProfileLogoRequest $request): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            $tenantId = app(TenantContext::class)->effectiveTenantId();
+
+            if (! $user || $tenantId === null) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User is not associated with a tenant/church',
+                ], 404);
+            }
+
+            if (! $this->canUpdateChurchProfileShell($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Only church administrators can update the church logo.',
+                ], 403);
+            }
+
+            $tenant = Tenant::find($tenantId);
+
+            if (! $tenant) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Church profile not found',
+                ], 404);
+            }
+
+            $result = $this->fileUploadService->replaceTenantLogo(
+                $request->file('logo'),
+                $tenant->id,
+                $tenant->logo_url,
+                function (string $storageKey) use ($tenant): void {
+                    DB::transaction(function () use ($tenant, $storageKey): void {
+                        $locked = Tenant::query()->whereKey($tenant->id)->lockForUpdate()->firstOrFail();
+                        $locked->logo_url = $storageKey;
+                        $locked->save();
+                    });
+                }
+            );
+
+            Log::info('Church logo uploaded', [
+                'tenant_id' => $tenant->id,
+                'uploaded_by' => $user->id,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Logo uploaded successfully',
+                'data' => [
+                    'logo_full_url' => $this->fileUploadService->getTenantLogoUrl($result->storageKey, $tenant->id),
+                ],
+            ]);
+        } catch (ImageMediaException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->publicMessage(),
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Error uploading church logo: '.$e->getMessage(), [
+                'user_id' => auth()->id(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error uploading logo',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
+        }
+    }
+
+    /**
+     * Remove the signed-in parish's logo.
+     *
+     * @route DELETE /api/tenant/church-profile/logo
+     */
+    public function deleteChurchLogo(): JsonResponse
+    {
+        try {
+            $user = auth()->user();
+            $tenantId = app(TenantContext::class)->effectiveTenantId();
+
+            if (! $user || $tenantId === null) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User is not associated with a tenant/church',
+                ], 404);
+            }
+
+            if (! $this->canUpdateChurchProfileShell($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Only church administrators can update the church logo.',
+                ], 403);
+            }
+
+            $tenant = Tenant::find($tenantId);
+
+            if (! $tenant || ! $tenant->logo_url) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Church has no logo',
+                ], 404);
+            }
+
+            $previousLogo = $tenant->logo_url;
+
+            DB::transaction(function () use ($tenant): void {
+                $locked = Tenant::query()->whereKey($tenant->id)->lockForUpdate()->firstOrFail();
+                $locked->logo_url = null;
+                $locked->save();
+            });
+
+            $this->fileUploadService->deleteTenantLogo($previousLogo, $tenant->id);
+
+            Log::info('Church logo deleted', [
+                'tenant_id' => $tenant->id,
+                'deleted_by' => $user->id,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Logo deleted successfully',
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error deleting church logo: '.$e->getMessage(), [
+                'user_id' => auth()->id(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error deleting logo',
                 'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
             ], 500);
         }

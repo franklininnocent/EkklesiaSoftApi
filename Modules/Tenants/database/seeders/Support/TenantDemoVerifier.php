@@ -57,6 +57,10 @@ final class TenantDemoVerifier
         }
 
         if ($familyCount >= 1) {
+            $errors = array_merge($errors, SacramentsDemoVerifier::verify($tenantId));
+        }
+
+        if ($familyCount >= 1) {
             if (OrganizationMembership::query()
                 ->where('tenant_id', $tenantId)
                 ->where('remarks', TenantDemoMarkers::MARKER)

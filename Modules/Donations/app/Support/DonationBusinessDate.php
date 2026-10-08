@@ -3,8 +3,8 @@
 namespace Modules\Donations\Support;
 
 use Carbon\Carbon;
-use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Services\ChurchFinancialPeriodResolver;
+use Modules\Tenants\Support\TenantTimezone;
 
 final class DonationBusinessDate
 {
@@ -38,14 +38,7 @@ final class DonationBusinessDate
 
     public static function timezoneForTenant(int $tenantId): string
     {
-        $tenant = Tenant::query()->find($tenantId);
-        $fromTenant = $tenant?->getSetting('timezone');
-
-        if (is_string($fromTenant) && $fromTenant !== '') {
-            return $fromTenant;
-        }
-
-        return (string) config('tenants.default_settings.timezone', 'Asia/Kolkata');
+        return TenantTimezone::forTenantId($tenantId);
     }
 
     /**

@@ -190,7 +190,8 @@ class CertificateEngineMapperTest extends TestCase
             ],
         ]);
 
-        $this->assertSame('Sacred Heart Church, Kadayal', $view['groom']['parishResidence']);
+        $this->assertSame('Sacred Heart Church', $view['groom']['parishResidence']);
+        $this->assertNull($view['groom']['residenceAddress']);
         $this->assertSame('Diocese of Kuzhithurai', $view['church']['diocese']);
     }
 

@@ -42,7 +42,8 @@ class DonationDashboardSnapshotBuilder
         int $activeProjectCount,
         ?DashboardDateRange $range = null,
         ?DashboardBccFilter $bccFilter = null,
-        ?DashboardProjectFilter $projectFilter = null
+        ?DashboardProjectFilter $projectFilter = null,
+        bool $includeDashboardPanels = true
     ): array {
         $bccFilter ??= DashboardBccFilter::none();
         $projectFilter ??= DashboardProjectFilter::none();
@@ -73,13 +74,15 @@ class DonationDashboardSnapshotBuilder
             'amount' => MoneyMath::toApiNumber($dueSchedule['next_14_days_amount']),
             'families' => (int) $dueSchedule['next_14_days_family_count'],
         ];
-        $installments = $this->projectInstallmentSplit($tenantId, $businessDate, $bccFilter, $projectFilter);
+        $installments = $includeDashboardPanels
+            ? $this->projectInstallmentSplit($tenantId, $businessDate, $bccFilter, $projectFilter)
+            : $this->projectInstallmentOpen($tenantId, $bccFilter, $projectFilter);
         $fiscalYearCollected = MoneyMath::normalize($periodCollections['annual_collected'] ?? 0);
         $comparisonCollected = MoneyMath::normalize($growthAnalysis['previous_collected'] ?? 0);
         $active = (int) ($families['active'] ?? 0);
         $participating = (int) ($families['participating_last_90_days'] ?? 0);
 
-        return [
+        $payload = [
             'as_of' => $businessDate,
             'timezone' => DonationBusinessDate::timezoneForTenant($tenantId),
             'due_next_14_days_basis' => 'parish_today',
@@ -116,12 +119,37 @@ class DonationDashboardSnapshotBuilder
                 'not_participating' => max(0, $active - $participating),
                 'net_change_vs_prior_window' => (int) ($families['contributing_families_delta'] ?? 0),
             ],
-            'giving_mix' => $this->givingMix($tenantId, $givingStart, $givingEnd, $givingTotal, $bccFilter, $projectFilter),
             'project_installments' => $installments,
             'active_project_count' => $activeProjectCount,
-            'projects' => $this->projectRows($tenantId, $projectFilter),
-            'attention_families' => array_slice($attention['families'] ?? [], 0, 5),
-            'recent_payments' => array_slice($recentActivity, 0, 5),
+        ];
+
+        if ($includeDashboardPanels) {
+            $payload['giving_mix'] = $this->givingMix($tenantId, $givingStart, $givingEnd, $givingTotal, $bccFilter, $projectFilter);
+            $payload['projects'] = $this->projectRows($tenantId, $projectFilter);
+            $payload['attention_families'] = array_slice($attention['families'] ?? [], 0, 5);
+            $payload['recent_payments'] = array_slice($recentActivity, 0, 5);
+        }
+
+        return $payload;
+    }
+
+    /**
+     * Open installment balance for the executive card. Every dated open row is either
+     * before or on/after the business date, so one sum matches the overdue + later split.
+     *
+     * @return array{open: float}
+     */
+    private function projectInstallmentOpen(
+        int $tenantId,
+        DashboardBccFilter $bccFilter,
+        DashboardProjectFilter $projectFilter
+    ): array {
+        $open = $this->installmentOutstanding($tenantId, function (Builder $query): void {
+            $query->whereNotNull('due_date');
+        }, $bccFilter, $projectFilter);
+
+        return [
+            'open' => MoneyMath::toApiNumber($open),
         ];
     }
 

@@ -16,8 +16,7 @@ class TenantExecutiveDashboardController extends Controller
 
     public function __construct(
         private readonly TenantExecutiveDashboardComposer $composer,
-    ) {
-    }
+    ) {}
 
     public function executive(Request $request): JsonResponse
     {
@@ -30,8 +29,13 @@ class TenantExecutiveDashboardController extends Controller
         }
 
         try {
+            $validated = $request->validate([
+                'bundle' => 'nullable|string|in:all,primary,secondary,snapshot,celebrations,quick_actions,stewardship,mass,pastoral,ministries',
+            ]);
+            $bundle = $validated['bundle'] ?? 'all';
+
             $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
-            $payload = $this->composer->build($request->user(), $tenantId);
+            $payload = $this->composer->build($request->user(), $tenantId, $bundle);
 
             return response()->json([
                 'success' => true,

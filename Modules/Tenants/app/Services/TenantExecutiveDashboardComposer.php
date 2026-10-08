@@ -2,11 +2,13 @@
 
 namespace Modules\Tenants\Services;
 
+use App\Support\MoneyMath;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 use Modules\Authentication\Models\User;
 use Modules\BCC\Services\BccDashboardService;
 use Modules\Donations\Services\DonationDashboardService;
+use Modules\Donations\Support\DonationBusinessDate;
 use Modules\Family\app\Repositories\FamilyRepository;
 use Modules\Family\app\Services\MemberAgeDemographicsService;
 use Modules\Family\app\Services\MemberCelebrationsService;
@@ -17,11 +19,13 @@ use Modules\PastoralCare\Services\PastoralCareService;
 use Modules\Sacraments\Services\SacramentDashboardService;
 use Modules\Sacraments\Support\SacramentPrivacyAccess;
 use Modules\Tenants\Contracts\TenantEntitlementGate;
-use App\Support\MoneyMath;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Support\TenantCacheVersion;
 
 class TenantExecutiveDashboardComposer
 {
+    private const RESPONSE_CACHE_TTL_SECONDS = 120;
+
     private ?int $donationSummaryTenantId = null;
 
     /** @var array<string, mixed>|null */
@@ -31,6 +35,26 @@ class TenantExecutiveDashboardComposer
 
     /** @var array<string, mixed>|null */
     private ?array $massOperationalCache = null;
+
+    private ?int $familyStatsTenantId = null;
+
+    /** @var array<string, mixed>|null */
+    private ?array $familyStatsCache = null;
+
+    private ?int $ministriesTenantId = null;
+
+    /** @var array<string, mixed>|null */
+    private ?array $ministriesCache = null;
+
+    private ?int $pastoralTenantId = null;
+
+    /** @var array<string, mixed>|null */
+    private ?array $pastoralCache = null;
+
+    private ?int $bccSnapshotTenantId = null;
+
+    /** @var array<string, mixed>|null */
+    private ?array $bccSnapshotCache = null;
 
     public function __construct(
         private readonly FamilyRepository $familyRepository,
@@ -45,31 +69,104 @@ class TenantExecutiveDashboardComposer
         private readonly MemberAgeDemographicsService $memberAgeDemographicsService,
         private readonly PastoralCareService $pastoralCareService,
         private readonly TenantEntitlementGate $entitlementGate,
-    ) {
+    ) {}
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function build(User $user, int $tenantId, string $bundle = 'all'): array
+    {
+        $bundle = in_array($bundle, [
+            'all',
+            'primary',
+            'secondary',
+            'snapshot',
+            'celebrations',
+            'quick_actions',
+            'stewardship',
+            'mass',
+            'pastoral',
+            'ministries',
+        ], true) ? $bundle : 'all';
+
+        $cacheSuffix = sprintf('bundle_%s:user_%d', $bundle, (int) $user->id);
+
+        return TenantCacheVersion::remember(
+            $tenantId,
+            'tenant_executive_dashboard',
+            $cacheSuffix,
+            self::RESPONSE_CACHE_TTL_SECONDS,
+            fn () => $this->buildUncached($user, $tenantId, $bundle)
+        );
     }
 
     /**
      * @return array<string, mixed>
      */
-    public function build(User $user, int $tenantId): array
+    private function buildUncached(User $user, int $tenantId, string $bundle): array
     {
         $this->donationSummaryTenantId = null;
         $this->donationSummaryCache = null;
         $this->massOperationalTenantId = null;
         $this->massOperationalCache = null;
+        $this->familyStatsTenantId = null;
+        $this->familyStatsCache = null;
+        $this->ministriesTenantId = null;
+        $this->ministriesCache = null;
+        $this->pastoralTenantId = null;
+        $this->pastoralCache = null;
+        $this->bccSnapshotTenantId = null;
+        $this->bccSnapshotCache = null;
 
         $tenant = Tenant::query()->find($tenantId);
 
-        return [
-            'snapshot' => $this->buildSnapshot($user, $tenantId, $tenant),
-            'attention' => $this->buildAttention($user, $tenantId, $tenant),
-            'stewardship' => $this->buildStewardship($user, $tenantId, $tenant),
-            'mass_intentions' => $this->buildMassIntentions($user, $tenantId, $tenant),
-            'worship' => $this->buildWorship($user, $tenantId, $tenant),
-            'pastoral' => $this->buildPastoral($user, $tenantId),
-            'celebrations' => $this->buildCelebrations($user, $tenantId),
-            'quick_actions' => $this->buildQuickActions($user, $tenant),
-        ];
+        return match ($bundle) {
+            'primary' => [
+                'snapshot' => $this->buildSnapshot($user, $tenantId, $tenant),
+                'celebrations' => $this->buildCelebrations($user, $tenantId),
+                'quick_actions' => $this->buildQuickActions($user, $tenant),
+            ],
+            'secondary' => [
+                'attention' => $this->buildAttention($user, $tenantId, $tenant),
+                'stewardship' => $this->buildStewardship($user, $tenantId, $tenant),
+                'mass_intentions' => $this->buildMassIntentions($user, $tenantId, $tenant),
+                'worship' => $this->buildWorship($user, $tenantId, $tenant),
+                'pastoral' => $this->buildPastoral($user, $tenantId),
+            ],
+            'snapshot' => [
+                'snapshot' => $this->buildSnapshot($user, $tenantId, $tenant),
+            ],
+            'celebrations' => [
+                'celebrations' => $this->buildCelebrations($user, $tenantId),
+            ],
+            'quick_actions' => [
+                'quick_actions' => $this->buildQuickActions($user, $tenant),
+            ],
+            'stewardship' => [
+                'stewardship' => $this->buildStewardship($user, $tenantId, $tenant),
+            ],
+            'mass' => [
+                'mass_intentions' => $this->buildMassIntentions($user, $tenantId, $tenant),
+                'worship' => $this->buildWorship($user, $tenantId, $tenant),
+            ],
+            'ministries' => [
+                'ministries' => $this->buildMinistries($user, $tenantId, $tenant),
+            ],
+            'pastoral' => [
+                'pastoral' => $this->buildPastoral($user, $tenantId),
+            ],
+            default => [
+                'snapshot' => $this->buildSnapshot($user, $tenantId, $tenant),
+                'attention' => $this->buildAttention($user, $tenantId, $tenant),
+                'stewardship' => $this->buildStewardship($user, $tenantId, $tenant),
+                'mass_intentions' => $this->buildMassIntentions($user, $tenantId, $tenant),
+                'worship' => $this->buildWorship($user, $tenantId, $tenant),
+                'pastoral' => $this->buildPastoral($user, $tenantId),
+                'celebrations' => $this->buildCelebrations($user, $tenantId),
+                'quick_actions' => $this->buildQuickActions($user, $tenant),
+                'ministries' => $this->buildMinistries($user, $tenantId, $tenant),
+            ],
+        };
     }
 
     /**
@@ -81,18 +178,17 @@ class TenantExecutiveDashboardComposer
 
         if ($user->hasPermission('families.view')) {
             try {
-                $familyStats = $this->familyRepository->getStatistics((string) $tenantId);
+                $familyStats = $this->familyStatistics($tenantId);
                 $cards['families'] = [
                     'active_families' => (int) ($familyStats['active_families'] ?? 0),
                     'total_families' => (int) ($familyStats['total_families'] ?? 0),
                     'drilldown' => 'families.directory',
                 ];
-                $demographics = $this->memberAgeDemographicsService->forTenant($tenantId);
                 $cards['members'] = [
                     'active_members' => (int) ($familyStats['active_members'] ?? 0),
                     'total_members' => (int) ($familyStats['total_members'] ?? 0),
                     'members_added_this_month' => (int) ($familyStats['members_created_this_month'] ?? 0),
-                    'age_groups' => $demographics['age_groups'],
+                    'age_groups' => $this->memberAgeDemographicsService->ageGroupsForTenant($tenantId),
                     'drilldown' => 'members.list',
                 ];
             } catch (\Throwable $e) {
@@ -104,9 +200,8 @@ class TenantExecutiveDashboardComposer
 
         if ($user->hasPermission('bcc.view')) {
             try {
-                $summary = $this->bccDashboardService->summary($tenantId);
-                $snapshot = $summary['snapshot'] ?? null;
-                if (! is_array($snapshot) || ! array_key_exists('bccs_active', $snapshot)) {
+                $snapshot = $this->bccCoverageSnapshot($tenantId);
+                if (! array_key_exists('bccs_active', $snapshot)) {
                     $cards['life_groups'] = ['error' => true];
                 } else {
                     $cards['life_groups'] = [
@@ -123,59 +218,15 @@ class TenantExecutiveDashboardComposer
             }
         }
 
-        if ($tenant && $user->hasPermission('ministries.view') && $tenant->supportsMinistriesAssociations()) {
-            try {
-                $m = $this->ministriesDashboardService->summary($tenantId);
-                $byCat = $m['organizations']['active_by_category'] ?? ['ministry' => 0, 'association' => 0, 'other' => 0];
-                $leadership = is_array($m['leadership'] ?? null) ? $m['leadership'] : [];
-                $cards['ministries'] = [
-                    'active_ministries' => (int) ($byCat['ministry'] ?? 0),
-                    'active_associations' => (int) ($byCat['association'] ?? 0),
-                    'active_other' => (int) ($byCat['other'] ?? 0),
-                    'active_groups_total' => (int) ($m['organizations']['active'] ?? 0),
-                    'groups_by_type' => $m['organizations']['active_by_type'] ?? [],
-                    'groups_by_category' => $m['organizations']['category_breakdown'] ?? [],
-                    'active_memberships' => (int) ($m['memberships']['active'] ?? 0),
-                    'vacancies' => (int) ($leadership['vacancies'] ?? 0),
-                    'expiring_soon_count' => (int) ($leadership['expiring_soon_count'] ?? 0),
-                    'drilldown' => 'ministries.home',
-                ];
-            } catch (\Throwable $e) {
-                Log::error('Executive dashboard snapshot ministries failed', ['tenant_id' => $tenantId, 'error' => $e->getMessage()]);
-                $cards['ministries'] = ['error' => true];
-            }
-        }
-
         if ($user->hasPermission('sacraments.view')) {
             try {
                 $restricted = $this->sacramentPrivacyAccess->canViewRestricted($user)
                     ? []
                     : $this->sacramentPrivacyAccess->restrictedTypeCodes();
-                $summary = $this->sacramentDashboardService->getSummary(
-                    $tenantId,
-                    ['minimal' => true],
-                    $restricted
-                );
-                $types = $summary['breakdowns']['by_type_totals'] ?? [];
-                usort($types, static function (array $a, array $b): int {
-                    $cmp = ((int) ($b['count'] ?? 0)) <=> ((int) ($a['count'] ?? 0));
-                    if ($cmp !== 0) {
-                        return $cmp;
-                    }
-
-                    return strcmp((string) ($a['code'] ?? ''), (string) ($b['code'] ?? ''));
-                });
-                $top = array_slice($types, 0, 3);
-                $remaining = max(0, count($types) - count($top));
-                $cards['sacraments'] = [
-                    'total_period' => $summary['kpis']['total_period'] ?? null,
-                    'this_month' => $summary['kpis']['this_month'] ?? null,
-                    'period_label' => (string) ($summary['period']['label'] ?? ''),
-                    'top_types' => $top,
-                    'more_types_count' => $remaining,
-                    'drilldown' => 'sacraments.home',
-                ];
-                if (! is_numeric($cards['sacraments']['total_period']) || ! is_numeric($cards['sacraments']['this_month'])) {
+                $snapshot = $this->sacramentDashboardService->getExecutiveSnapshot($tenantId, $restricted);
+                $cards['sacraments'] = $snapshot;
+                if (! is_numeric($cards['sacraments']['total_period'] ?? null)
+                    || ! is_numeric($cards['sacraments']['this_month'] ?? null)) {
                     $cards['sacraments'] = ['error' => true];
                 }
             } catch (\Throwable $e) {
@@ -209,6 +260,43 @@ class TenantExecutiveDashboardComposer
     }
 
     /**
+     * Independent Ministry executive summary — not gated on family/sacrament snapshot work.
+     *
+     * @return array{state: string, data?: array<string, mixed>}
+     */
+    private function buildMinistries(User $user, int $tenantId, ?Tenant $tenant): array
+    {
+        if (! $tenant || ! $user->hasPermission('ministries.view') || ! $tenant->supportsMinistriesAssociations()) {
+            return ['state' => 'forbidden'];
+        }
+
+        try {
+            $m = $this->ministriesSummary($tenantId);
+            $byCat = $m['organizations']['active_by_category'] ?? ['ministry' => 0, 'association' => 0, 'other' => 0];
+            $leadership = is_array($m['leadership'] ?? null) ? $m['leadership'] : [];
+
+            return [
+                'state' => 'ready',
+                'data' => [
+                    'active_ministries' => (int) ($byCat['ministry'] ?? 0),
+                    'active_associations' => (int) ($byCat['association'] ?? 0),
+                    'active_other' => (int) ($byCat['other'] ?? 0),
+                    'active_groups_total' => (int) ($m['organizations']['active'] ?? 0),
+                    'groups_by_type' => $m['organizations']['active_by_type'] ?? [],
+                    'active_memberships' => (int) ($m['memberships']['active'] ?? 0),
+                    'vacancies' => (int) ($leadership['vacancies'] ?? 0),
+                    'expiring_soon_count' => (int) ($leadership['expiring_soon_count'] ?? 0),
+                    'drilldown' => 'ministries.home',
+                ],
+            ];
+        } catch (\Throwable $e) {
+            Log::error('Executive dashboard ministries failed', ['tenant_id' => $tenantId, 'error' => $e->getMessage()]);
+
+            return ['state' => 'error'];
+        }
+    }
+
+    /**
      * @return array{state: string, data?: array<string, mixed>}
      */
     private function buildAttention(User $user, int $tenantId, ?Tenant $tenant): array
@@ -239,7 +327,7 @@ class TenantExecutiveDashboardComposer
             && $tenant->supportsMassIntentions()
             && $this->entitlementGate->allows($tenant, 'MASS_INTENTIONS')) {
             try {
-                $mass = $this->massIntentionsDashboardService->executiveOperationalCounts($tenantId);
+                $mass = $this->massOperationalCounts($tenantId);
                 if (($mass['needs_a_mass'] ?? 0) > 0) {
                     $items[] = [
                         'key' => 'needs_a_mass',
@@ -268,7 +356,7 @@ class TenantExecutiveDashboardComposer
 
         if ($tenant && $user->hasPermission('ministries.view') && $tenant->supportsMinistriesAssociations()) {
             try {
-                $m = $this->ministriesDashboardService->summary($tenantId);
+                $m = $this->ministriesSummary($tenantId);
                 $vacancies = (int) ($m['leadership']['vacancies'] ?? 0);
                 if ($vacancies > 0) {
                     $items[] = [
@@ -292,7 +380,7 @@ class TenantExecutiveDashboardComposer
 
         if ($user->hasPermission('families.view')) {
             try {
-                $stats = $this->familyRepository->getStatistics((string) $tenantId);
+                $stats = $this->familyStatistics($tenantId);
                 $unlinked = (int) ($stats['families_without_bcc'] ?? 0);
                 if ($unlinked > 0 && $user->hasPermission('bcc.view')) {
                     $items[] = [
@@ -308,7 +396,7 @@ class TenantExecutiveDashboardComposer
 
         if ($user->hasPermission('pastoral.care.view')) {
             try {
-                $pastoral = $this->pastoralCareService->dashboard($tenantId);
+                $pastoral = $this->pastoralCounts($tenantId);
                 $open = (int) ($pastoral['open_count'] ?? 0);
                 if ($open > 0) {
                     $items[] = [
@@ -419,7 +507,7 @@ class TenantExecutiveDashboardComposer
         }
 
         try {
-            $dashboard = $this->pastoralCareService->dashboard($tenantId);
+            $dashboard = $this->pastoralCounts($tenantId);
             if (! isset($dashboard['open_count'], $dashboard['assigned_count'])
                 || ! is_numeric($dashboard['open_count'])
                 || ! is_numeric($dashboard['assigned_count'])
@@ -467,15 +555,12 @@ class TenantExecutiveDashboardComposer
         }
 
         try {
-            $next = $this->massNextUpcomingCelebrationService->resolve($tenantId);
+            $resolved = $this->massNextUpcomingCelebrationService->nextAndUpcoming($tenantId, 3);
+            $next = $resolved['next'];
             $operational = $this->massOperationalCounts($tenantId);
-            $rows = $this->massNextUpcomingCelebrationService->listUpcomingCelebrations($tenantId, 4);
             $upcoming = [];
-            $timezone = \Modules\Donations\Support\DonationBusinessDate::timezoneForTenant($tenantId);
-            foreach ($rows as $celebration) {
-                if ($next !== null && (string) $celebration->id === (string) ($next['id'] ?? '')) {
-                    continue;
-                }
+            $timezone = DonationBusinessDate::timezoneForTenant($tenantId);
+            foreach ($resolved['upcoming'] as $celebration) {
                 $date = $celebration->celebrated_on?->format('Y-m-d') ?? '';
                 $time = $celebration->celebrated_at
                     ? substr((string) $celebration->celebrated_at, 0, 5)
@@ -489,9 +574,6 @@ class TenantExecutiveDashboardComposer
                     'celebrated_on' => $date,
                     'celebrated_at' => $time,
                 ];
-                if (count($upcoming) >= 3) {
-                    break;
-                }
             }
 
             return [
@@ -520,7 +602,7 @@ class TenantExecutiveDashboardComposer
         }
 
         try {
-            $payload = $this->memberCelebrationsService->weekCelebrations($tenantId);
+            $payload = $this->memberCelebrationsService->weekCelebrationCounts($tenantId);
 
             return [
                 'state' => 'ready',
@@ -528,8 +610,8 @@ class TenantExecutiveDashboardComposer
                     'week_label' => (string) ($payload['week']['label'] ?? ''),
                     'week_start' => (string) ($payload['week']['start'] ?? ''),
                     'week_end' => (string) ($payload['week']['end'] ?? ''),
-                    'birthdays_count' => count($payload['birthdays'] ?? []),
-                    'anniversaries_count' => count($payload['anniversaries'] ?? []),
+                    'birthdays_count' => (int) ($payload['birthdays_count'] ?? 0),
+                    'anniversaries_count' => (int) ($payload['anniversaries_count'] ?? 0),
                     'drilldown' => 'members.directory',
                 ],
             ];
@@ -661,10 +743,68 @@ class TenantExecutiveDashboardComposer
     {
         if ($this->donationSummaryTenantId !== $tenantId || $this->donationSummaryCache === null) {
             $this->donationSummaryTenantId = $tenantId;
-            $this->donationSummaryCache = $this->donationDashboardService->getSummary($tenantId);
+            $this->donationSummaryCache = $this->donationDashboardService->getSummary(
+                $tenantId,
+                null,
+                null,
+                null,
+                true
+            );
         }
 
         return $this->donationSummaryCache;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function familyStatistics(int $tenantId): array
+    {
+        if ($this->familyStatsTenantId !== $tenantId || $this->familyStatsCache === null) {
+            $this->familyStatsTenantId = $tenantId;
+            $this->familyStatsCache = $this->familyRepository->getStatistics((string) $tenantId);
+        }
+
+        return $this->familyStatsCache;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function ministriesSummary(int $tenantId): array
+    {
+        if ($this->ministriesTenantId !== $tenantId || $this->ministriesCache === null) {
+            $this->ministriesTenantId = $tenantId;
+            $this->ministriesCache = $this->ministriesDashboardService->executiveSummary($tenantId);
+        }
+
+        return $this->ministriesCache;
+    }
+
+    /**
+     * @return array{open_count: int, assigned_count: int}
+     */
+    private function pastoralCounts(int $tenantId): array
+    {
+        if ($this->pastoralTenantId !== $tenantId || $this->pastoralCache === null) {
+            $this->pastoralTenantId = $tenantId;
+            $this->pastoralCache = $this->pastoralCareService->executiveCounts($tenantId);
+        }
+
+        return $this->pastoralCache;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function bccCoverageSnapshot(int $tenantId): array
+    {
+        if ($this->bccSnapshotTenantId !== $tenantId || $this->bccSnapshotCache === null) {
+            $this->bccSnapshotTenantId = $tenantId;
+            $this->bccSnapshotCache = $this->bccDashboardService->executiveCoverageSnapshot($tenantId);
+        }
+
+        return $this->bccSnapshotCache;
     }
 
     /**

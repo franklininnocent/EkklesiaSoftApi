@@ -10,7 +10,8 @@ use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
 /**
- * Production uses the database cache store, which ignores increments on missing keys.
+ * Database cache ignores increments on missing keys. Version bumpers seed first so
+ * Redis (production default) and the database fallback stay consistent.
  */
 class EntitlementCacheVersionTest extends TestCase
 {

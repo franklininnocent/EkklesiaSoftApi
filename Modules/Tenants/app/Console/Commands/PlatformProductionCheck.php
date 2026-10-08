@@ -27,6 +27,7 @@ class PlatformProductionCheck extends Command
                 return TenantRlsManager::isEnabled();
             }, true),
             $this->check('Queue driver is not sync', fn () => config('queue.default') !== 'sync', $strict),
+            $this->check('Cache store is redis', fn () => config('cache.default') === 'redis', $strict),
             $this->check('Platform health token configured', fn () => (string) config('tenants.platform.health.token', '') !== '', $strict),
             $this->check('Session secure cookie in production', fn () => (bool) config('session.secure', false), $strict),
             $this->check('Export cleanup scheduled', fn () => (bool) config('tenants.platform.scheduler.export_cleanup_enabled', true), false),

@@ -2,6 +2,8 @@
 
 namespace Modules\Sacraments\Services;
 
+use Modules\Family\app\Services\FamilyMemberParentNameResolver;
+use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
 use Modules\Family\Models\Person;
 use Modules\Sacraments\Support\BaptismalStatus;
@@ -16,6 +18,10 @@ use Modules\Tenants\Models\LeadershipAssignment;
  */
 class ParticipantSnapshotBuilder
 {
+    public function __construct(
+        protected FamilyMemberParentNameResolver $parentNameResolver,
+    ) {}
+
     /**
      * @param  array<string, mixed>  $participant
      * @return array<string, mixed>
@@ -106,6 +112,28 @@ class ParticipantSnapshotBuilder
         $middle = $person?->middle_name ?? $member?->middle_name;
         $last = $person?->last_name ?? $member?->last_name;
 
+        $fatherName = $this->optionalText($participant['father_name'] ?? null) ?? $person?->father_name;
+        $motherName = $this->optionalText($participant['mother_name'] ?? null) ?? $person?->mother_name;
+        $address = $this->optionalText($participant['external_address'] ?? null);
+
+        if ($member) {
+            $member->loadMissing(['family', 'person']);
+            $familyMembers = FamilyMember::query()
+                ->where('family_id', $member->family_id)
+                ->whereNull('deleted_at')
+                ->get(['id', 'family_id', 'first_name', 'middle_name', 'last_name', 'relationship_to_head', 'gender', 'person_id']);
+            $parents = $this->parentNameResolver->resolveForMember($member, $familyMembers);
+            $fatherName = $this->optionalText($participant['father_name'] ?? null)
+                ?? $parents['father_name']
+                ?? $fatherName;
+            $motherName = $this->optionalText($participant['mother_name'] ?? null)
+                ?? $parents['mother_name']
+                ?? $motherName;
+            $address = $address
+                ?? $this->formatFamilyAddress($member->family)
+                ?? $this->formatPersonAddress($person);
+        }
+
         return [
             'full_name' => $person?->full_name_display ?? trim(implode(' ', array_filter([$first, $middle, $last]))),
             'first_name' => $first,
@@ -114,9 +142,42 @@ class ParticipantSnapshotBuilder
             'date_of_birth' => optional($person?->date_of_birth ?? $member?->date_of_birth)?->format('Y-m-d'),
             'place_of_birth' => $person?->place_of_birth,
             'gender' => $person?->gender ?? $member?->gender,
-            'father_name' => $this->optionalText($participant['father_name'] ?? null) ?? $person?->father_name,
-            'mother_name' => $this->optionalText($participant['mother_name'] ?? null) ?? $person?->mother_name,
+            'father_name' => $fatherName,
+            'mother_name' => $motherName,
+            'address' => $address,
         ];
+    }
+
+    private function formatFamilyAddress(?Family $family): ?string
+    {
+        if (! $family) {
+            return null;
+        }
+
+        $parts = array_filter([
+            $family->address_line_1,
+            $family->address_line_2,
+            $family->city,
+            $family->postal_code,
+        ], fn ($v) => $v !== null && trim((string) $v) !== '');
+
+        return $parts !== [] ? implode(', ', $parts) : null;
+    }
+
+    private function formatPersonAddress(?Person $person): ?string
+    {
+        if (! $person) {
+            return null;
+        }
+
+        $parts = array_filter([
+            $person->address_line_1,
+            $person->address_line_2,
+            $person->city,
+            $person->postal_code,
+        ], fn ($v) => $v !== null && trim((string) $v) !== '');
+
+        return $parts !== [] ? implode(', ', $parts) : null;
     }
 
     /**

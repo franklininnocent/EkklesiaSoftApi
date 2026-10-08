@@ -23,6 +23,16 @@ class MemberAgeDemographicsService
     }
 
     /**
+     * Age-band payload only (executive people chart). Skips gender aggregation.
+     *
+     * @return array<string, array{label: string, min: int|null, max: int|null, count: int, percent: float}>
+     */
+    public function ageGroupsForTenant(int $tenantId): array
+    {
+        return $this->summarize($this->memberBaseQuery($tenantId), false, false)['age_groups'];
+    }
+
+    /**
      * Family command-center demographics: age percents among members with DOB,
      * gender percents among members with recorded gender.
      *
@@ -46,17 +56,20 @@ class MemberAgeDemographicsService
      * @param  Builder<FamilyMember>  $memberBase
      * @return array<string, mixed>
      */
-    private function summarize(Builder $memberBase, bool $recordedDenominators): array
+    private function summarize(Builder $memberBase, bool $recordedDenominators, bool $includeGender = true): array
     {
         $total = (clone $memberBase)->count();
 
-        $genderCounts = (clone $memberBase)
-            ->select([
-                DB::raw("COALESCE(NULLIF(LOWER(TRIM(family_members.gender)), ''), 'unknown') as gender_key"),
-                DB::raw('COUNT(*) as aggregate'),
-            ])
-            ->groupBy(DB::raw("COALESCE(NULLIF(LOWER(TRIM(family_members.gender)), ''), 'unknown')"))
-            ->pluck('aggregate', 'gender_key');
+        $genderCounts = collect();
+        if ($includeGender) {
+            $genderCounts = (clone $memberBase)
+                ->select([
+                    DB::raw("COALESCE(NULLIF(LOWER(TRIM(family_members.gender)), ''), 'unknown') as gender_key"),
+                    DB::raw('COUNT(*) as aggregate'),
+                ])
+                ->groupBy(DB::raw("COALESCE(NULLIF(LOWER(TRIM(family_members.gender)), ''), 'unknown')"))
+                ->pluck('aggregate', 'gender_key');
+        }
 
         $ageYears = BccAgeBands::ageYearsSql();
         $ageSql = BccAgeBands::sqlCase(

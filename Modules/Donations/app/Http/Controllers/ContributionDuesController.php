@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
+use Modules\Donations\Http\Requests\BulkUpdateContributionDuesRequest;
 use Modules\Donations\Http\Requests\IndexContributionDuesRequest;
 use Modules\Donations\Http\Requests\StoreDueRequest;
 use Modules\Donations\Http\Requests\UpdateDueStatusRequest;
@@ -251,5 +252,58 @@ class ContributionDuesController extends Controller
             'success' => true,
             'message' => 'Contribution reminder queued.',
         ]);
+    }
+
+    public function bulkWaive(BulkUpdateContributionDuesRequest $request): JsonResponse
+    {
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+        $userId = (int) Auth::id();
+        $result = $this->dueService->bulkWaive(
+            $tenantId,
+            $userId,
+            $request->dueIds(),
+            $request->validated()['reason'] ?? null
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => $this->bulkActionMessage('waived', $result),
+            'data' => $result,
+        ]);
+    }
+
+    public function bulkRemind(BulkUpdateContributionDuesRequest $request): JsonResponse
+    {
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+        $result = $this->dueService->bulkRemind($tenantId, $request->dueIds());
+
+        return response()->json([
+            'success' => true,
+            'message' => $this->bulkActionMessage('reminded', $result),
+            'data' => $result,
+        ]);
+    }
+
+    /**
+     * @param  array{processed_count: int, skipped_count: int, skipped: array<int, array{family_name: string|null, reason: string}>}  $result
+     */
+    private function bulkActionMessage(string $verb, array $result): string
+    {
+        $processed = (int) $result['processed_count'];
+        $skipped = (int) $result['skipped_count'];
+        $noun = $processed === 1 ? 'due' : 'dues';
+        $message = sprintf('%d %s %s.', $processed, $noun, $verb);
+
+        if ($skipped === 0) {
+            return $message;
+        }
+
+        $details = [];
+        foreach ($result['skipped'] as $row) {
+            $label = $row['family_name'] ?: 'a selected due';
+            $details[] = $label.': '.$row['reason'];
+        }
+
+        return $message.' '.$skipped.' could not be processed. '.implode(' ', $details);
     }
 }

@@ -32,6 +32,7 @@ final class LiturgicalTerminologyCatalog
             'nameAsRecordedLabel' => 'Name as recorded',
             'baptismalStatusLabel' => 'Baptismal status',
             'parishResidenceLabel' => 'Parish / residence',
+            'partyAddressLabel' => 'Address',
             'witness1Label' => 'Witness 1',
             'witness2Label' => 'Witness 2',
             'dateOfBirthLabel' => 'Date of birth',
@@ -59,7 +60,10 @@ final class LiturgicalTerminologyCatalog
                 'dateLabel' => 'Date of Marriage',
                 'placeLabel' => 'Place of Marriage',
                 'ministerLabel' => 'Celebrant',
+                'fatherLabel' => "Father's Name",
                 'motherLabel' => "Mother's Name",
+                'partyAddressLabel' => 'Address',
+                'parishResidenceLabel' => 'Parish',
                 'certificateNumberLabel' => 'Certificate No.',
             ]),
             'ROMAN_CATHOLIC:CONFIRMATION' => array_merge($catholicBaptism, [

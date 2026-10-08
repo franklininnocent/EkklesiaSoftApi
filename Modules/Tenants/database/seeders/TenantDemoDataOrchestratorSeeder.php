@@ -65,44 +65,47 @@ class TenantDemoDataOrchestratorSeeder extends Seeder
         $this->command?->info('═══════════════════════════════════════════════════════════');
         $this->command?->info('');
 
-        $this->command?->info('Step 1/9 — Module defaults (donations + ministries taxonomy)');
+        $this->command?->info('Step 1/10 — Module defaults (donations + ministries taxonomy)');
         (new DonationCategorySeeder)->run($tenantId);
         (new MinistriesAssociationsDefaultSeeder)->run($tenantId, $actor?->id);
 
-        $this->command?->info('Step 2/9 — BCC communities');
+        $this->command?->info('Step 2/10 — BCC communities');
         $this->call(TenantBccsDemoSeeder::class);
 
         if (! TenantDemoResolver::flagIsTrue(TenantDemoMarkers::ENV_SKIP_FAMILIES)) {
-            $this->command?->info('Step 3/9 — Realistic households (FamilyService + sacraments)');
+            $this->command?->info('Step 3/10 — Realistic households (FamilyService + member sacrament profiles)');
             $this->call(BccDummyFamiliesSeeder::class);
         } else {
-            $this->command?->warn('Step 3/9 — Skipped families (TENANT_DEMO_SKIP_FAMILIES).');
+            $this->command?->warn('Step 3/10 — Skipped families (TENANT_DEMO_SKIP_FAMILIES).');
         }
+
+        $this->command?->info('Step 4/10 — Sacrament register demo (dashboard, list, reports)');
+        $this->call(TenantSacramentsDemoSeeder::class);
 
         if (! TenantDemoResolver::flagIsTrue(TenantDemoMarkers::ENV_SKIP_BCC_LEADERSHIP)) {
-            $this->command?->info('Step 4/9 — BCC leadership roles');
+            $this->command?->info('Step 5/10 — BCC leadership roles');
             $this->call(BccLeadershipDemoSeeder::class);
         } else {
-            $this->command?->warn('Step 4/9 — Skipped BCC leadership.');
+            $this->command?->warn('Step 5/10 — Skipped BCC leadership.');
         }
 
-        $this->command?->info('Step 5/9 — Church profile, social, statistics');
+        $this->command?->info('Step 6/10 — Church profile, social, statistics');
         $this->call(TenantChurchPresenceDemoSeeder::class);
 
-        $this->command?->info('Step 6/9 — Pastoral care scenarios');
+        $this->command?->info('Step 7/10 — Pastoral care scenarios');
         $this->call(TenantPastoralCareDemoSeeder::class);
 
-        $this->command?->info('Step 7/9 — Ministries & Associations demo');
+        $this->command?->info('Step 8/10 — Ministries & Associations demo');
         $this->call(TenantMinistriesDemoSeeder::class);
 
-        $this->command?->info('Step 8/9 — In-app notifications');
+        $this->command?->info('Step 9/10 — In-app notifications');
         $this->call(TenantNotificationsDemoSeeder::class);
 
         if (! TenantDemoResolver::flagIsTrue(TenantDemoMarkers::ENV_SKIP_STEWARDSHIP)) {
-            $this->command?->info('Step 9/9 — Stewardship plans, dues, and payments');
+            $this->command?->info('Step 10/10 — Stewardship plans, dues, and payments');
             $this->call(StewardshipDemoSeeder::class);
         } else {
-            $this->command?->warn('Step 9/9 — Skipped stewardship (TENANT_DEMO_SKIP_STEWARDSHIP).');
+            $this->command?->warn('Step 10/10 — Skipped stewardship (TENANT_DEMO_SKIP_STEWARDSHIP).');
         }
 
         $errors = TenantDemoVerifier::verify($tenantId);

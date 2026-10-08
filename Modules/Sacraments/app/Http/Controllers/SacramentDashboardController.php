@@ -36,6 +36,7 @@ class SacramentDashboardController extends Controller
                 'date_to' => 'nullable|date',
                 'bcc_id' => 'nullable|uuid',
                 'include_gaps' => 'nullable|boolean',
+                'gaps_only' => 'nullable|boolean',
                 'include_marriage_gaps' => 'nullable|boolean',
                 'preset' => 'nullable|string|in:calendar_month_mtd',
                 'minimal' => 'nullable|boolean',
@@ -83,5 +84,4 @@ class SacramentDashboardController extends Controller
             ], 500);
         }
     }
-
 }

@@ -3,7 +3,6 @@
 namespace Modules\MassIntentions\Services;
 
 use App\Support\UserFacingDate;
-use App\Support\UserFacingDate;
 use Dompdf\Dompdf;
 use Dompdf\Options;
 use Illuminate\Http\Request;

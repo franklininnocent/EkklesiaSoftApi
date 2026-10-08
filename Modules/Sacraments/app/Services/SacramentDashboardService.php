@@ -8,8 +8,8 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Modules\Donations\Support\DonationBusinessDate;
 use Modules\BCC\Models\BCC;
+use Modules\Donations\Support\DonationBusinessDate;
 use Modules\Sacraments\Models\Sacrament;
 use Modules\Sacraments\Models\SacramentType;
 use Modules\Sacraments\Services\Dashboard\SacramentDemographicsBuilder;
@@ -54,6 +54,117 @@ class SacramentDashboardService
     }
 
     /**
+     * Parish executive snapshot: calendar year-to-date register activity.
+     * Aggregates in SQL (no row payload). Marriage is one register record, not two spouses.
+     *
+     * @param  list<string>  $restrictedTypeCodes
+     * @return array<string, mixed>
+     */
+    public function getExecutiveSnapshot(int $tenantId, array $restrictedTypeCodes = []): array
+    {
+        $cacheKey = TenantCacheVersion::scopedKey(
+            $tenantId,
+            self::CACHE_PREFIX,
+            'executive_ytd_mix:restricted_'.md5(implode(',', $restrictedTypeCodes))
+        );
+
+        return Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($tenantId, $restrictedTypeCodes) {
+            return $this->buildExecutiveSnapshot($tenantId, $restrictedTypeCodes);
+        });
+    }
+
+    /**
+     * @param  list<string>  $restrictedTypeCodes
+     * @return array<string, mixed>
+     */
+    private function buildExecutiveSnapshot(int $tenantId, array $restrictedTypeCodes): array
+    {
+        $timezone = DonationBusinessDate::timezoneForTenant($tenantId);
+        $now = Carbon::now($timezone);
+        $yearFrom = $now->copy()->startOfYear()->toDateString();
+        $yearTo = $now->toDateString();
+        $monthFrom = $now->copy()->startOfMonth()->toDateString();
+        $monthTo = $now->copy()->endOfMonth()->toDateString();
+
+        $base = $this->baseQuery($tenantId, $restrictedTypeCodes, null);
+
+        $counts = (clone $base)->selectRaw(
+            '
+            SUM(CASE WHEN sacraments.date_administered BETWEEN ? AND ? THEN 1 ELSE 0 END) as this_year,
+            SUM(CASE WHEN sacraments.date_administered BETWEEN ? AND ? THEN 1 ELSE 0 END) as this_month
+        ',
+            [$yearFrom, $yearTo, $monthFrom, $monthTo]
+        )->first();
+
+        $thisYear = (int) ($counts->this_year ?? 0);
+        $thisMonth = (int) ($counts->this_month ?? 0);
+
+        $byTypeRows = (clone $base)
+            ->whereBetween('sacraments.date_administered', [$yearFrom, $yearTo])
+            ->join('sacrament_types', 'sacrament_types.id', '=', 'sacraments.sacrament_type_id')
+            ->selectRaw('sacrament_types.id as type_id, sacrament_types.code as type_code, sacrament_types.name as type_name, COUNT(sacraments.id) as aggregate')
+            ->groupBy('sacrament_types.id', 'sacrament_types.code', 'sacrament_types.name')
+            ->get();
+
+        $mix = [];
+        foreach ($byTypeRows as $row) {
+            $code = SacramentTypeCode::normalize((string) $row->type_code) ?? strtoupper((string) $row->type_code);
+            if (SacramentTypeCode::isExcludedFromStandardDashboardCharts($code)) {
+                continue;
+            }
+
+            $count = (int) $row->aggregate;
+            if ($count <= 0) {
+                continue;
+            }
+
+            $mix[] = [
+                'code' => $code,
+                'label' => (string) $row->type_name,
+                'sacrament_type_id' => (int) $row->type_id,
+                'count' => $count,
+            ];
+        }
+
+        usort($mix, static function (array $a, array $b): int {
+            $cmp = $b['count'] <=> $a['count'];
+            if ($cmp !== 0) {
+                return $cmp;
+            }
+
+            return strcmp((string) $a['code'], (string) $b['code']);
+        });
+
+        $mixTotal = array_sum(array_column($mix, 'count'));
+        foreach ($mix as &$slice) {
+            $slice['percent'] = $mixTotal > 0
+                ? round(($slice['count'] / $mixTotal) * 100, 1)
+                : 0.0;
+        }
+        unset($slice);
+
+        $emptyReason = 'none';
+        if ($mixTotal === 0) {
+            $emptyReason = $thisYear > 0 ? 'only_excluded_types' : 'no_register_activity';
+        }
+
+        return [
+            'total_period' => $thisYear,
+            'this_year' => $thisYear,
+            'this_month' => $thisMonth,
+            'period_label' => 'Year to date',
+            'date_from' => $yearFrom,
+            'date_to' => $yearTo,
+            'month_from' => $monthFrom,
+            'month_to' => $monthTo,
+            'activity_mix' => $mix,
+            'activity_mix_total' => $mixTotal,
+            'activity_mix_empty_reason' => $emptyReason,
+            'drilldown' => 'sacraments.home',
+        ];
+    }
+
+    /**
      * @param  list<string>  $restrictedTypeCodes
      * @return array<string, mixed>
      */
@@ -72,6 +183,33 @@ class SacramentDashboardService
             if (! $bccExists) {
                 throw new \InvalidArgumentException('BCC not found for this parish.');
             }
+        }
+
+        if (filter_var($params['gaps_only'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+            if (! filter_var($params['include_gaps'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                throw new \InvalidArgumentException('gaps_only requires include_gaps.');
+            }
+
+            $types = $this->loadActiveTypes($restrictedTypeCodes);
+            $includeMarriageGaps = filter_var($params['include_marriage_gaps'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
+            return [
+                'gaps' => $this->gapAnalysisBuilder->build(
+                    $tenantId,
+                    $types,
+                    $restrictedTypeCodes,
+                    $bccId,
+                    $includeMarriageGaps
+                ),
+                'meta' => [
+                    'restricted_types_excluded' => array_values(array_map(
+                        static fn (string $code) => SacramentTypeCode::normalize($code) ?? strtoupper($code),
+                        $restrictedTypeCodes
+                    )),
+                    'generated_at' => now()->toIso8601String(),
+                    'gaps_only' => true,
+                ],
+            ];
         }
 
         $minimal = filter_var($params['minimal'] ?? false, FILTER_VALIDATE_BOOLEAN);
@@ -114,25 +252,19 @@ class SacramentDashboardService
         $types = $this->loadActiveTypes($restrictedTypeCodes);
         $typeIds = $types->pluck('id')->all();
 
-        $totalPeriod = (clone $periodQuery)->count();
-        $totalAllTime = (clone $allTimeQuery)->count();
-
         $timezone = DonationBusinessDate::timezoneForTenant($tenantId);
         $monthStart = Carbon::now($timezone)->startOfMonth()->toDateString();
         $monthEnd = Carbon::now($timezone)->endOfMonth()->toDateString();
-        $thisMonth = (clone $allTimeQuery)
-            ->whereBetween('date_administered', [$monthStart, $monthEnd])
-            ->count();
+
+        $aggregates = $this->buildPeriodAggregates($allTimeQuery, $from, $to, $monthStart, $monthEnd);
+        $totalPeriod = $aggregates['total_period'];
+        $totalAllTime = $aggregates['total_all_time'];
+        $thisMonth = $aggregates['this_month'];
 
         $monthsInPeriod = max(1, $from->diffInMonths($to->copy()->endOfMonth()) + 1);
         $monthlyAverage = round($totalPeriod / $monthsInPeriod, 1);
 
         $byType = $this->buildByTypeCounts($types, $periodQuery, $allTimeQuery, $from, $to);
-        $yoyGrowthPct = $this->buildOverallYoYGrowth($tenantId, $restrictedTypeCodes, $bccId, $from, $to);
-        $matrimonyTypeId = $this->matrimonyBuilder->resolveMatrimonyTypeId($types);
-        $includeGaps = filter_var($params['include_gaps'] ?? true, FILTER_VALIDATE_BOOLEAN);
-        $includeMarriageGaps = filter_var($params['include_marriage_gaps'] ?? false, FILTER_VALIDATE_BOOLEAN);
-
         $byTypeTotals = array_map(static fn (array $row) => [
             'code' => $row['code'],
             'label' => $row['label'],
@@ -153,7 +285,7 @@ class SacramentDashboardService
                 'breakdowns' => [
                     'by_type_totals' => $byTypeTotals,
                 ],
-                'recent' => $this->buildRecentRecords($periodQuery),
+                'recent' => [],
                 'meta' => [
                     'restricted_types_excluded' => array_values(array_map(
                         static fn (string $code) => SacramentTypeCode::normalize($code) ?? strtoupper($code),
@@ -164,6 +296,11 @@ class SacramentDashboardService
                 ],
             ];
         }
+
+        $yoyGrowthPct = $this->growthPct($aggregates['yoy_current'], $aggregates['yoy_prior']);
+        $matrimonyTypeId = $this->matrimonyBuilder->resolveMatrimonyTypeId($types);
+        $includeGaps = filter_var($params['include_gaps'] ?? true, FILTER_VALIDATE_BOOLEAN);
+        $includeMarriageGaps = filter_var($params['include_marriage_gaps'] ?? false, FILTER_VALIDATE_BOOLEAN);
 
         $payload = [
             'period' => [
@@ -181,7 +318,11 @@ class SacramentDashboardService
             ],
             'trends' => $this->buildTrends($tenantId, $restrictedTypeCodes, $bccId, $to, $typeIds),
             'breakdowns' => [
-                'member_status' => $this->buildMemberStatusBreakdown($periodQuery),
+                'member_status' => [
+                    'member' => $aggregates['member'],
+                    'non_member' => $aggregates['non_member'],
+                    'unknown' => 0,
+                ],
                 'by_type_totals' => $byTypeTotals,
             ],
             'demographics' => $this->demographicsBuilder->build($periodQuery),
@@ -381,17 +522,56 @@ class SacramentDashboardService
     }
 
     /**
-     * @return array<string, int>
+     * @return array{
+     *     total_period: int,
+     *     total_all_time: int,
+     *     this_month: int,
+     *     member: int,
+     *     non_member: int,
+     *     yoy_current: int,
+     *     yoy_prior: int
+     * }
      */
-    private function buildMemberStatusBreakdown(Builder $periodQuery): array
-    {
-        $member = (clone $periodQuery)->whereNotNull('family_id')->count();
-        $nonMember = (clone $periodQuery)->whereNull('family_id')->count();
+    private function buildPeriodAggregates(
+        Builder $allTimeQuery,
+        Carbon $from,
+        Carbon $to,
+        string $monthStart,
+        string $monthEnd
+    ): array {
+        $periodFrom = $from->toDateString();
+        $periodTo = $to->toDateString();
+        $priorFrom = $from->copy()->subYear()->toDateString();
+        $priorTo = $to->copy()->subYear()->toDateString();
+
+        $row = (clone $allTimeQuery)->selectRaw(
+            '
+            COUNT(*) as total_all_time,
+            SUM(CASE WHEN date_administered BETWEEN ? AND ? THEN 1 ELSE 0 END) as total_period,
+            SUM(CASE WHEN date_administered BETWEEN ? AND ? THEN 1 ELSE 0 END) as this_month,
+            SUM(CASE WHEN date_administered BETWEEN ? AND ? THEN 1 ELSE 0 END) as yoy_current,
+            SUM(CASE WHEN date_administered BETWEEN ? AND ? THEN 1 ELSE 0 END) as yoy_prior,
+            SUM(CASE WHEN date_administered BETWEEN ? AND ? AND family_id IS NOT NULL THEN 1 ELSE 0 END) as member_period,
+            SUM(CASE WHEN date_administered BETWEEN ? AND ? AND family_id IS NULL THEN 1 ELSE 0 END) as non_member_period
+        ',
+            [
+                $periodFrom, $periodTo,
+                $monthStart, $monthEnd,
+                $periodFrom, $periodTo,
+                $priorFrom, $priorTo,
+                $periodFrom, $periodTo,
+                $periodFrom, $periodTo,
+            ]
+        )->first();
 
         return [
-            'member' => $member,
-            'non_member' => $nonMember,
-            'unknown' => 0,
+            'total_period' => (int) ($row->total_period ?? 0),
+            'total_all_time' => (int) ($row->total_all_time ?? 0),
+            'this_month' => (int) ($row->this_month ?? 0),
+            'member' => (int) ($row->member_period ?? 0),
+            'non_member' => (int) ($row->non_member_period ?? 0),
+            'yoy_current' => (int) ($row->yoy_current ?? 0),
+            'yoy_prior' => (int) ($row->yoy_prior ?? 0),
         ];
     }
 
@@ -421,30 +601,6 @@ class SacramentDashboardService
                 ];
             })
             ->all();
-    }
-
-    /**
-     * @param  list<string>  $restrictedTypeCodes
-     */
-    private function buildOverallYoYGrowth(
-        int $tenantId,
-        array $restrictedTypeCodes,
-        ?string $bccId,
-        Carbon $from,
-        Carbon $to
-    ): float {
-        $current = $this->baseQuery($tenantId, $restrictedTypeCodes, $bccId)
-            ->whereBetween('date_administered', [$from->toDateString(), $to->toDateString()])
-            ->count();
-
-        $priorFrom = $from->copy()->subYear();
-        $priorTo = $to->copy()->subYear();
-
-        $prior = $this->baseQuery($tenantId, $restrictedTypeCodes, $bccId)
-            ->whereBetween('date_administered', [$priorFrom->toDateString(), $priorTo->toDateString()])
-            ->count();
-
-        return $this->growthPct($current, $prior);
     }
 
     private function growthPct(int $current, int $prior): float
@@ -481,6 +637,7 @@ class SacramentDashboardService
             'minimal_'.(filter_var($params['minimal'] ?? false, FILTER_VALIDATE_BOOLEAN) ? '1' : '0'),
             'bcc_'.($params['bcc_id'] ?? 'all'),
             'gaps_'.(filter_var($params['include_gaps'] ?? true, FILTER_VALIDATE_BOOLEAN) ? '1' : '0'),
+            'gaps_only_'.(filter_var($params['gaps_only'] ?? false, FILTER_VALIDATE_BOOLEAN) ? '1' : '0'),
             'marriage_gaps_'.(filter_var($params['include_marriage_gaps'] ?? false, FILTER_VALIDATE_BOOLEAN) ? '1' : '0'),
             'progression_unmarried_cohorts',
             'standard_chart_exclusions',

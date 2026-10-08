@@ -9,9 +9,10 @@ use Illuminate\Pagination\LengthAwarePaginator;
 use Modules\BCC\Support\BccAgeBands;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
-use Modules\Family\Services\ParishMemberMissingSacramentQuery;
 use Modules\Family\Services\OccupationClassificationService;
+use Modules\Family\Services\ParishMemberMissingSacramentQuery;
 use Modules\Family\Support\FamilyQueryFilters;
+use Modules\Family\Support\MemberDirectorySearch;
 use Modules\Family\Support\MemberEducationQualification;
 use Modules\Family\Support\ParishProgressionFilter;
 
@@ -242,19 +243,33 @@ class FamilyRepository
      */
     public function getStatistics(string $tenantId): array
     {
-        $totalFamilies = Family::where('tenant_id', $tenantId)->count();
-        $activeFamilies = Family::where('tenant_id', $tenantId)->where('status', 'active')->count();
-        $totalMembers = $this->membersForTenant($tenantId)->count();
-        $activeMembers = $this->membersForTenant($tenantId)->where('status', 'active')->count();
+        $familyRow = Family::query()
+            ->where('tenant_id', $tenantId)
+            ->selectRaw('COUNT(*) as total_families')
+            ->selectRaw("SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_families")
+            ->selectRaw('SUM(CASE WHEN bcc_id IS NOT NULL THEN 1 ELSE 0 END) as families_with_bcc')
+            ->selectRaw('SUM(CASE WHEN bcc_id IS NULL THEN 1 ELSE 0 END) as families_without_bcc')
+            ->first();
 
-        $familiesWithBCC = Family::where('tenant_id', $tenantId)->whereNotNull('bcc_id')->count();
-        $familiesWithoutBCC = Family::where('tenant_id', $tenantId)->whereNull('bcc_id')->count();
+        $totalFamilies = (int) ($familyRow->total_families ?? 0);
+        $activeFamilies = (int) ($familyRow->active_families ?? 0);
+        $familiesWithBCC = (int) ($familyRow->families_with_bcc ?? 0);
+        $familiesWithoutBCC = (int) ($familyRow->families_without_bcc ?? 0);
 
         $monthStart = now()->startOfMonth();
         $monthEnd = now()->endOfMonth();
-        $membersCreatedThisMonth = $this->membersForTenant($tenantId)
-            ->whereBetween('created_at', [$monthStart, $monthEnd])
-            ->count();
+        $memberRow = $this->membersForTenant($tenantId)
+            ->selectRaw('COUNT(*) as total_members')
+            ->selectRaw("SUM(CASE WHEN family_members.status = 'active' THEN 1 ELSE 0 END) as active_members")
+            ->selectRaw(
+                'SUM(CASE WHEN family_members.created_at BETWEEN ? AND ? THEN 1 ELSE 0 END) as members_created_this_month',
+                [$monthStart, $monthEnd]
+            )
+            ->first();
+
+        $totalMembers = (int) ($memberRow->total_members ?? 0);
+        $activeMembers = (int) ($memberRow->active_members ?? 0);
+        $membersCreatedThisMonth = (int) ($memberRow->members_created_this_month ?? 0);
 
         // Parish Zone removed; keep key for compatibility but empty list
         $familiesByZone = collect();
@@ -414,16 +429,9 @@ class FamilyRepository
                 $q->with(['bcc:id,name,bcc_code']);
             }, 'person:id,date_of_birth,gender,father_name,mother_name,father_person_id,mother_person_id', 'person.father:id,first_name,middle_name,last_name,deleted_at', 'person.mother:id,first_name,middle_name,last_name,deleted_at']);
 
-        // Apply search filter
-        if (! empty($filters['search'])) {
-            $pattern = "%{$filters['search']}%";
-            $query->where(function ($q) use ($pattern) {
-                CaseInsensitiveSearch::applyMemberFullNameLike($q, $pattern);
-                CaseInsensitiveSearch::applyColumnLike($q, 'first_name', $pattern, 'or');
-                CaseInsensitiveSearch::applyColumnLike($q, 'last_name', $pattern, 'or');
-                CaseInsensitiveSearch::applyColumnLike($q, 'phone', $pattern, 'or');
-                CaseInsensitiveSearch::applyColumnLike($q, 'email', $pattern, 'or');
-            });
+        $search = trim((string) ($filters['search'] ?? ''));
+        if (mb_strlen($search) >= 2) {
+            MemberDirectorySearch::apply($query, '%'.$search.'%', $tenantId);
         }
 
         // Apply status filter

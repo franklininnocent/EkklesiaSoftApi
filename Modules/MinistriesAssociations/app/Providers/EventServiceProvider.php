@@ -25,6 +25,7 @@ use Modules\MinistriesAssociations\Policies\OrganizationPolicy;
 use Modules\MinistriesAssociations\Policies\OrganizationTypePolicy;
 use Modules\MinistriesAssociations\Policies\ParishionerLookupPolicy;
 use Modules\MinistriesAssociations\Policies\PositionPolicy;
+use Modules\MinistriesAssociations\Observers\InvalidateMinistriesDashboardCacheObserver;
 
 class EventServiceProvider extends ServiceProvider
 {
@@ -50,5 +51,13 @@ class EventServiceProvider extends ServiceProvider
         Gate::policy(Organization::class, OrganizationPolicy::class);
         Gate::policy(OrganizationType::class, OrganizationTypePolicy::class);
         Gate::policy(Position::class, PositionPolicy::class);
+
+        $cacheObserver = InvalidateMinistriesDashboardCacheObserver::class;
+        Organization::observe($cacheObserver);
+        OrganizationMembership::observe($cacheObserver);
+        LeadershipTerm::observe($cacheObserver);
+        Position::observe($cacheObserver);
+        OrganizationType::observe($cacheObserver);
+        OrganizationCategory::observe($cacheObserver);
     }
 }

@@ -59,6 +59,10 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/tenant/church-profile', [TenantsController::class, 'getChurchProfile']);
     Route::put('/tenant/church-profile', [TenantsController::class, 'updateChurchProfile'])
         ->middleware('tenant.permission:church.settings.edit');
+    Route::post('/tenant/church-profile/logo', [TenantsController::class, 'uploadChurchLogo'])
+        ->middleware(['tenant.permission:church.settings.edit', 'api.throttle:uploads']);
+    Route::delete('/tenant/church-profile/logo', [TenantsController::class, 'deleteChurchLogo'])
+        ->middleware(['tenant.permission:church.settings.delete', 'api.throttle:uploads']);
 
     // Create a new tenant
     Route::post('/tenant', [TenantsController::class, 'store']);
@@ -158,7 +162,7 @@ Route::middleware('auth:api')->group(function () {
         Route::delete('/patron-image', [ChurchProfileController::class, 'deletePatronImage'])
             ->middleware(['tenant.permission:church.settings.delete', 'api.throttle:uploads']);
 
-        // Pope Details Management (requires manage_pope_details permission)
+        // Pope details: any signed-in user may view. Only Ekklesia roles may change them.
         Route::prefix('pope')->group(function () {
             Route::get('/', [PopeDetailsController::class, 'show']);
             Route::put('/', [PopeDetailsController::class, 'update']);

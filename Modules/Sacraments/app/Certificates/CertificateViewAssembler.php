@@ -146,7 +146,7 @@ final class CertificateViewAssembler
     /**
      * @param  list<array<string, mixed>>  $participants
      * @param  array<string, mixed>  $sacrament
-     * @return array{fullName: ?string, baptismalStatusLabel: ?string, ecclesialAffiliationLabel: ?string, fatherName: ?string, motherName: ?string, parishResidence: ?string}
+     * @return array{fullName: ?string, baptismalStatusLabel: ?string, ecclesialAffiliationLabel: ?string, fatherName: ?string, motherName: ?string, residenceAddress: ?string, parishResidence: ?string}
      */
     private function spouseView(array $participants, string $role, array $sacrament, string $prefix): array
     {
@@ -167,10 +167,13 @@ final class CertificateViewAssembler
         $parish = $affiliation['parish_name']
             ?? (is_array($row) ? ($row['affiliation_parish_name'] ?? null) : null)
             ?? ($sacrament[$prefix.'church_name'] ?? null);
-        $address = $snapshot['address']
-            ?? ($sacrament[$prefix.'address'] ?? null)
-            ?? ($sacrament[$prefix.'church_address'] ?? null);
-        $residence = trim(implode(', ', array_filter([$parish, $address])));
+        $residenceAddress = $snapshot['address'] ?? ($sacrament[$prefix.'address'] ?? null);
+        $residenceAddress = is_string($residenceAddress) ? trim($residenceAddress) : null;
+        if ($residenceAddress === '') {
+            $residenceAddress = null;
+        }
+
+        $parishResidence = $parish !== null && trim((string) $parish) !== '' ? trim((string) $parish) : null;
 
         $statusParts = array_filter([
             $snapshot['baptismal_status_label'] ?? null,
@@ -183,7 +186,8 @@ final class CertificateViewAssembler
             'ecclesialAffiliationLabel' => $snapshot['ecclesial_affiliation_label'] ?? null,
             'fatherName' => $snapshot['father_name'] ?? ($sacrament[$prefix.'father_name'] ?? null),
             'motherName' => $snapshot['mother_name'] ?? ($sacrament[$prefix.'mother_name'] ?? null),
-            'parishResidence' => $residence !== '' ? $residence : null,
+            'residenceAddress' => $residenceAddress,
+            'parishResidence' => $parishResidence,
         ];
     }
 }

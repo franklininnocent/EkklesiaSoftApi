@@ -153,6 +153,9 @@ class SacramentCertificateApiTest extends TestCase
                     'external_full_name' => 'Eve Bride',
                     'external_date_of_birth' => '1992-03-10',
                     'external_gender' => 'female',
+                    'external_address' => '12 Rose Lane, Parish Town, 629001',
+                    'father_name' => 'Eve Father',
+                    'mother_name' => 'Eve Mother',
                     'affiliation_type' => 'other',
                     'affiliation_parish_name' => 'St. Joseph',
                     'affiliation_diocese_name' => 'Diocese X',
@@ -163,6 +166,9 @@ class SacramentCertificateApiTest extends TestCase
                     'external_full_name' => 'Adam Groom',
                     'external_date_of_birth' => '1990-06-20',
                     'external_gender' => 'male',
+                    'external_address' => '45 Main Road, Parish Town, 629002',
+                    'father_name' => 'Adam Father',
+                    'mother_name' => 'Adam Mother',
                     'affiliation_type' => 'home_parish',
                 ],
                 [
@@ -197,6 +203,26 @@ class SacramentCertificateApiTest extends TestCase
     }
 
     #[Test]
+    public function it_rejects_marriage_certificate_when_mandatory_party_fields_missing(): void
+    {
+        $marriage = $this->createMarriage();
+        $marriage->update([
+            'marriage_bride_father_name' => null,
+            'marriage_bride_mother_name' => null,
+            'marriage_bride_address' => null,
+        ]);
+        foreach ($marriage->participants()->where('role', 'bride')->get() as $participant) {
+            $snapshot = is_array($participant->snapshot_json) ? $participant->snapshot_json : [];
+            unset($snapshot['father_name'], $snapshot['mother_name'], $snapshot['address']);
+            $participant->update(['snapshot_json' => $snapshot, 'external_address' => null]);
+        }
+
+        $response = $this->postJson("/api/sacraments/{$marriage->id}/certificates/preview");
+        $response->assertStatus(422)
+            ->assertJsonPath('code', 'marriage_certificate_incomplete');
+    }
+
+    #[Test]
     public function it_generates_baptism_and_marriage_certificates(): void
     {
         $baptism = $this->createBaptism();
@@ -212,6 +238,11 @@ class SacramentCertificateApiTest extends TestCase
         $m->assertCreated()
             ->assertJsonPath('data.status', SacramentCertificateStatus::ISSUED)
             ->assertJsonPath('data.template_code', 'marriage_v1');
+
+        $marriageCert = SacramentCertificate::findOrFail($m->json('data.id'));
+        $certView = $marriageCert->projection_json['certificate_view'] ?? [];
+        $this->assertSame('Eve Father', $certView['bride']['fatherName'] ?? null);
+        $this->assertSame('45 Main Road, Parish Town, 629002', $certView['groom']['residenceAddress'] ?? null);
 
         $this->assertStringStartsWith('%PDF', Storage::disk('local')->get(
             SacramentCertificate::find($b->json('data.id'))->storage_key

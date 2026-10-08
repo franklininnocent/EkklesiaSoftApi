@@ -18,6 +18,7 @@ class PlatformProductionCheckTest extends TestCase
         ]);
 
         $this->artisan('platform:production-check')
+            ->expectsOutputToContain('Cache store is redis')
             ->assertExitCode(0);
     }
 }

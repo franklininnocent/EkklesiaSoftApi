@@ -3,6 +3,7 @@
 namespace Modules\MinistriesAssociations\Services;
 
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 use Modules\MinistriesAssociations\Models\GuestMember;
 use Modules\MinistriesAssociations\Models\LeadershipTerm;
 use Modules\MinistriesAssociations\Models\Organization;
@@ -10,6 +11,7 @@ use Modules\MinistriesAssociations\Models\OrganizationCategory;
 use Modules\MinistriesAssociations\Models\OrganizationMembership;
 use Modules\MinistriesAssociations\Models\OrganizationType;
 use Modules\MinistriesAssociations\Models\Position;
+use Modules\Tenants\Support\TenantCacheVersion;
 
 class MinistriesDashboardService
 {
@@ -80,6 +82,70 @@ class MinistriesDashboardService
             ],
             'top_organizations' => $topOrganizations,
             'guest_members_total' => $guestMembersTotal,
+        ];
+    }
+
+    /**
+     * KPIs required by the tenant executive dashboard (no top-org or expiring-term lists).
+     *
+     * @return array<string, mixed>
+     */
+    public function executiveSummary(int $tenantId): array
+    {
+        return TenantCacheVersion::remember(
+            $tenantId,
+            'ministries_executive_summary',
+            'kpis',
+            120,
+            fn () => $this->computeExecutiveSummary($tenantId)
+        );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function computeExecutiveSummary(int $tenantId): array
+    {
+        $cells = Organization::query()
+            ->forTenant($tenantId)
+            ->where('status', Organization::STATUS_ACTIVE)
+            ->selectRaw('type_id, category_id, COUNT(*) as total')
+            ->groupBy('type_id', 'category_id')
+            ->get();
+
+        $activeOrgs = 0;
+        /** @var array<string, int> $typeCounts */
+        $typeCounts = [];
+        /** @var array<string, int> $categoryCounts */
+        $categoryCounts = [];
+        foreach ($cells as $cell) {
+            $count = (int) $cell->total;
+            $activeOrgs += $count;
+            $typeKey = $cell->type_id === null ? '' : (string) $cell->type_id;
+            $categoryKey = $cell->category_id === null ? '' : (string) $cell->category_id;
+            $typeCounts[$typeKey] = ($typeCounts[$typeKey] ?? 0) + $count;
+            $categoryCounts[$categoryKey] = ($categoryCounts[$categoryKey] ?? 0) + $count;
+        }
+
+        $activeMembers = OrganizationMembership::query()
+            ->forTenant($tenantId)
+            ->where('is_current', true)
+            ->where('status', OrganizationMembership::STATUS_ACTIVE)
+            ->count();
+
+        return [
+            'organizations' => [
+                'active' => $activeOrgs,
+                'active_by_category' => $this->rollUpCategoryCounts($tenantId, $categoryCounts),
+                'active_by_type' => $this->typeRowsFromCounts($tenantId, $typeCounts, false),
+            ],
+            'memberships' => [
+                'active' => $activeMembers,
+            ],
+            'leadership' => [
+                'vacancies' => $this->sumVacanciesAcrossActiveOrganizations($tenantId, $activeOrgs),
+                'expiring_soon_count' => $this->countExpiringSoonTerms($tenantId),
+            ],
         ];
     }
 
@@ -199,33 +265,59 @@ class MinistriesDashboardService
             ->groupBy('type_id')
             ->pluck('total', 'type_id');
 
-        $types = OrganizationType::query()
+        /** @var array<string, int> $normalized */
+        $normalized = [];
+        foreach ($counts as $typeId => $total) {
+            $key = $typeId === null || $typeId === '' ? '' : (string) $typeId;
+            $normalized[$key] = (int) $total;
+        }
+
+        return $this->typeRowsFromCounts($tenantId, $normalized, true);
+    }
+
+    /**
+     * @param  array<string, int>  $typeCounts  keyed by type UUID string, or '' for unassigned
+     * @return list<array{type_id: string|null, code: string, name: string, count: int}>
+     */
+    private function typeRowsFromCounts(int $tenantId, array $typeCounts, bool $includeZeroTypes): array
+    {
+        $typeQuery = OrganizationType::query()
             ->forTenant($tenantId)
             ->where('is_active', true)
             ->orderBy('display_order')
-            ->orderBy('name')
-            ->get(['id', 'code', 'name']);
+            ->orderBy('name');
 
-        $knownTypeIds = $types->pluck('id')->all();
+        if (! $includeZeroTypes) {
+            $knownIds = array_values(array_filter(array_keys($typeCounts), static fn (string $id): bool => $id !== ''));
+            if ($knownIds === []) {
+                $typeQuery->whereRaw('0 = 1');
+            } else {
+                $typeQuery->whereIn('id', $knownIds);
+            }
+        }
+
+        $types = $typeQuery->get(['id', 'code', 'name']);
+        $knownTypeIds = [];
         $rows = [];
         foreach ($types as $type) {
+            $typeId = (string) $type->id;
+            $knownTypeIds[$typeId] = true;
+            $count = (int) ($typeCounts[$typeId] ?? 0);
+            if (! $includeZeroTypes && $count === 0) {
+                continue;
+            }
             $rows[] = [
                 'type_id' => $type->id,
                 'code' => (string) $type->code,
                 'name' => (string) $type->name,
-                'count' => (int) ($counts[$type->id] ?? 0),
+                'count' => $count,
             ];
         }
 
-        $uncategorized = 0;
+        $uncategorized = (int) ($typeCounts[''] ?? 0);
         $orphanType = 0;
-        foreach ($counts as $typeId => $total) {
-            if ($typeId === null || $typeId === '') {
-                $uncategorized += (int) $total;
-
-                continue;
-            }
-            if (! in_array($typeId, $knownTypeIds, true)) {
+        foreach ($typeCounts as $typeId => $total) {
+            if ($typeId !== '' && ! isset($knownTypeIds[$typeId])) {
                 $orphanType += (int) $total;
             }
         }
@@ -251,57 +343,106 @@ class MinistriesDashboardService
         return $rows;
     }
 
-    private function sumVacanciesAcrossActiveOrganizations(int $tenantId): int
+    /**
+     * @param  array<string, int>  $categoryCounts  keyed by category UUID string, or '' for unassigned
+     * @return array{ministry: int, association: int, other: int}
+     */
+    private function rollUpCategoryCounts(int $tenantId, array $categoryCounts): array
     {
-        $singleOccupancyPositionIds = Position::query()
+        $ministry = 0;
+        $association = 0;
+        $other = 0;
+        $ids = array_values(array_filter(array_keys($categoryCounts), static fn (string $id): bool => $id !== ''));
+        $codes = $ids === []
+            ? collect()
+            : OrganizationCategory::query()
+                ->forTenant($tenantId)
+                ->whereIn('id', $ids)
+                ->pluck('code', 'id');
+
+        foreach ($categoryCounts as $categoryId => $total) {
+            $count = (int) $total;
+            if ($categoryId === '') {
+                $other += $count;
+
+                continue;
+            }
+            $code = strtolower((string) ($codes[$categoryId] ?? ''));
+            if ($code === 'ministry') {
+                $ministry += $count;
+            } elseif ($code === 'association') {
+                $association += $count;
+            } else {
+                $other += $count;
+            }
+        }
+
+        return [
+            'ministry' => $ministry,
+            'association' => $association,
+            'other' => $other,
+        ];
+    }
+
+    private function sumVacanciesAcrossActiveOrganizations(int $tenantId, ?int $activeOrgCount = null): int
+    {
+        $positionCount = (int) Position::query()
             ->forTenant($tenantId)
             ->active()
             ->where('single_occupancy', true)
-            ->pluck('id');
+            ->count();
 
-        $positionCount = $singleOccupancyPositionIds->count();
         if ($positionCount === 0) {
             return 0;
         }
 
-        $activeOrgIds = Organization::query()
+        $activeOrgCount ??= (int) Organization::query()
             ->forTenant($tenantId)
             ->where('status', Organization::STATUS_ACTIVE)
-            ->pluck('id');
+            ->count();
 
-        if ($activeOrgIds->isEmpty()) {
+        if ($activeOrgCount === 0) {
             return 0;
         }
 
-        $filledByOrg = LeadershipTerm::query()
+        $filledSlotsQuery = LeadershipTerm::query()
             ->forTenant($tenantId)
-            ->whereIn('organization_id', $activeOrgIds)
-            ->where('status', LeadershipTerm::STATUS_ACTIVE)
-            ->whereIn('position_id', $singleOccupancyPositionIds)
-            ->selectRaw('organization_id, COUNT(DISTINCT position_id) as filled')
-            ->groupBy('organization_id')
-            ->pluck('filled', 'organization_id');
+            ->where('ma_leadership_terms.status', LeadershipTerm::STATUS_ACTIVE)
+            ->whereIn(
+                'organization_id',
+                Organization::query()
+                    ->forTenant($tenantId)
+                    ->where('status', Organization::STATUS_ACTIVE)
+                    ->select('id')
+            )
+            ->whereIn(
+                'position_id',
+                Position::query()
+                    ->forTenant($tenantId)
+                    ->active()
+                    ->where('single_occupancy', true)
+                    ->select('id')
+            )
+            ->select('organization_id', 'position_id')
+            ->distinct();
 
-        $vacancies = 0;
-        foreach ($activeOrgIds as $organizationId) {
-            $filled = (int) ($filledByOrg[$organizationId] ?? 0);
-            $vacancies += max(0, $positionCount - $filled);
-        }
+        $filledSlots = (int) DB::query()
+            ->fromSub($filledSlotsQuery->toBase(), 'filled_slots')
+            ->count();
 
-        return $vacancies;
+        return ($activeOrgCount * $positionCount) - $filledSlots;
     }
 
     private function countExpiringSoonTerms(int $tenantId): int
     {
-        $today = Carbon::today();
-        $horizon = $today->copy()->addDays(self::EXPIRING_SOON_DAYS);
+        $today = Carbon::today()->toDateString();
+        $horizon = Carbon::today()->addDays(self::EXPIRING_SOON_DAYS)->toDateString();
 
         return LeadershipTerm::query()
             ->forTenant($tenantId)
             ->where('status', LeadershipTerm::STATUS_ACTIVE)
             ->whereNotNull('effective_to')
-            ->whereDate('effective_to', '>=', $today)
-            ->whereDate('effective_to', '<=', $horizon)
+            ->whereBetween('effective_to', [$today, $horizon])
             ->count();
     }
 

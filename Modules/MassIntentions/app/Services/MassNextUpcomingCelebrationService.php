@@ -26,10 +26,35 @@ final class MassNextUpcomingCelebrationService
             ->orderBy('id')
             ->first(['id', 'celebrated_on', 'celebrated_at', 'tenant_id']);
 
-        if ($celebration === null) {
-            return null;
-        }
+        return $celebration === null ? null : $this->toUpcomingPayload($celebration, $tenantId);
+    }
 
+    /**
+     * Next celebration plus additional upcoming rows from a single query.
+     *
+     * @return array{next: array<string, mixed>|null, upcoming: Collection<int, MassCelebration>}
+     */
+    public function nextAndUpcoming(int $tenantId, int $upcomingLimit = 3): array
+    {
+        $limit = max(1, $upcomingLimit) + 1;
+        $rows = $this->listUpcomingCelebrations($tenantId, $limit);
+        $nextModel = $rows->first();
+        $next = $nextModel === null ? null : $this->toUpcomingPayload($nextModel, $tenantId);
+        $upcoming = $nextModel === null
+            ? $rows
+            : $rows->slice(1)->values();
+
+        return [
+            'next' => $next,
+            'upcoming' => $upcoming->take($upcomingLimit)->values(),
+        ];
+    }
+
+    /**
+     * @return array{id: string, celebrated_on: string, celebrated_at: string|null, starts_at: string, parish_timezone: string}
+     */
+    public function toUpcomingPayload(MassCelebration $celebration, int $tenantId): array
+    {
         $timezone = DonationBusinessDate::timezoneForTenant($tenantId);
         $start = $this->startInstant($celebration, $timezone);
 

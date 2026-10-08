@@ -3,7 +3,6 @@
 namespace Modules\Sacraments\Services\Dashboard;
 
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Collection;
 use Modules\Sacraments\Models\Sacrament;
 use Modules\Sacraments\Support\SacramentTypeCode;
 
@@ -30,16 +29,18 @@ class SacramentDemographicsBuilder
      */
     public function build(Builder $periodQuery): array
     {
-        $records = $this->loadRecords($periodQuery);
-
         $genderByType = [];
         $ageByType = [];
         $overallBuckets = $this->emptyBucketCounts();
 
-        foreach ($records as $sacrament) {
+        $this->eachPeriodSacrament($periodQuery, function (Sacrament $sacrament) use (
+            &$genderByType,
+            &$ageByType,
+            &$overallBuckets
+        ): void {
             $type = $sacrament->sacramentType;
             if (! $type) {
-                continue;
+                return;
             }
 
             $code = SacramentTypeCode::normalize($type->code) ?? strtoupper((string) $type->code);
@@ -75,13 +76,13 @@ class SacramentDemographicsBuilder
             $genderByType[$code][$genderKey]++;
 
             if ($this->isExcludedFromAgeDistribution($code)) {
-                continue;
+                return;
             }
 
             $birthDate = $this->recipientResolver->resolveBirthDate($sacrament);
             $age = $this->recipientResolver->ageAtSacrament($birthDate, $sacrament->date_administered);
             if ($age === null) {
-                continue;
+                return;
             }
 
             $ageByType[$code]['with_age_data']++;
@@ -105,7 +106,7 @@ class SacramentDemographicsBuilder
                 }
                 unset($bucket);
             }
-        }
+        });
 
         foreach ($ageByType as $code => &$row) {
             $ages = $row['_ages'] ?? [];
@@ -127,20 +128,31 @@ class SacramentDemographicsBuilder
     }
 
     /**
-     * @return Collection<int, Sacrament>
+     * @param  callable(Sacrament): void  $callback
      */
-    private function loadRecords(Builder $periodQuery): Collection
+    private function eachPeriodSacrament(Builder $periodQuery, callable $callback): void
     {
-        return (clone $periodQuery)
+        $query = (clone $periodQuery)
             ->with([
                 'sacramentType:id,name,code',
                 'person:id,date_of_birth,gender',
-                'participants' => fn ($query) => $query->whereNull('deleted_at'),
+                'participants' => fn ($participantQuery) => $participantQuery->whereNull('deleted_at'),
                 'participants.familyMember:id,date_of_birth,gender,person_id',
                 'participants.familyMember.person:id,date_of_birth',
                 'participants.person:id,date_of_birth,gender',
             ])
-            ->get();
+            ->select([
+                'id',
+                'sacrament_type_id',
+                'date_administered',
+                'recipient_gender',
+                'recipient_birth_date',
+                'person_id',
+            ]);
+
+        foreach ($query->lazyById(500) as $sacrament) {
+            $callback($sacrament);
+        }
     }
 
     /**

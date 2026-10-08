@@ -22,7 +22,8 @@ final class ChurchMediaAuthorization
 
         return $viewer->hasPermission('church.settings.view')
             || $viewer->hasPermission('church.settings.edit')
-            || $viewer->isTenantAdmin();
+            || $viewer->isTenantAdmin()
+            || (bool) $viewer->is_primary_admin;
     }
 
     public static function canViewPopeMedia(?User $viewer): bool

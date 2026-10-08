@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use Modules\Donations\Exceptions\ScheduleGenerationBusyException;
 use Modules\Donations\Jobs\GenerateFullContributionScheduleJob;
+use Modules\Donations\Jobs\SendContributionReminderJob;
 use Modules\Donations\Models\ContributionDue;
 use Modules\Donations\Models\ContributionPlan;
 use Modules\Donations\Models\ContributionPlanAssignment;
@@ -632,6 +633,98 @@ class ContributionDueService
         );
 
         return $due->fresh(['family', 'plan']);
+    }
+
+    /**
+     * Waive tenant-scoped dues. Unknown or ineligible IDs are skipped, never trusted.
+     *
+     * @param  array<int, string>  $dueIds
+     * @return array{processed_count: int, skipped_count: int, processed_ids: array<int, string>, skipped: array<int, array{id: string, family_name: string|null, reason: string}>}
+     */
+    public function bulkWaive(int $tenantId, int $userId, array $dueIds, ?string $reason = null): array
+    {
+        return DB::transaction(function () use ($tenantId, $userId, $dueIds, $reason): array {
+            return $this->processBulkDues($tenantId, $dueIds, function (ContributionDue $due) use ($tenantId, $userId, $reason): ?string {
+                if ($due->status === 'waived') {
+                    return 'This due is already waived.';
+                }
+                if (! in_array($due->status, ['pending', 'partially_paid'], true)) {
+                    return 'Only pending or partially paid dues can be waived.';
+                }
+
+                $this->waiveDue($tenantId, $userId, $due, $reason);
+
+                return null;
+            }, true);
+        });
+    }
+
+    /**
+     * Queue reminders for tenant-scoped dues. Unknown IDs are skipped, never trusted.
+     *
+     * @param  array<int, string>  $dueIds
+     * @return array{processed_count: int, skipped_count: int, processed_ids: array<int, string>, skipped: array<int, array{id: string, family_name: string|null, reason: string}>}
+     */
+    public function bulkRemind(int $tenantId, array $dueIds): array
+    {
+        return $this->processBulkDues($tenantId, $dueIds, function (ContributionDue $due) use ($tenantId): ?string {
+            SendContributionReminderJob::dispatch($tenantId, $due->id);
+
+            return null;
+        });
+    }
+
+    /**
+     * @param  array<int, string>  $dueIds
+     * @param  callable(ContributionDue): (?string)  $apply  Return skip reason, or null when processed.
+     * @return array{processed_count: int, skipped_count: int, processed_ids: array<int, string>, skipped: array<int, array{id: string, family_name: string|null, reason: string}>}
+     */
+    private function processBulkDues(int $tenantId, array $dueIds, callable $apply, bool $lockForUpdate = false): array
+    {
+        $uniqueIds = array_values(array_unique(array_filter($dueIds, fn ($id): bool => is_string($id) && $id !== '')));
+        $query = ContributionDue::forTenant($tenantId)
+            ->with('family')
+            ->whereIn('id', $uniqueIds);
+        if ($lockForUpdate) {
+            $query->lockForUpdate();
+        }
+        $dues = $query->get()->keyBy('id');
+
+        $processedIds = [];
+        $skipped = [];
+
+        foreach ($uniqueIds as $id) {
+            $due = $dues->get($id);
+            if (! $due) {
+                $skipped[] = [
+                    'id' => $id,
+                    'family_name' => null,
+                    'reason' => 'This contribution due was not found in your parish.',
+                ];
+
+                continue;
+            }
+
+            $skipReason = $apply($due);
+            if ($skipReason !== null) {
+                $skipped[] = [
+                    'id' => $id,
+                    'family_name' => $due->family?->family_name,
+                    'reason' => $skipReason,
+                ];
+
+                continue;
+            }
+
+            $processedIds[] = $id;
+        }
+
+        return [
+            'processed_count' => count($processedIds),
+            'skipped_count' => count($skipped),
+            'processed_ids' => $processedIds,
+            'skipped' => $skipped,
+        ];
     }
 
     /**

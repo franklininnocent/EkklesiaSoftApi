@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use Illuminate\Contracts\Database\Query\Builder as QueryBuilderContract;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
@@ -14,16 +15,12 @@ use Illuminate\Database\Eloquent\Model;
  */
 final class CaseInsensitiveSearch
 {
-    /**
-     * @param  Builder<Model>  $query
-     * @return Builder<Model>
-     */
     public static function applyColumnLike(
-        Builder $query,
+        QueryBuilderContract $query,
         string $column,
         string $pattern,
         string $boolean = 'and'
-    ): Builder {
+    ): QueryBuilderContract {
         $driver = $query->getConnection()->getDriverName();
 
         if ($driver === 'pgsql') {
@@ -48,14 +45,31 @@ final class CaseInsensitiveSearch
         string $pattern,
         string $boolean = 'and'
     ): Builder {
+        return self::applyMemberFullNameLikeOnTable(
+            $query,
+            $query->getModel()->getTable(),
+            $pattern,
+            $boolean
+        );
+    }
+
+    public static function applyMemberFullNameLikeOnTable(
+        QueryBuilderContract $query,
+        string $table,
+        string $pattern,
+        string $boolean = 'and'
+    ): QueryBuilderContract {
         $driver = $query->getConnection()->getDriverName();
+        $firstName = "{$table}.first_name";
+        $middleName = "{$table}.middle_name";
+        $lastName = "{$table}.last_name";
 
         if ($driver === 'pgsql') {
-            $sql = "REGEXP_REPLACE(TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(middle_name, ''), ' ', COALESCE(last_name, ''))), '\\s+', ' ', 'g') ILIKE ?";
+            $sql = "REGEXP_REPLACE(TRIM(CONCAT(COALESCE({$firstName}, ''), ' ', COALESCE({$middleName}, ''), ' ', COALESCE({$lastName}, ''))), '\\s+', ' ', 'g') ILIKE ?";
         } elseif ($driver === 'sqlite') {
-            $sql = "TRIM(REPLACE(REPLACE(REPLACE(first_name || ' ' || COALESCE(middle_name, '') || ' ' || last_name, '  ', ' '), '  ', ' '), '  ', ' ')) LIKE ? COLLATE NOCASE";
+            $sql = "TRIM(REPLACE(REPLACE(REPLACE({$firstName} || ' ' || COALESCE({$middleName}, '') || ' ' || {$lastName}, '  ', ' '), '  ', ' '), '  ', ' ')) LIKE ? COLLATE NOCASE";
         } else {
-            $sql = "LOWER(REGEXP_REPLACE(TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(middle_name, ''), ' ', COALESCE(last_name, ''))), '\\\\s+', ' ')) LIKE LOWER(?)";
+            $sql = "LOWER(REGEXP_REPLACE(TRIM(CONCAT(COALESCE({$firstName}, ''), ' ', COALESCE({$middleName}, ''), ' ', COALESCE({$lastName}, ''))), '\\\\s+', ' ')) LIKE LOWER(?)";
         }
 
         return $boolean === 'or'

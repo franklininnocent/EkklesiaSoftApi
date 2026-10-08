@@ -3,6 +3,7 @@
 namespace Modules\Tenants\Console\Commands;
 
 use Illuminate\Console\Command;
+use Modules\Tenants\Database\Seeders\Support\SacramentsDemoMarkers;
 use Modules\Tenants\Database\Seeders\Support\TenantDemoMarkers;
 use Modules\Tenants\Database\Seeders\TenantDemoDataOrchestratorSeeder;
 
@@ -13,6 +14,8 @@ class SeedTenantDemoDataCommand extends Command
         {--skip-families : Skip BccDummyFamiliesSeeder (large)}
         {--skip-stewardship : Skip StewardshipDemoSeeder}
         {--skip-bcc-leadership : Skip BccLeadershipDemoSeeder}
+        {--skip-sacraments : Skip TenantSacramentsDemoSeeder}
+        {--reset-sacraments : Purge demo/incomplete sacrament rows before re-seeding}
         {--dry-run : Print plan without writing}';
 
     protected $description = 'Idempotent demo data for one parish tenant (BCC, families, stewardship, church profile, pastoral care, ministries, notifications).';
@@ -33,6 +36,14 @@ class SeedTenantDemoDataCommand extends Command
 
         if ($this->option('skip-bcc-leadership')) {
             $this->putEnv(TenantDemoMarkers::ENV_SKIP_BCC_LEADERSHIP, '1');
+        }
+
+        if ($this->option('skip-sacraments')) {
+            $this->putEnv(TenantDemoMarkers::ENV_SKIP_SACRAMENTS, '1');
+        }
+
+        if ($this->option('reset-sacraments')) {
+            $this->putEnv(SacramentsDemoMarkers::ENV_RESET, '1');
         }
 
         if ($this->option('dry-run')) {

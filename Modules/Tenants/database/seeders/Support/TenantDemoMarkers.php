@@ -18,4 +18,6 @@ final class TenantDemoMarkers
     public const ENV_SKIP_BCC_LEADERSHIP = 'TENANT_DEMO_SKIP_BCC_LEADERSHIP';
 
     public const ENV_DRY_RUN = 'TENANT_DEMO_DRY_RUN';
+
+    public const ENV_SKIP_SACRAMENTS = 'TENANT_DEMO_SKIP_SACRAMENTS';
 }

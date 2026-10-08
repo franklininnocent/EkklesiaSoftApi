@@ -7,9 +7,11 @@ use Laravel\Passport\Passport;
 use Modules\Authentication\Models\Role;
 use Modules\Authentication\Models\User;
 use Modules\RolesAndPermissions\Models\Permission;
+use Modules\Family\Models\Person;
 use Modules\Tenants\Database\Seeders\LeadershipRolesSeeder;
 use Modules\Tenants\Exceptions\ChurchLeadershipDomainException;
 use Modules\Tenants\Models\ChurchProfile;
+use Modules\Tenants\Models\LeadershipAssignment;
 use Modules\Tenants\Models\LeadershipRole;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Support\LeadershipRoleCategory;
@@ -199,6 +201,73 @@ class LeadershipRoleCatalogTest extends TestCase
         $this->postJson('/api/church-profile/leadership/roles', [
             'title' => str_repeat('A', 101),
         ])->assertStatus(422);
+    }
+
+    #[Test]
+    public function parish_clergy_catalog_includes_parish_priest_titles(): void
+    {
+        $this->authenticateAdmin();
+
+        $titles = collect($this->getJson('/api/church-profile/leadership/roles?category=PARISH_CLERGY')->json('data'))
+            ->pluck('title');
+
+        $this->assertTrue($titles->contains('Parish Priest'));
+        $this->assertTrue($titles->contains('Assistant Parish Priest'));
+        $this->assertTrue($titles->contains('Joint Parish Priest'));
+
+        $parishPriest = LeadershipRole::query()->whereNull('tenant_id')->where('title', 'Parish Priest')->firstOrFail();
+        $assistant = LeadershipRole::query()->whereNull('tenant_id')->where('title', 'Assistant Parish Priest')->firstOrFail();
+        $joint = LeadershipRole::query()->whereNull('tenant_id')->where('title', 'Joint Parish Priest')->firstOrFail();
+
+        $this->assertSame(LeadershipRoleCategory::PARISH_CLERGY, $parishPriest->category);
+        $this->assertFalse($parishPriest->allows_concurrent);
+        $this->assertTrue($assistant->allows_concurrent);
+        $this->assertTrue($joint->allows_concurrent);
+
+        $this->postJson('/api/church-profile/leadership/roles', ['title' => 'Parish Priest'])
+            ->assertStatus(409)
+            ->assertJsonPath('code', ChurchLeadershipDomainException::ROLE_ALREADY_EXISTS);
+    }
+
+    #[Test]
+    public function sync_absorbs_tenant_copy_of_a_system_parish_clergy_role(): void
+    {
+        $system = LeadershipRole::query()
+            ->whereNull('tenant_id')
+            ->where('normalized_title', 'joint parish priest')
+            ->firstOrFail();
+        $system->delete();
+
+        $tenantRole = LeadershipRole::factory()->forTenant($this->tenant)->create([
+            'title' => 'Joint Parish Priest',
+            'category' => LeadershipRoleCategory::OTHER,
+            'allows_concurrent' => true,
+        ]);
+
+        $person = Person::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'created_by' => $this->admin->id,
+        ]);
+
+        $assignment = LeadershipAssignment::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'church_profile_id' => $this->profile->id,
+            'person_id' => $person->id,
+            'role_id' => $tenantRole->id,
+        ]);
+
+        (new LeadershipRolesSeeder())->run();
+
+        $this->assertDatabaseMissing('leadership_roles', ['id' => $tenantRole->id]);
+
+        $restored = LeadershipRole::query()
+            ->whereNull('tenant_id')
+            ->where('normalized_title', 'joint parish priest')
+            ->first();
+
+        $this->assertNotNull($restored);
+        $this->assertSame(LeadershipRoleCategory::PARISH_CLERGY, $restored->category);
+        $this->assertSame($restored->id, $assignment->fresh()->role_id);
     }
 
     #[Test]
