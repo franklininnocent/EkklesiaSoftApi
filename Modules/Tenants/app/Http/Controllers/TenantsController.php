@@ -259,16 +259,16 @@ class TenantsController extends Controller
      */
     public function store(StoreTenantRequest $request): JsonResponse
     {
+        if (! $this->canManageTenants()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized',
+            ], 403);
+        }
+
         DB::beginTransaction();
 
         try {
-            if (! $this->canManageTenants()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized',
-                ], 403);
-            }
-
             // Step 1: Create the tenant
             $planAssigner = app()->bound(TenantPlanAssigner::class) ? app(TenantPlanAssigner::class) : null;
             $plan = $request->plan ?? 'free';
@@ -659,16 +659,16 @@ class TenantsController extends Controller
      */
     public function update(UpdateTenantRequest $request, $id): JsonResponse
     {
+        if (! $this->canManageTenants()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized',
+            ], 403);
+        }
+
         DB::beginTransaction();
 
         try {
-            if (! $this->canManageTenants()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized',
-                ], 403);
-            }
-
             $tenant = Tenant::with(['primaryContact', 'secondaryContact'])->findOrFail($id);
 
             // Step 1: Update tenant basic info
@@ -906,21 +906,23 @@ class TenantsController extends Controller
      */
     public function destroy($id): JsonResponse
     {
+        if (! $this->canManageTenants()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized',
+            ], 403);
+        }
+
         DB::beginTransaction();
 
         try {
-            if (! $this->canManageTenants()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized',
-                ], 403);
-            }
-
             $tenant = Tenant::findOrFail($id);
 
             // Check if tenant has users
             $userCount = $tenant->users()->count();
             if ($userCount > 0) {
+                DB::rollBack();
+
                 return response()->json([
                     'success' => false,
                     'message' => "Cannot delete tenant with {$userCount} existing user(s). Please remove or transfer users first.",
