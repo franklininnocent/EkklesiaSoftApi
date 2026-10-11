@@ -15,7 +15,7 @@ class EmailPreviewCommand extends Command
                             {type=temporary-password : temporary-password|approval-request|generic}
                             {--open : Print the output path}';
 
-    protected $description = 'Render a representative EkklesiaSoft email HTML preview (local/testing only)';
+    protected $description = 'Render a representative EkklesiaNexus email HTML preview (local/testing only)';
 
     public function handle(): int
     {
@@ -40,12 +40,12 @@ class EmailPreviewCommand extends Command
                 requestId: 'preview-request-id-0001',
             ),
             'generic' => new TransactionalNotificationMail(
-                mailSubject: 'EkklesiaSoft — Sample notification',
+                mailSubject: 'EkklesiaNexus — Sample notification',
                 heading: 'Sample notification',
-                body: "Hello,\n\nThis is a sample EkklesiaSoft notification body used for layout preview.\n\n— ".EmailTheme::productName(),
+                body: "Hello,\n\nThis is a sample EkklesiaNexus notification body used for layout preview.\n\n— ".EmailTheme::productName(),
                 preheader: 'A sample notification for email layout preview.',
                 ctaUrl: 'https://example.com/preview-only',
-                ctaLabel: 'Open EkklesiaSoft',
+                ctaLabel: 'Open EkklesiaNexus',
             ),
             default => null,
         };

@@ -45,6 +45,9 @@ Route::middleware(['auth:api'])->prefix('families')->group(function () {
     Route::get('/statistics', [FamilyController::class, 'statistics'])
         ->middleware('tenant.permission:families.view')
         ->name('families.statistics');
+    Route::get('/dashboard', [FamilyController::class, 'dashboard'])
+        ->middleware('tenant.permission:families.view')
+        ->name('families.dashboard');
     Route::get('/without-bcc', [FamilyController::class, 'withoutBcc'])
         ->middleware('tenant.permission:families.view')
         ->name('families.without-bcc');
@@ -94,9 +97,15 @@ Route::middleware(['auth:api'])->prefix('families')->group(function () {
 
 // Members Routes - Get all members across all families for a tenant
 Route::middleware(['auth:api'])->prefix('members')->group(function () {
+    Route::get('/dashboard', [FamilyController::class, 'memberDashboard'])
+        ->middleware('tenant.permission:families.view')
+        ->name('members.dashboard');
     Route::get('/celebrations', [FamilyController::class, 'memberCelebrations'])
         ->middleware('tenant.permission:families.view')
         ->name('members.celebrations');
+    Route::get('/celebrations/list', [FamilyController::class, 'memberCelebrationsList'])
+        ->middleware('tenant.permission:families.view')
+        ->name('members.celebrations.list');
     Route::get('/', [FamilyController::class, 'allMembers'])
         ->middleware('tenant.permission:families.view')
         ->name('members.index');

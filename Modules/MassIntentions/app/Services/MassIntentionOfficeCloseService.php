@@ -24,12 +24,17 @@ class MassIntentionOfficeCloseService
     {
         $today = DonationBusinessDate::today($tenantId);
 
-        $ids = MassIntentionRequest::query()
-            ->where('tenant_id', $tenantId)
-            ->where('status', MassIntentionStatus::OPEN)
-            ->whereNotNull('requested_date')
-            ->whereDate('requested_date', '<', $today)
-            ->pluck('id')
+        $ids = DB::table('mass_intention_requests as r')
+            ->join('mass_intention_obligations as o', 'o.request_id', '=', 'r.id')
+            ->join('mass_intention_assignments as a', function ($join): void {
+                $join->on('a.obligation_id', '=', 'o.id')->whereNull('a.unassigned_at');
+            })
+            ->join('mass_celebrations as c', 'c.id', '=', 'a.celebration_id')
+            ->where('r.tenant_id', $tenantId)
+            ->where('r.status', MassIntentionStatus::OPEN)
+            ->whereDate('c.celebrated_on', '<', $today)
+            ->distinct()
+            ->pluck('r.id')
             ->all();
 
         if ($ids === []) {
@@ -60,9 +65,8 @@ class MassIntentionOfficeCloseService
     public function closeExpiredForAllTenants(): int
     {
         $total = 0;
-        $tenantIds = MassIntentionRequest::query()
+        $tenantIds = DB::table('mass_intention_requests')
             ->where('status', MassIntentionStatus::OPEN)
-            ->whereNotNull('requested_date')
             ->distinct()
             ->pluck('tenant_id');
 
@@ -111,13 +115,21 @@ class MassIntentionOfficeCloseService
         if (! MassIntentionStatus::isOpen($request->status)) {
             return false;
         }
-        if ($request->requested_date === null) {
+        $today = DonationBusinessDate::today($tenantId);
+
+        $massDate = DB::table('mass_intention_assignments as a')
+            ->join('mass_intention_obligations as o', 'o.id', '=', 'a.obligation_id')
+            ->join('mass_celebrations as c', 'c.id', '=', 'a.celebration_id')
+            ->where('o.request_id', $request->id)
+            ->where('a.tenant_id', $tenantId)
+            ->whereNull('a.unassigned_at')
+            ->value('c.celebrated_on');
+
+        if ($massDate === null) {
             return false;
         }
 
-        $today = DonationBusinessDate::today($tenantId);
-
-        return $request->requested_date->toDateString() < $today;
+        return (string) $massDate < $today;
     }
 
     public function applyAutomaticCloseIfDue(int $tenantId, MassIntentionRequest $request): MassIntentionRequest

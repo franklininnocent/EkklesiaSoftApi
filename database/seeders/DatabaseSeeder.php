@@ -20,11 +20,11 @@ use Modules\Tenants\Database\Seeders\TenantsDatabaseSeeder;
 class DatabaseSeeder extends Seeder
 {
     /**
-     * Authoritative EkklesiaSoft database initialization pipeline.
+     * Authoritative EkklesiaNexus database initialization pipeline.
      */
     public function run(): void
     {
-        $this->command?->info('EkklesiaSoft — complete database seeding pipeline');
+        $this->command?->info('EkklesiaNexus — complete database seeding pipeline');
         $this->command?->line('');
 
         // 1. System roles + super admin account (must precede permission role assignments)
@@ -91,7 +91,7 @@ class DatabaseSeeder extends Seeder
         ]);
 
         $this->command?->line('');
-        $this->command?->info('EkklesiaSoft database seeding complete.');
+        $this->command?->info('EkklesiaNexus database seeding complete.');
     }
 
     private function callIfExists(array $seeders): void

@@ -2,10 +2,13 @@
 
 namespace Modules\MassIntentions\Services;
 
+use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Modules\Authentication\Models\User;
 use Modules\Family\app\Services\PersonService;
 use Modules\Family\Models\Person;
+use Modules\MassIntentions\Models\MassCelebration;
 use Modules\MassIntentions\Models\MassIntentionRequest;
 use Modules\MassIntentions\Support\MassIntentionStatus;
 use Modules\MassIntentions\Support\MassIntentionsSql;
@@ -15,12 +18,16 @@ class MassIntentionRequestService
 {
     private const OFFICE_WORKFLOW_MESSAGE = 'This parish office workflow no longer uses review or acceptance. Create intentions as open records and close them when done.';
 
+    /** @var array<string, array<string, mixed>> */
+    private array $listMassCelebrationByRequestId = [];
+
     public function __construct(
         private readonly PersonService $personService,
         private readonly MassIntentionAuditService $audits,
         private readonly MassIntentionCanonService $canon,
         private readonly MassIntentionOfficeCloseService $officeClose,
         private readonly MassIntentionCategoryService $categories,
+        private readonly MassIntentionAssignmentService $assignments,
     ) {
     }
 
@@ -29,47 +36,58 @@ class MassIntentionRequestService
      */
     public function create(int $tenantId, User $actor, array $data): MassIntentionRequest
     {
+        $celebrationId = (string) $data['celebration_id'];
         $person = $this->resolveBeneficiaryPerson($tenantId, $data);
         $beneficiaryName = $this->beneficiaryNameFrom($data, $person);
         $identification = $this->resolveBeneficiaryIdentification($tenantId, $person, $data);
         $category = $this->categories->findForTenant($tenantId, (string) $data['mass_intention_category_id']);
-        $request = MassIntentionRequest::query()->create([
-            'tenant_id' => $tenantId,
-            'status' => MassIntentionStatus::OPEN,
-            'beneficiary_person_id' => $person?->id,
-            'beneficiary_name' => $beneficiaryName,
-            'beneficiary_bcc_id' => $identification['beneficiary_bcc_id'],
-            'beneficiary_bcc_name' => $identification['beneficiary_bcc_name'],
-            'beneficiary_place' => $identification['beneficiary_place'],
-            'mass_intention_category_id' => $category->id,
-            'intention_text' => $category->name,
-            'intention_description' => $this->nullableTrimmed($data['intention_description'] ?? null),
-            'priest_text' => $data['priest_text'] ?? null,
-            'notes' => $data['notes'] ?? null,
-            'announce_name' => (bool) ($data['announce_name'] ?? true),
-            'requester_name' => $data['requester_name'] ?? null,
-            'requester_phone' => $data['requester_phone'] ?? null,
-            'requested_date' => $data['requested_date'],
-            'date_must_be_kept' => (bool) ($data['date_must_be_kept'] ?? false),
-            'prohibit_transfer' => (bool) ($data['prohibit_transfer'] ?? false),
-            'is_collective' => (bool) ($data['is_collective'] ?? false),
-            'mass_count_requested' => (int) ($data['mass_count'] ?? 1),
-            'created_by_user_id' => $actor->id,
-        ]);
 
-        $this->canon->assertCollectiveAllowed($tenantId, (bool) $request->is_collective);
+        $request = DB::transaction(function () use ($tenantId, $actor, $data, $celebrationId, $person, $beneficiaryName, $identification, $category): MassIntentionRequest {
+            $celebration = $this->assignments->lockCelebrationForAssignment($tenantId, $celebrationId);
 
-        $this->audits->record($tenantId, 'request.created', $actor, $request->id);
+            $request = MassIntentionRequest::query()->create([
+                'tenant_id' => $tenantId,
+                'status' => MassIntentionStatus::OPEN,
+                'beneficiary_person_id' => $person?->id,
+                'beneficiary_name' => $beneficiaryName,
+                'beneficiary_bcc_id' => $identification['beneficiary_bcc_id'],
+                'beneficiary_bcc_name' => $identification['beneficiary_bcc_name'],
+                'beneficiary_place' => $identification['beneficiary_place'],
+                'mass_intention_category_id' => $category->id,
+                'intention_text' => $category->name,
+                'intention_description' => $this->nullableTrimmed($data['intention_description'] ?? null),
+                'priest_text' => $data['priest_text'] ?? null,
+                'notes' => $data['notes'] ?? null,
+                'announce_name' => (bool) ($data['announce_name'] ?? true),
+                'requester_name' => $data['requester_name'] ?? null,
+                'requester_phone' => $data['requester_phone'] ?? null,
+                'requested_date' => $celebration->celebrated_on,
+                'date_must_be_kept' => (bool) ($data['date_must_be_kept'] ?? false),
+                'prohibit_transfer' => (bool) ($data['prohibit_transfer'] ?? false),
+                'is_collective' => (bool) ($data['is_collective'] ?? false),
+                'mass_count_requested' => 1,
+                'created_by_user_id' => $actor->id,
+            ]);
 
-        $request = $this->officeClose->applyAutomaticCloseIfDue($tenantId, $request->fresh());
+            $this->canon->assertCollectiveAllowed($tenantId, (bool) $request->is_collective);
 
-        return $request;
+            $this->assignments->createObligationAndAssignment($tenantId, $actor, $request, $celebration);
+
+            $this->audits->record($tenantId, 'request.created', $actor, $request->id, $celebration->id, [
+                'mass' => MassCelebrationEligibility::massSnapshot($celebration),
+                'intention_category' => $category->name,
+            ]);
+
+            return $request;
+        });
+
+        return $this->officeClose->applyAutomaticCloseIfDue($tenantId, $request->fresh());
     }
 
     /**
      * @param  array<string, mixed>  $data
      */
-    public function update(int $tenantId, string $id, array $data): MassIntentionRequest
+    public function update(int $tenantId, User $actor, string $id, array $data): MassIntentionRequest
     {
         $request = $this->findForTenant($tenantId, $id);
 
@@ -106,7 +124,6 @@ class MassIntentionRequestService
                 : $request->announce_name,
             'requester_name' => $data['requester_name'] ?? $request->requester_name,
             'requester_phone' => $data['requester_phone'] ?? $request->requester_phone,
-            'requested_date' => $data['requested_date'] ?? $request->requested_date,
             'date_must_be_kept' => array_key_exists('date_must_be_kept', $data)
                 ? (bool) $data['date_must_be_kept']
                 : $request->date_must_be_kept,
@@ -125,7 +142,16 @@ class MassIntentionRequestService
 
         $request->save();
 
-        $this->audits->record($tenantId, 'request.updated', null, $request->id);
+        if (! $this->assignments->tenantHasActiveAssignment($tenantId, $request->id)) {
+            if (empty($data['celebration_id'])) {
+                throw ValidationException::withMessages([
+                    'celebration_id' => 'Select the Mass this intention belongs to.',
+                ]);
+            }
+            $this->assignments->assignLegacyOpenIntention($tenantId, $actor, $request->fresh(), (string) $data['celebration_id']);
+        }
+
+        $this->audits->record($tenantId, 'request.updated', $actor, $request->id);
 
         return $this->officeClose->applyAutomaticCloseIfDue($tenantId, $request->fresh());
     }
@@ -271,8 +297,68 @@ class MassIntentionRequestService
     }
 
     /**
+     * @param  iterable<MassIntentionRequest>  $requests
+     */
+    public function preloadMassCelebrationsForList(int $tenantId, iterable $requests): void
+    {
+        $this->listMassCelebrationByRequestId = [];
+        $collection = $requests instanceof \Illuminate\Support\Collection
+            ? $requests
+            : collect($requests);
+        if ($collection->isEmpty()) {
+            return;
+        }
+
+        $requestIds = $collection->pluck('id')->map(fn ($id) => (string) $id)->all();
+        $celebrationIdByRequest = $this->assignments->activeCelebrationIdsForRequests($tenantId, $requestIds);
+        if ($celebrationIdByRequest === []) {
+            return;
+        }
+
+        $celebrations = MassCelebration::query()
+            ->where('tenant_id', $tenantId)
+            ->whereIn('id', array_values(array_unique($celebrationIdByRequest)))
+            ->get()
+            ->keyBy('id');
+
+        foreach ($celebrationIdByRequest as $requestId => $celebrationId) {
+            $celebration = $celebrations->get($celebrationId);
+            if ($celebration === null) {
+                continue;
+            }
+            $this->listMassCelebrationByRequestId[$requestId] = array_merge(
+                MassCelebrationEligibility::massSnapshot($celebration),
+                [
+                    'status' => $celebration->status,
+                    'generation_status' => $celebration->generation_status,
+                    'suppression_reason' => $celebration->suppression_reason,
+                ]
+            );
+        }
+    }
+
+    /**
      * @return array<string, mixed>
      */
+    /** Parish-office list / register export: Mass day and time (matches UI `massIntentionListMass`). */
+    public function officeRegisterMassLabel(MassIntentionRequest $request): string
+    {
+        $massPayload = $this->massPayloadForRequest($request);
+        if ($massPayload === null) {
+            return MassIntentionStatus::isOpen($request->status) ? 'Needs a Mass' : '—';
+        }
+
+        $celebratedOn = $massPayload['celebrated_on'] ?? null;
+        if ($celebratedOn === null || $celebratedOn === '') {
+            return '—';
+        }
+
+        return $this->formatOfficeRegisterMassDayTime(
+            (string) $celebratedOn,
+            isset($massPayload['celebrated_at']) ? (string) $massPayload['celebrated_at'] : null,
+        );
+    }
+
     public function toArray(MassIntentionRequest $request): array
     {
         $request->loadMissing(['obligations']);
@@ -280,9 +366,14 @@ class MassIntentionRequestService
         $total = $request->mass_count_accepted ?? $request->mass_count_requested ?? 0;
         $said = $request->obligations?->where('status', MassObligationStatus::SAID)->count() ?? 0;
 
+        $massPayload = $this->massPayloadForRequest($request);
+        $needsAMass = $massPayload === null && MassIntentionStatus::isOpen($request->status);
+
         return [
             'id' => $request->id,
             'status' => $request->status,
+            'needs_a_mass' => $needsAMass,
+            'mass_celebration' => $massPayload,
             'beneficiary_person_id' => $request->beneficiary_person_id,
             'beneficiary_name' => $request->beneficiary_name,
             'beneficiary_place' => $request->beneficiary_place,
@@ -310,8 +401,78 @@ class MassIntentionRequestService
     }
 
     /**
+     * @return array<string, mixed>|null
+     */
+    private function massPayloadForRequest(MassIntentionRequest $request): ?array
+    {
+        $requestId = (string) $request->id;
+        if (isset($this->listMassCelebrationByRequestId[$requestId])) {
+            return $this->listMassCelebrationByRequestId[$requestId];
+        }
+
+        $active = $this->assignments->activeAssignmentForRequest((int) $request->tenant_id, $request->id);
+        if ($active === null) {
+            return null;
+        }
+
+        $celebration = MassCelebration::query()
+            ->where('tenant_id', $request->tenant_id)
+            ->where('id', $active['celebration_id'])
+            ->first();
+
+        if ($celebration === null) {
+            return null;
+        }
+
+        return array_merge(
+            MassCelebrationEligibility::massSnapshot($celebration),
+            [
+                'status' => $celebration->status,
+                'generation_status' => $celebration->generation_status,
+                'suppression_reason' => $celebration->suppression_reason,
+            ]
+        );
+    }
+
+    /**
      * @return array{id: ?string, name: ?string}|null
      */
+    private function formatOfficeRegisterMassDayTime(string $celebratedOn, ?string $celebratedAt): string
+    {
+        try {
+            $date = Carbon::parse($celebratedOn);
+        } catch (\Throwable) {
+            $date = null;
+        }
+
+        $parts = [];
+        if ($date !== null) {
+            $parts[] = $date->format('l');
+        }
+        $parts[] = $celebratedOn;
+
+        $timeLabel = $this->formatCelebrationTime12Hour($celebratedAt);
+        if ($timeLabel !== '') {
+            $parts[] = $timeLabel;
+        }
+
+        return implode(' ', $parts);
+    }
+
+    private function formatCelebrationTime12Hour(?string $celebratedAt): string
+    {
+        if ($celebratedAt === null || trim($celebratedAt) === '') {
+            return '';
+        }
+
+        $normalized = substr(trim($celebratedAt), 0, 5);
+        try {
+            return Carbon::createFromFormat('H:i', $normalized)->format('g:i A');
+        } catch (\Throwable) {
+            return $normalized;
+        }
+    }
+
     private function beneficiaryBccPayload(MassIntentionRequest $request): ?array
     {
         $name = trim((string) ($request->beneficiary_bcc_name ?? ''));

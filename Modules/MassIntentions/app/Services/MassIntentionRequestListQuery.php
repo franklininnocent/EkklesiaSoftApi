@@ -4,8 +4,10 @@ namespace Modules\MassIntentions\Services;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Modules\MassIntentions\Models\MassIntentionRequest;
 use Modules\MassIntentions\Support\MassIntentionStatus;
+use Modules\MassIntentions\Support\MassIntentionsParishTime;
 use Modules\MassIntentions\Support\MassIntentionsSql;
 use Modules\MassIntentions\Support\MassObligationStatus;
 
@@ -39,7 +41,13 @@ final class MassIntentionRequestListQuery
                         MassObligationStatus::PENDING,
                         MassObligationStatus::SCHEDULED,
                     ]));
+            } elseif ($queue === 'needs_a_mass') {
+                $this->applyNeedsAMassFilter($builder);
             }
+        }
+
+        if ($request->boolean('needs_a_mass')) {
+            $this->applyNeedsAMassFilter($builder);
         }
 
         $like = MassIntentionsSql::likeOperator();
@@ -59,7 +67,29 @@ final class MassIntentionRequestListQuery
             $builder->whereDate('requested_date', $requestedDate);
         }
 
+        $createdFrom = trim((string) $request->input('created_from', ''));
+        $createdTo = trim((string) $request->input('created_to', ''));
+        if ($createdFrom !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $createdFrom) === 1
+            && $createdTo !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $createdTo) === 1) {
+            [$startUtc, $endUtc] = MassIntentionsParishTime::timestampRangeUtc($tenantId, $createdFrom, $createdTo);
+            $builder->where('created_at', '>=', $startUtc)
+                ->where('created_at', '<', $endUtc);
+        }
+
         return $this->applySort($builder, $request);
+    }
+
+    private function applyNeedsAMassFilter(Builder $builder): void
+    {
+        $builder->where('status', MassIntentionStatus::OPEN)
+            ->whereNotExists(function ($sub): void {
+                $sub->select(DB::raw('1'))
+                    ->from('mass_intention_obligations as o')
+                    ->join('mass_intention_assignments as a', function ($join): void {
+                        $join->on('a.obligation_id', '=', 'o.id')->whereNull('a.unassigned_at');
+                    })
+                    ->whereColumn('o.request_id', 'mass_intention_requests.id');
+            });
     }
 
     private function applySort(Builder $builder, Request $request): Builder

@@ -28,6 +28,8 @@ class MassCelebrationWorkspaceService
         return [
             'celebration' => [
                 'id' => $celebration->id,
+                'slot_id' => $celebration->slot_id,
+                'origin' => $celebration->origin,
                 'celebrated_on' => $celebration->celebrated_on?->format('Y-m-d'),
                 'celebrated_at' => $celebration->celebrated_at,
                 'place' => $celebration->place,

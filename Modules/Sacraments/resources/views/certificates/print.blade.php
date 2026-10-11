@@ -11,7 +11,7 @@
           return '';
       }
       try {
-          return (new DateTimeImmutable((string) $value))->format('j F Y');
+          return \App\Support\UserFacingDate::formatDate((string) $value);
       } catch (Throwable) {
           return (string) $value;
       }
@@ -307,9 +307,15 @@
                 <span class="fval">{{ $h($view['bride']['motherName']) }}</span>
               </div>
             @endif
+            @if (!empty($view['bride']['residenceAddress']))
+              <div class="sp-field">
+                <span class="flbl">{{ $h($terms['partyAddressLabel'] ?? 'Address') }}</span>
+                <span class="fval">{{ $h($view['bride']['residenceAddress']) }}</span>
+              </div>
+            @endif
             @if (!empty($view['bride']['parishResidence']))
               <div class="sp-field">
-                <span class="flbl">{{ $h($terms['parishResidenceLabel'] ?? 'Parish / residence') }}</span>
+                <span class="flbl">{{ $h($terms['parishResidenceLabel'] ?? 'Parish') }}</span>
                 <span class="fval">{{ $h($view['bride']['parishResidence']) }}</span>
               </div>
             @endif
@@ -332,9 +338,15 @@
                 <span class="fval">{{ $h($view['groom']['motherName']) }}</span>
               </div>
             @endif
+            @if (!empty($view['groom']['residenceAddress']))
+              <div class="sp-field">
+                <span class="flbl">{{ $h($terms['partyAddressLabel'] ?? 'Address') }}</span>
+                <span class="fval">{{ $h($view['groom']['residenceAddress']) }}</span>
+              </div>
+            @endif
             @if (!empty($view['groom']['parishResidence']))
               <div class="sp-field">
-                <span class="flbl">{{ $h($terms['parishResidenceLabel'] ?? 'Parish / residence') }}</span>
+                <span class="flbl">{{ $h($terms['parishResidenceLabel'] ?? 'Parish') }}</span>
                 <span class="fval">{{ $h($view['groom']['parishResidence']) }}</span>
               </div>
             @endif

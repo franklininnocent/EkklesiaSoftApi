@@ -2,14 +2,16 @@
 
 namespace Modules\EcclesiasticalData\Services;
 
-use Modules\EcclesiasticalData\Repositories\DioceseRepository;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
+use Modules\EcclesiasticalData\Repositories\DioceseRepository;
 
 class DioceseService
 {
     protected const PAGINATION_CACHE_KEY_SET = 'dioceses.paginated.keys';
+
+    protected const COUNTRY_CACHE_KEY_SET = 'dioceses.country.keys';
+
     protected DioceseRepository $repository;
 
     public function __construct(DioceseRepository $repository)
@@ -24,13 +26,13 @@ class DioceseService
     public function getPaginated(array $params)
     {
         // Use traditional pagination (simpler and more maintainable)
-        $cacheKey = 'dioceses.paginated.' . md5(json_encode($params));
-        
+        $cacheKey = 'dioceses.paginated.'.md5(json_encode($params));
+
         $paginator = Cache::remember($cacheKey, 120, function () use ($params) {
             return $this->repository->getDiocesesPaginatedLegacy($params);
         });
 
-        $this->rememberPaginationKey($cacheKey);
+        $this->rememberCacheKey(self::PAGINATION_CACHE_KEY_SET, $cacheKey);
 
         return $paginator;
     }
@@ -41,7 +43,7 @@ class DioceseService
     public function getById(string $id)
     {
         $cacheKey = "diocese.{$id}.full";
-        
+
         return Cache::remember($cacheKey, 600, function () use ($id) {
             return $this->repository->findWithRelations($id);
         });
@@ -53,17 +55,17 @@ class DioceseService
     public function create(array $data)
     {
         DB::beginTransaction();
-        
+
         try {
             // ID is auto-increment, don't set it manually
             unset($data['id']);
-            
+
             $diocese = $this->repository->create($data);
-            
+
             $this->clearCache();
-            
+
             DB::commit();
-            
+
             return $diocese;
         } catch (\Exception $e) {
             DB::rollBack();
@@ -77,21 +79,21 @@ class DioceseService
     public function update(string $id, array $data)
     {
         DB::beginTransaction();
-        
+
         try {
             $diocese = $this->repository->update($id, $data);
-            
+
             // Load relationships after update
             $diocese->load([
                 'country:id,name,iso2',
                 'state:id,name,state_code',
-                'denomination:id,name'
+                'denomination:id,name',
             ]);
-            
+
             $this->clearCache($id);
-            
+
             DB::commit();
-            
+
             return $diocese;
         } catch (\Exception $e) {
             DB::rollBack();
@@ -105,14 +107,14 @@ class DioceseService
     public function delete(string $id): bool
     {
         DB::beginTransaction();
-        
+
         try {
             $result = $this->repository->delete($id);
-            
+
             $this->clearCache($id);
-            
+
             DB::commit();
-            
+
             return $result;
         } catch (\Exception $e) {
             DB::rollBack();
@@ -126,10 +128,14 @@ class DioceseService
     public function getByCountry(int $countryId)
     {
         $cacheKey = "dioceses.country.{$countryId}";
-        
-        return Cache::remember($cacheKey, 600, function () use ($countryId) {
+
+        $payload = Cache::remember($cacheKey, 600, function () use ($countryId) {
             return $this->repository->getByCountry($countryId);
         });
+
+        $this->rememberCacheKey(self::COUNTRY_CACHE_KEY_SET, $cacheKey);
+
+        return $payload;
     }
 
     /**
@@ -158,11 +164,11 @@ class DioceseService
     public function bulkImport(array $dioceses)
     {
         DB::beginTransaction();
-        
+
         try {
             $imported = 0;
             $errors = [];
-            
+
             foreach ($dioceses as $index => $dioceseData) {
                 try {
                     $this->repository->create($dioceseData);
@@ -175,11 +181,11 @@ class DioceseService
                     ];
                 }
             }
-            
+
             $this->clearCache();
-            
+
             DB::commit();
-            
+
             return [
                 'imported' => $imported,
                 'errors' => $errors,
@@ -197,76 +203,45 @@ class DioceseService
      */
     protected function clearCache(?string $dioceseId = null): void
     {
-        // Clear statistics and archdioceses cache
         Cache::forget('dioceses.statistics');
         Cache::forget('archdioceses.list');
-        
+
         if ($dioceseId) {
             Cache::forget("diocese.{$dioceseId}.full");
         }
-        
-        // Clear paginated cache patterns (works with Redis cache driver)
-        try {
-            $store = Cache::getStore();
-            $this->forgetStoredPaginationKeys();
-            if (method_exists($store, 'getRedis')) {
-                $redis = $store->getRedis();
-                $prefix = config('cache.prefix', 'laravel_cache');
-                
-                // Clear all paginated caches
-                $keys = $redis->keys("{$prefix}:dioceses.paginated.*");
-                if ($keys) {
-                    foreach ($keys as $key) {
-                        $cacheKey = str_replace("{$prefix}:", '', $key);
-                        Cache::forget($cacheKey);
-                    }
-                }
-                
-                // Clear country-specific caches
-                $countryKeys = $redis->keys("{$prefix}:dioceses.country.*");
-                if ($countryKeys) {
-                    foreach ($countryKeys as $key) {
-                        $cacheKey = str_replace("{$prefix}:", '', $key);
-                        Cache::forget($cacheKey);
-                    }
-                }
-            }
-        } catch (\Exception $e) {
-            $this->forgetStoredPaginationKeys();
-            // If pattern matching fails (non-Redis cache), cache will expire naturally
-            // This is acceptable as paginated caches have short TTL (2 minutes)
-        }
+
+        $this->forgetStoredCacheKeys(self::PAGINATION_CACHE_KEY_SET);
+        $this->forgetStoredCacheKeys(self::COUNTRY_CACHE_KEY_SET);
     }
 
     /**
-     * Track paginated cache keys so they can be flushed even when pattern deletion is unavailable
+     * Track cache keys so they can be flushed without Redis KEYS scans.
      */
-    protected function rememberPaginationKey(string $cacheKey): void
+    protected function rememberCacheKey(string $setKey, string $cacheKey): void
     {
-        $keys = Cache::get(self::PAGINATION_CACHE_KEY_SET, []);
+        $keys = Cache::get($setKey, []);
 
-        if (!in_array($cacheKey, $keys, true)) {
+        if (! in_array($cacheKey, $keys, true)) {
             $keys[] = $cacheKey;
 
-            // Avoid unbounded growth
             if (count($keys) > 50) {
                 $keys = array_slice($keys, -50);
             }
 
-            Cache::forever(self::PAGINATION_CACHE_KEY_SET, $keys);
+            Cache::forever($setKey, $keys);
         }
     }
 
-    /**
-     * Remove all stored pagination cache keys
-     */
-    protected function forgetStoredPaginationKeys(): void
+    protected function forgetStoredCacheKeys(string $setKey): void
     {
-        $keys = Cache::pull(self::PAGINATION_CACHE_KEY_SET, []);
+        $keys = Cache::pull($setKey, []);
+
+        if (! is_array($keys)) {
+            return;
+        }
 
         foreach ($keys as $key) {
             Cache::forget($key);
         }
     }
 }
-

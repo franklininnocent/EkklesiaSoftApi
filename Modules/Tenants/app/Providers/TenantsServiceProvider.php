@@ -14,6 +14,8 @@ use Modules\Tenants\Console\Commands\CleanupLoadTestData;
 use Modules\Tenants\Console\Commands\CleanupOrphanMedia;
 use Modules\Tenants\Console\Commands\ExportCrossTenantPenetrationManifest;
 use Modules\Tenants\Console\Commands\PlatformProductionCheck;
+use Modules\Tenants\Console\Commands\GrandfatherSubscriptionViewOnly;
+use Modules\Tenants\Console\Commands\SubscriptionEnforcementSmoke;
 use Modules\Tenants\Console\Commands\ProcessSubscriptionLifecycle;
 use Modules\Tenants\Console\Commands\PromotePublicImagesToPrivate;
 use Modules\Tenants\Console\Commands\RunLoadTestBenchmark;
@@ -46,6 +48,7 @@ use Modules\Tenants\Services\TenantAuthorizationService;
 use Modules\Tenants\Support\AuditPiiRedactor;
 use Modules\Tenants\Support\NullSupportSessionResolver;
 use Modules\Tenants\Support\SlowQueryLogger;
+use Modules\Tenants\Support\SubscriptionAccessRoutePolicy;
 use Modules\Tenants\Support\SubscriptionRouteAllowlist;
 use Modules\Tenants\Support\TenantContext;
 use Modules\Tenants\Support\TenantRlsManager;
@@ -124,6 +127,11 @@ class TenantsServiceProvider extends ServiceProvider
             static fn () => SubscriptionRouteAllowlist::fromConfig()
         );
 
+        $this->app->singleton(
+            SubscriptionAccessRoutePolicy::class,
+            static fn () => SubscriptionAccessRoutePolicy::fromConfig()
+        );
+
         $this->app->singleton(TenantDataExportContributorRegistry::class, static function () {
             $registry = new TenantDataExportContributorRegistry;
             foreach ([
@@ -173,6 +181,8 @@ class TenantsServiceProvider extends ServiceProvider
             ExportCrossTenantPenetrationManifest::class,
             PlatformProductionCheck::class,
             ProcessSubscriptionLifecycle::class,
+            GrandfatherSubscriptionViewOnly::class,
+            SubscriptionEnforcementSmoke::class,
             SyncChurchCurrencyCommand::class,
             SyncCountryFiscalYearCatalogCommand::class,
             SeedTenantDemoDataCommand::class,

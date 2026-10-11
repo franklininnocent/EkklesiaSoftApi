@@ -21,6 +21,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        if ($this->app->environment('production')) {
+            config(['app.debug' => false]);
+        }
+
         Builder::macro('whereInsensitiveLike', function (string $column, string $pattern, string $boolean = 'and') {
             return CaseInsensitiveSearch::applyColumnLike($this, $column, $pattern, $boolean);
         });

@@ -27,7 +27,7 @@ class PasswordRecoveryRequestNotificationMail extends Mailable implements Should
 
     public function envelope(): Envelope
     {
-        return RecoveryMailEnvelope::make('EkklesiaSoft — Password Recovery Request');
+        return RecoveryMailEnvelope::make('EkklesiaNexus — Password Recovery Request');
     }
 
     public function content(): Content

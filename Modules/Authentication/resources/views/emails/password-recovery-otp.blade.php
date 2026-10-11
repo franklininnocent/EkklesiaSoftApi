@@ -1,4 +1,4 @@
-EkklesiaSoft
+EkklesiaNexus
 
 Password Reset Verification
 

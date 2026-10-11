@@ -5,6 +5,7 @@ namespace Modules\Sacraments\Services\Dashboard;
 use Illuminate\Database\Eloquent\Builder;
 use Modules\Sacraments\Models\Sacrament;
 use Modules\Sacraments\Models\SacramentParticipant;
+use Modules\Sacraments\Support\MarriageParishResolutionSql;
 use Modules\Sacraments\Support\SacramentTypeCode;
 
 class SacramentMatrimonyBuilder
@@ -151,53 +152,36 @@ class SacramentMatrimonyBuilder
      */
     private function buildCanonicalBreakdown(Builder $allTimeQuery, int $matrimonyTypeId): array
     {
-        $records = (clone $allTimeQuery)
-            ->where('sacrament_type_id', $matrimonyTypeId)
-            ->with([
-                'participants' => fn ($query) => $query->whereNull('deleted_at'),
-            ])
-            ->get([
-                'id',
-                'marriage_canonical_classification',
-                'marriage_bride_church_name',
-                'marriage_groom_church_name',
-            ]);
+        $base = (clone $allTimeQuery)->where('sacrament_type_id', $matrimonyTypeId);
 
-        $total = $records->count();
+        $total = (clone $base)->count();
         if ($total === 0) {
             return $this->emptyCanonicalBreakdown();
         }
 
-        $catholicBoth = 0;
-        $mixedDisparity = 0;
-        $sameParish = 0;
-        $interParish = 0;
+        $classificationCounts = (clone $base)
+            ->selectRaw("COALESCE(marriage_canonical_classification, 'unspecified') as classification, COUNT(*) as aggregate")
+            ->groupBy('classification')
+            ->pluck('aggregate', 'classification');
 
-        foreach ($records as $sacrament) {
-            $classification = $sacrament->marriage_canonical_classification ?: 'unspecified';
+        $catholicBoth = (int) ($classificationCounts['both_catholic'] ?? 0);
+        $mixedDisparity = (int) ($classificationCounts['mixed_marriage'] ?? 0)
+            + (int) ($classificationCounts['disparity_of_cult'] ?? 0);
 
-            if ($classification === 'both_catholic') {
-                $catholicBoth++;
-            }
+        $brideParish = MarriageParishResolutionSql::resolvedParishExpression('bride', 'marriage_bride_church_name');
+        $groomParish = MarriageParishResolutionSql::resolvedParishExpression('groom', 'marriage_groom_church_name');
 
-            if (in_array($classification, ['mixed_marriage', 'disparity_of_cult'], true)) {
-                $mixedDisparity++;
-            }
+        $parishRow = (clone $base)
+            ->selectRaw("
+                SUM(CASE WHEN {$brideParish} IS NOT NULL AND {$groomParish} IS NOT NULL
+                    AND LOWER({$brideParish}) = LOWER({$groomParish}) THEN 1 ELSE 0 END) as same_parish,
+                SUM(CASE WHEN {$brideParish} IS NOT NULL AND {$groomParish} IS NOT NULL
+                    AND LOWER({$brideParish}) <> LOWER({$groomParish}) THEN 1 ELSE 0 END) as inter_parish
+            ")
+            ->first();
 
-            $bride = $this->participantByRole($sacrament, 'bride');
-            $groom = $this->participantByRole($sacrament, 'groom');
-
-            $brideParish = $this->resolveParishName($bride, $sacrament->marriage_bride_church_name);
-            $groomParish = $this->resolveParishName($groom, $sacrament->marriage_groom_church_name);
-
-            if ($brideParish !== null && $groomParish !== null) {
-                if (strcasecmp($brideParish, $groomParish) === 0) {
-                    $sameParish++;
-                } else {
-                    $interParish++;
-                }
-            }
-        }
+        $sameParish = (int) ($parishRow->same_parish ?? 0);
+        $interParish = (int) ($parishRow->inter_parish ?? 0);
 
         return [
             'total_recorded' => $total,

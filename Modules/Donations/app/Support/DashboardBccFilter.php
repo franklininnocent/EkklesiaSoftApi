@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use Modules\Donations\Models\ContributionDue;
 use Modules\Donations\Models\DonationPayment;
+use Modules\Donations\Models\ProjectInstallmentDue;
 use Modules\Family\Models\Family;
 
 /**
@@ -109,6 +110,31 @@ final class DashboardBccFilter
         }
 
         $query->whereIn('family_id', $this->familyIdSubquery($tenantId));
+    }
+
+    /**
+     * @param  Builder<ProjectInstallmentDue>  $query
+     */
+    public function applyToProjectInstallmentDueQuery(Builder $query, int $tenantId): void
+    {
+        if (! $this->isActive) {
+            return;
+        }
+
+        $query->whereIn('family_id', $this->familyIdSubquery($tenantId));
+    }
+
+    public function familyBelongsToFilter(Family $family): bool
+    {
+        if (! $this->isActive) {
+            return true;
+        }
+
+        if ($this->unassignedOnly) {
+            return $family->bcc_id === null;
+        }
+
+        return (string) $family->bcc_id === (string) $this->bccId;
     }
 
     /**

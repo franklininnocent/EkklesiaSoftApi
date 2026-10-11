@@ -1,8 +1,10 @@
 <?php
 
+use App\Http\Middleware\ForceJsonOnApi;
 use App\Http\Middleware\PassportAuthenticate;
 use App\Http\Middleware\SecurityHeadersMiddleware;
 use App\Http\Middleware\TenantFileAccessMiddleware;
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Auth\Middleware\Authenticate;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -18,6 +20,7 @@ use Modules\ApplicationAccess\Support\TrustedProxyConfiguration;
 use Modules\Donations\Http\Middleware\EnsureDonationFeatureEnabled;
 use Modules\Donations\Http\Middleware\LogDonationSecurityResponse;
 use Modules\EcclesiasticalData\Http\Middleware\EnsureEcclesiasticalPermission;
+use Modules\Marketing\Http\Middleware\EnsureWebSettingsPermission;
 use Modules\MinistriesAssociations\Http\Middleware\EnsureAdminMinistriesPermission;
 use Modules\MinistriesAssociations\Http\Middleware\EnsureMinistriesFeatureEnabled;
 use Modules\RolesAndPermissions\Http\Middleware\EnsureTenantPermission;
@@ -72,6 +75,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'support.ticket.parish_actor' => EnsureParishTicketActor::class,
             'ministries.platform.permission' => EnsureAdminMinistriesPermission::class,
             'ecclesiastical.permission' => EnsureEcclesiasticalPermission::class,
+            'web_settings.permission' => EnsureWebSettingsPermission::class,
             'api.throttle' => ThrottleTenantApiRequests::class,
             'application_access.permission' => EnsureApplicationAccessPermission::class,
         ]);
@@ -79,6 +83,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // Configure API middleware group - set default guard to API
         // Order: bindings → Passport identity → TenantContext bind (SSOT for effective tenant)
         $middleware->api(prepend: [
+            ForceJsonOnApi::class,
             AssignRequestId::class,
             SubstituteBindings::class,
             PassportAuthenticate::class,
@@ -103,6 +108,30 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->append(TenantFileAccessMiddleware::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        $exceptions->shouldRenderJsonWhen(function (Request $request, Throwable $e): bool {
+            return $request->is('api/*') || $request->expectsJson();
+        });
+
+        $exceptions->render(function (AuthenticationException $e, Request $request) {
+            if ($request->is('api/*') || $request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthenticated.',
+                ], 401);
+            }
+        });
+
+        $exceptions->context(function () {
+            $url = request()?->fullUrl();
+            if (! is_string($url) || $url === '') {
+                return [];
+            }
+
+            $redacted = preg_replace('/([?&](?:token|session)=)([^&]*)/i', '$1redacted', $url);
+
+            return ['url' => $redacted];
+        });
+
         $exceptions->respond(function (Response $response, Throwable $exception, Request $request) {
             if (! $request->is('api/*')) {
                 return $response;
@@ -115,6 +144,13 @@ return Application::configure(basePath: dirname(__DIR__))
                 $response->headers->set('Access-Control-Allow-Origin', $origin);
                 $response->headers->set('Access-Control-Allow-Credentials', 'true');
                 $response->headers->set('Vary', 'Origin');
+            }
+
+            if ($response->getStatusCode() >= 500 && (config('app.env') === 'production' || ! config('app.debug'))) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'An unexpected error occurred.',
+                ], $response->getStatusCode());
             }
 
             return $response;

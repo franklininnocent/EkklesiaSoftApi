@@ -6,11 +6,13 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Modules\Donations\Http\Controllers\Concerns\HandlesDonationIdempotency;
+use Modules\Donations\Http\Requests\CollectPaymentContextRequest;
 use Modules\Donations\Http\Requests\IndexDonationPaymentsRequest;
 use Modules\Donations\Http\Requests\RequestRefundRequest;
 use Modules\Donations\Http\Requests\ReversePaymentRequest;
 use Modules\Donations\Http\Requests\StorePaymentRequest;
 use Modules\Donations\Models\DonationPayment;
+use Modules\Donations\Services\CollectPaymentContextService;
 use Modules\Donations\Services\DonationIdempotencyService;
 use Modules\Donations\Services\DonationLedgerService;
 use Modules\Donations\Services\DonationPaymentListService;
@@ -23,8 +25,30 @@ class DonationPaymentsController extends Controller
     public function __construct(
         private readonly DonationLedgerService $ledgerService,
         private readonly DonationIdempotencyService $idempotency,
-        private readonly DonationPaymentListService $paymentList
+        private readonly DonationPaymentListService $paymentList,
+        private readonly CollectPaymentContextService $collectContext
     ) {}
+
+    public function collectContext(CollectPaymentContextRequest $request): JsonResponse
+    {
+        $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+
+        try {
+            $data = $this->collectContext->resolve($tenantId, $request->validated());
+        } catch (\RuntimeException $exception) {
+            $status = str_contains($exception->getMessage(), 'does not belong') ? 404 : 422;
+
+            return response()->json([
+                'success' => false,
+                'message' => $exception->getMessage(),
+            ], $status);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $data,
+        ]);
+    }
 
     public function index(IndexDonationPaymentsRequest $request): JsonResponse
     {

@@ -37,4 +37,10 @@ class LeadershipTermPolicy
         return $this->allows($user, 'ministries.manage_leadership')
             && EffectiveTenant::matches($user, $term->tenant_id);
     }
+
+    public function update(User $user, LeadershipTerm $term): bool
+    {
+        return $this->allows($user, 'ministries.manage_leadership')
+            && EffectiveTenant::matches($user, $term->tenant_id);
+    }
 }

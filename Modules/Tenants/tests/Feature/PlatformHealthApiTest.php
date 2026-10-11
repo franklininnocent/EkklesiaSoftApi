@@ -16,6 +16,7 @@ class PlatformHealthApiTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('success', true)
+            ->assertJsonPath('data.checks.cache.driver', 'array')
             ->assertJsonStructure([
                 'data' => [
                     'status',

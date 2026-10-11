@@ -13,6 +13,7 @@ use Modules\Subscriptions\Models\Plan;
 use Modules\Subscriptions\Models\PlanVersion;
 use Modules\Subscriptions\Models\TenantEntitlementOverride;
 use Modules\Subscriptions\Models\TenantSubscription;
+use Modules\Subscriptions\Services\Catalog\CatalogListPriceResolver;
 use Modules\Subscriptions\Services\Catalog\LegacyColumns;
 use Modules\Subscriptions\Services\Entitlements\EntitlementCatalog;
 use Modules\Subscriptions\Services\Entitlements\EntitlementResolver;
@@ -42,6 +43,7 @@ class SubscriptionPlanChangeService implements TenantPlanAssigner
         private readonly SubscriptionPolicyService $policies,
         private readonly SubscriptionAuditService $audit,
         private readonly SubscriptionService $lifecycle,
+        private readonly CatalogListPriceResolver $listPrices,
     ) {}
 
     /**
@@ -66,13 +68,14 @@ class SubscriptionPlanChangeService implements TenantPlanAssigner
         $version = $this->assertAssignable($plan, $allowUnassignable);
         $interval = $this->resolveInterval($plan, $version, $options['billing_interval'] ?? null);
         $customLimits = $this->normalizeCustomLimits($plan, $options['custom_limits'] ?? null);
-        $price = $this->resolvePrice($plan, $version, $interval, $options['contracted_price'] ?? null);
+        $price = $this->resolvePrice($plan, $version, $interval, $options['contracted_price'] ?? null, $tenant);
+        $currencyCode = $this->resolveCurrency($plan, $version, $tenant);
 
         $scheduledFor = isset($options['scheduled_for']) && $options['scheduled_for'] !== null
             ? Carbon::parse($options['scheduled_for'])
             : null;
         if ($scheduledFor && $scheduledFor->isFuture()) {
-            return $this->schedule($tenant, $plan, $version, $interval, $price, $customLimits, $scheduledFor, $options, $actor);
+            return $this->schedule($tenant, $plan, $version, $interval, $price, $currencyCode, $customLimits, $scheduledFor, $options, $actor);
         }
 
         $impact = $this->impact->compare($tenant, $version, $customLimits);
@@ -86,7 +89,7 @@ class SubscriptionPlanChangeService implements TenantPlanAssigner
         $actorRole = SubscriptionAuditService::actorRole($actor) ?? ($actor ? null : 'system');
 
         try {
-            $subscription = $this->commitChange($tenant, $plan, $version, $interval, $price, $customLimits, $options, $source, $reason, $actorId, $actorRole, $impact);
+            $subscription = $this->commitChange($tenant, $plan, $version, $interval, $price, $currencyCode, $customLimits, $options, $source, $reason, $actorId, $actorRole, $impact);
         } finally {
             $this->resolver->forget((int) $tenant->getKey());
         }
@@ -104,9 +107,9 @@ class SubscriptionPlanChangeService implements TenantPlanAssigner
      * @param  array<string, mixed>  $options
      * @param  array<string, mixed>  $impact
      */
-    private function commitChange(Tenant $tenant, Plan $plan, PlanVersion $version, string $interval, ?string $price, array $customLimits, array $options, string $source, ?string $reason, ?int $actorId, ?string $actorRole, array $impact): TenantSubscription
+    private function commitChange(Tenant $tenant, Plan $plan, PlanVersion $version, string $interval, ?string $price, string $currencyCode, array $customLimits, array $options, string $source, ?string $reason, ?int $actorId, ?string $actorRole, array $impact): TenantSubscription
     {
-        return DB::transaction(function () use ($tenant, $plan, $version, $interval, $price, $customLimits, $options, $source, $reason, $actorId, $actorRole, $impact) {
+        return DB::transaction(function () use ($tenant, $plan, $version, $interval, $price, $currencyCode, $customLimits, $options, $source, $reason, $actorId, $actorRole, $impact) {
             // Plan then tenant: same order as PlanService::update so edit vs assign cannot deadlock.
             Plan::withTrashed()->whereKey($plan->id)->lockForUpdate()->firstOrFail();
             /** @var Tenant $locked */
@@ -126,7 +129,7 @@ class SubscriptionPlanChangeService implements TenantPlanAssigner
                 'plan_version_id' => $version->id,
                 'record_status' => TenantSubscription::RECORD_PENDING,
                 'billing_interval' => $interval,
-                'currency_code' => $version->currency_code ?: 'INR',
+                'currency_code' => $currencyCode,
                 'contracted_price' => $price,
                 'custom_limits' => $customLimits ?: null,
                 'starts_at' => now(),
@@ -421,7 +424,7 @@ class SubscriptionPlanChangeService implements TenantPlanAssigner
         return $interval;
     }
 
-    private function resolvePrice(Plan $plan, PlanVersion $version, string $interval, mixed $requested): ?string
+    private function resolvePrice(Plan $plan, PlanVersion $version, string $interval, mixed $requested, Tenant $tenant): ?string
     {
         if ($requested !== null && $requested !== '') {
             if (! is_numeric($requested) || (float) $requested < 0) {
@@ -438,13 +441,21 @@ class SubscriptionPlanChangeService implements TenantPlanAssigner
             return null;
         }
 
+        $terms = $this->listPrices->billedTerms($plan, $version, $tenant);
         $price = match ($interval) {
-            PlanVersion::INTERVAL_ANNUAL => $version->annual_price,
-            PlanVersion::INTERVAL_MONTHLY => $version->monthly_price,
+            PlanVersion::INTERVAL_ANNUAL => $terms['annual_price'],
+            PlanVersion::INTERVAL_MONTHLY => $terms['monthly_price'],
             default => null,
         };
 
         return $price === null ? null : MoneyMath::normalize((string) $price);
+    }
+
+    private function resolveCurrency(Plan $plan, PlanVersion $version, Tenant $tenant): string
+    {
+        $code = $this->listPrices->billedTerms($plan, $version, $tenant)['currency_code'] ?? '';
+
+        return $code !== '' ? strtoupper((string) $code) : strtoupper((string) $version->currency_code);
     }
 
     /**
@@ -491,9 +502,9 @@ class SubscriptionPlanChangeService implements TenantPlanAssigner
      * @param  array<string, int|null>  $customLimits
      * @param  array<string, mixed>  $options
      */
-    private function schedule(Tenant $tenant, Plan $plan, PlanVersion $version, string $interval, ?string $price, array $customLimits, Carbon $at, array $options, ?User $actor): TenantSubscription
+    private function schedule(Tenant $tenant, Plan $plan, PlanVersion $version, string $interval, ?string $price, string $currencyCode, array $customLimits, Carbon $at, array $options, ?User $actor): TenantSubscription
     {
-        return DB::transaction(function () use ($tenant, $plan, $version, $interval, $price, $customLimits, $at, $options, $actor) {
+        return DB::transaction(function () use ($tenant, $plan, $version, $interval, $price, $currencyCode, $customLimits, $at, $options, $actor) {
             // Plan then tenant: same order as PlanService::update so edit vs assign cannot deadlock.
             Plan::withTrashed()->whereKey($plan->id)->lockForUpdate()->first(['id']);
             Tenant::withTrashed()->whereKey($tenant->getKey())->lockForUpdate()->first(['id']);
@@ -508,7 +519,7 @@ class SubscriptionPlanChangeService implements TenantPlanAssigner
                 'plan_version_id' => $version->id,
                 'record_status' => TenantSubscription::RECORD_PENDING,
                 'billing_interval' => $interval,
-                'currency_code' => $version->currency_code ?: 'INR',
+                'currency_code' => $currencyCode,
                 'contracted_price' => $price,
                 'custom_limits' => $customLimits ?: null,
                 'scheduled_for' => $at,

@@ -4,6 +4,8 @@ namespace Modules\MassIntentions\Providers;
 
 use Illuminate\Console\Scheduling\Schedule;
 use Modules\MassIntentions\Console\Commands\CloseExpiredMassIntentionsCommand;
+use Modules\MassIntentions\Console\Commands\CheckMassGenerationHealthCommand;
+use Modules\MassIntentions\Console\Commands\GenerateMassOccurrencesCommand;
 use Modules\MassIntentions\DefaultSeeds\MassIntentionCategoriesDefaultSeedDefinition;
 use Modules\Tenants\DefaultSeeds\DefaultSeedRegistry;
 use Nwidart\Modules\Support\ModuleServiceProvider;
@@ -19,6 +21,8 @@ class MassIntentionsServiceProvider extends ModuleServiceProvider
      */
     protected array $commands = [
         CloseExpiredMassIntentionsCommand::class,
+        GenerateMassOccurrencesCommand::class,
+        CheckMassGenerationHealthCommand::class,
     ];
 
     /**
@@ -33,6 +37,14 @@ class MassIntentionsServiceProvider extends ModuleServiceProvider
     {
         $schedule->command('mass-intentions:close-expired')
             ->hourly()
+            ->withoutOverlapping();
+
+        $schedule->command('mass-intentions:generate-occurrences')
+            ->dailyAt('02:15')
+            ->withoutOverlapping();
+
+        $schedule->command('mass-intentions:check-generation-health')
+            ->dailyAt('06:00')
             ->withoutOverlapping();
     }
 

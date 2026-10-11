@@ -48,7 +48,7 @@ class OAuthClientSeeder extends Seeder
             'id' => (string) Str::uuid(),
             'owner_type' => null,
             'owner_id' => null,
-            'name' => 'EkklesiaSoft Password Grant Client',
+            'name' => 'EkklesiaNexus Password Grant Client',
             'secret' => null,
             'provider' => 'module_users',
             'redirect_uris' => json_encode([]),

@@ -36,6 +36,8 @@ class IndexOrganizationRequest extends FormRequest
             'sort_by' => ['sometimes', 'string', Rule::in([
                 'name',
                 'code',
+                'category_name',
+                'type_name',
                 'established_date',
                 'status',
                 'created_at',

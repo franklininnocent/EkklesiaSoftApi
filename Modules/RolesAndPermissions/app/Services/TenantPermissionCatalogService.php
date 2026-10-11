@@ -4,6 +4,7 @@ namespace Modules\RolesAndPermissions\Services;
 
 use Modules\Authentication\Models\User;
 use Modules\RolesAndPermissions\Models\Permission;
+use Modules\RolesAndPermissions\Support\RetiredProductPermissionCatalog;
 
 class TenantPermissionCatalogService
 {
@@ -13,7 +14,7 @@ class TenantPermissionCatalogService
             throw new \RuntimeException('Tenant context required.', 403);
         }
 
-        $permissions = Permission::query()
+        $permissions = RetiredProductPermissionCatalog::applyExclusion(Permission::query())
             ->where('active', 1)
             ->whereNull('deleted_at')
             ->whereIn('scope', [Permission::SCOPE_TENANT, Permission::SCOPE_BOTH])

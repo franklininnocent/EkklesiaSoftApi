@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Modules\Authentication\Models\User;
 use Modules\Tenants\Http\Requests\UploadPopeImageRequest;
 use Modules\Tenants\Models\PopeDetails;
 use Modules\Tenants\Services\ChurchMediaImageService;
@@ -17,8 +18,8 @@ use Modules\Tenants\Services\PopeLeadershipService;
  * Pope Details Controller
  *
  * Manages global Pope image and details.
- * Requires manage_pope_details permission.
- * Pope data is global (not tenant-specific).
+ * Viewing is available to any authenticated user.
+ * Creating or changing the portrait and details is limited to Ekklesia roles.
  */
 class PopeDetailsController extends Controller
 {
@@ -88,15 +89,8 @@ class PopeDetailsController extends Controller
                 ], 401);
             }
 
-            $hasPermission = $user->hasPermission('pope.manage_pope_details')
-                || $user->hasPermission('manage_pope_details');
-            $isEkklesiaAdmin = $user->isSuperAdmin() || $user->isEkklesiaAdmin();
-
-            if (! $hasPermission && ! $isEkklesiaAdmin) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized. You do not have permission to manage pope details.',
-                ], 403);
+            if ($denied = $this->denyUnlessEkklesiaRole($user)) {
+                return $denied;
             }
 
             $validated = $request->validate([
@@ -172,15 +166,8 @@ class PopeDetailsController extends Controller
                 ], 401);
             }
 
-            $hasPermission = $user->hasPermission('pope.manage_pope_details')
-                || $user->hasPermission('manage_pope_details');
-            $isEkklesiaAdmin = $user->isSuperAdmin() || $user->isEkklesiaAdmin();
-
-            if (! $hasPermission && ! $isEkklesiaAdmin) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized. You do not have permission to manage pope details.',
-                ], 403);
+            if ($denied = $this->denyUnlessEkklesiaRole($user)) {
+                return $denied;
             }
 
             $popeDetails = PopeDetails::getCurrent();
@@ -249,15 +236,8 @@ class PopeDetailsController extends Controller
                 ], 401);
             }
 
-            $hasPermission = $user->hasPermission('pope.manage_pope_details')
-                || $user->hasPermission('manage_pope_details');
-            $isEkklesiaAdmin = $user->isSuperAdmin() || $user->isEkklesiaAdmin();
-
-            if (! $hasPermission && ! $isEkklesiaAdmin) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized. You do not have permission to manage pope details.',
-                ], 403);
+            if ($denied = $this->denyUnlessEkklesiaRole($user)) {
+                return $denied;
             }
 
             $popeDetails = PopeDetails::getCurrent();
@@ -288,5 +268,24 @@ class PopeDetailsController extends Controller
                 'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
             ], 500);
         }
+    }
+
+    private function denyUnlessEkklesiaRole(mixed $user): ?JsonResponse
+    {
+        if (! $user instanceof User) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated',
+            ], 401);
+        }
+
+        if (! $user->hasEkklesiaRole()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized. Only Ekklesia roles can manage pope details.',
+            ], 403);
+        }
+
+        return null;
     }
 }

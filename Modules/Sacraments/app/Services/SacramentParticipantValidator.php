@@ -194,6 +194,8 @@ class SacramentParticipantValidator
             'external_contact_number' => $raw['external_contact_number'] ?? null,
             'external_title' => $raw['external_title'] ?? null,
             'external_minister_role' => $raw['external_minister_role'] ?? null,
+            'father_name' => $raw['father_name'] ?? null,
+            'mother_name' => $raw['mother_name'] ?? null,
         ];
 
         if ($source === SacramentParticipantSource::MEMBER) {

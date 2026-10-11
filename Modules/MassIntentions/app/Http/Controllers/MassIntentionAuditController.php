@@ -24,8 +24,30 @@ class MassIntentionAuditController extends Controller
             $query->where('request_id', $requestId);
         }
 
+        if ($category = $request->input('event_category')) {
+            $prefixes = match ((string) $category) {
+                'intention' => ['request.', 'intention.', 'receipt.'],
+                'mass' => ['celebration.'],
+                'schedule' => ['schedule.', 'day_override.'],
+                'transfer' => ['transfer.'],
+                default => [],
+            };
+            if ($prefixes !== []) {
+                $query->where(function ($builder) use ($prefixes) {
+                    foreach ($prefixes as $index => $prefix) {
+                        if ($index === 0) {
+                            $builder->where('event_type', 'like', $prefix.'%');
+                        } else {
+                            $builder->orWhere('event_type', 'like', $prefix.'%');
+                        }
+                    }
+                });
+            }
+        }
+
         if ($eventType = $request->input('event_type')) {
-            $query->where('event_type', $eventType);
+            $escaped = addcslashes((string) $eventType, '%_\\');
+            $query->where('event_type', 'like', '%'.$escaped.'%');
         }
 
         $page = $query->paginate($perPage);

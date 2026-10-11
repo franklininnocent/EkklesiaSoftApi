@@ -44,27 +44,7 @@ class UserPersonLinkService
             });
         }
 
-        $baseCount = (clone $query)->count();
         $results = $query->limit($limit)->get()->map(fn (LeadershipAssignment $assignment) => $this->presentLinkableClergy($assignment));
-
-        // #region agent log
-        file_put_contents('/var/www/html/EkklesiaSoft/.cursor/debug-92acf4.log', json_encode([
-            'sessionId' => '92acf4',
-            'runId' => 'pre-fix',
-            'hypothesisId' => 'H2',
-            'location' => 'UserPersonLinkService.php:listLinkableClergy',
-            'message' => 'linkable clergy query stats',
-            'data' => [
-                'tenantId' => $tenantId,
-                'search' => $search,
-                'linkedPersonCount' => $linkedPersonIds->count(),
-                'matchingAssignmentCount' => $baseCount,
-                'returnedCount' => $results->count(),
-                'sampleNames' => $results->take(3)->pluck('person_name')->values()->all(),
-            ],
-            'timestamp' => (int) round(microtime(true) * 1000),
-        ])."\n", FILE_APPEND);
-        // #endregion
 
         return $results;
     }

@@ -18,7 +18,7 @@
     ]))" />
 
     <x-email.paragraph muted>
-        Sign in to EkklesiaSoft and open Settings → Forgot Password Requests to review this request.
+        Sign in to EkklesiaNexus and open Settings → Forgot Password Requests to review this request.
     </x-email.paragraph>
 
     <x-email.security-notice>

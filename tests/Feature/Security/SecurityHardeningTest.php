@@ -35,6 +35,28 @@ class SecurityHardeningTest extends TestCase
     }
 
     #[Test]
+    public function api_host_is_not_indexable(): void
+    {
+        $robots = (string) file_get_contents(public_path('robots.txt'));
+        $this->assertStringContainsString('Disallow: /', $robots);
+        $this->assertStringNotContainsString("Disallow:\n", $robots);
+
+        $this->get('/up')->assertHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+    }
+
+    #[Test]
+    public function unauthenticated_api_requests_return_json_401_without_a_login_redirect(): void
+    {
+        $response = $this->get('/api/admin/contact-enquiries');
+
+        $response->assertUnauthorized()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Unauthenticated.');
+        $this->assertStringNotContainsString('<html', (string) $response->getContent());
+        $this->assertStringNotContainsString('RouteNotFoundException', (string) $response->getContent());
+    }
+
+    #[Test]
     public function debug_and_test_routes_are_not_registered(): void
     {
         foreach (['/api/debug-token', '/api/test-guard', '/api/test-public', '/api/test-auth'] as $path) {

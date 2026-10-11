@@ -14,5 +14,6 @@
     "ApplicationAccess": true,
     "Notifications": true,
     "Subscriptions": true,
-    "MassIntentions": true
+    "MassIntentions": true,
+    "Marketing": true
 }

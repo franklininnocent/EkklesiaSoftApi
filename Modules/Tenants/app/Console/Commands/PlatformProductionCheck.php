@@ -17,6 +17,7 @@ class PlatformProductionCheck extends Command
         $checks = [
             $this->check('APP_ENV is production', fn () => config('app.env') === 'production', true),
             $this->check('APP_DEBUG is false', fn () => config('app.debug') === false, true),
+            $this->check('MARKETING_BFF_SECRET is set', fn () => (string) config('marketing.bff.shared_secret', '') !== '', $strict),
             $this->check('APP_KEY is set', fn () => (string) config('app.key') !== '', true),
             $this->check('TENANT_ORM_GLOBAL_SCOPE enabled', fn () => (bool) config('tenants.isolation.orm_global_scope', false), true),
             $this->check('TENANT_RLS_ENABLED on PostgreSQL', function (): bool {
@@ -27,6 +28,7 @@ class PlatformProductionCheck extends Command
                 return TenantRlsManager::isEnabled();
             }, true),
             $this->check('Queue driver is not sync', fn () => config('queue.default') !== 'sync', $strict),
+            $this->check('Cache store is redis', fn () => config('cache.default') === 'redis', $strict),
             $this->check('Platform health token configured', fn () => (string) config('tenants.platform.health.token', '') !== '', $strict),
             $this->check('Session secure cookie in production', fn () => (bool) config('session.secure', false), $strict),
             $this->check('Export cleanup scheduled', fn () => (bool) config('tenants.platform.scheduler.export_cleanup_enabled', true), false),

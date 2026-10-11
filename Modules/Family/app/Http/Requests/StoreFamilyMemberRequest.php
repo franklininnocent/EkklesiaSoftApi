@@ -72,6 +72,7 @@ class StoreFamilyMemberRequest extends FormRequest
             'confirmation_date' => ['nullable', 'date', 'before_or_equal:today', 'after_or_equal:baptism_date'],
             'confirmation_place' => ['nullable', 'string', 'max:255'],
             'marriage_date' => ['nullable', 'date', 'before_or_equal:today'],
+            'acknowledge_marriage_date_conflict' => ['sometimes', 'boolean'],
             'marriage_place' => ['nullable', 'string', 'max:255'],
             'marriage_spouse_name' => ['nullable', 'string', 'max:255'],
             'marriage_bride_full_name' => ['nullable', 'string', 'max:255'],

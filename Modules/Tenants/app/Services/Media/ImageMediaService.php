@@ -29,7 +29,7 @@ class ImageMediaService
             if ($e instanceof Responsable) {
                 throw new ImageMediaException(
                     ImageMediaException::CODE_STORAGE_LIMIT,
-                    'Your parish has reached its storage limit. Remove unused files or contact EkklesiaSoft to upgrade.'
+                    'Your parish has reached its storage limit. Remove unused files or contact EkklesiaNexus to upgrade.'
                 );
             }
             throw $e;

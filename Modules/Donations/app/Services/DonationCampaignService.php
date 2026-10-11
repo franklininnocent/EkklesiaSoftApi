@@ -15,17 +15,21 @@ class DonationCampaignService
      */
     public function list(int $tenantId): array
     {
-        return DonationProject::forTenant($tenantId)
+        $collection = DonationProject::forTenant($tenantId)
             ->where('entity_kind', 'campaign')
             ->with('fund')
             ->orderByDesc('created_at')
-            ->get()
-            ->map(function (DonationProject $campaign) use ($tenantId): array {
-                $dashboard = $this->projectService->getDashboard($tenantId, $campaign);
+            ->get();
+
+        $summaries = $this->projectService->summarizeProjectsForList($tenantId, $collection);
+
+        return $collection
+            ->map(function (DonationProject $campaign) use ($summaries): array {
+                $summary = $summaries[$campaign->id] ?? [];
 
                 return array_merge($campaign->toArray(), [
-                    'collection_percentage' => $dashboard['totals']['collection_percentage'],
-                    'families_enrolled' => $dashboard['families']['enrolled'],
+                    'collection_percentage' => $summary['collection_percentage'] ?? null,
+                    'families_enrolled' => $summary['families_enrolled'] ?? 0,
                 ]);
             })
             ->values()

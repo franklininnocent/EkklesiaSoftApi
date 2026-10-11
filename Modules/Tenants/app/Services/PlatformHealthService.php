@@ -5,6 +5,7 @@ namespace Modules\Tenants\Services;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Storage;
 use Modules\Tenants\Support\TenantRlsManager;
 
@@ -13,7 +14,7 @@ class PlatformHealthService
     /**
      * @return array{
      *     status: string,
-     *     checks: array<string, array{status: string, latency_ms?: float, message?: string}>,
+     *     checks: array<string, array{status: string, latency_ms?: float, message?: string, driver?: string}>,
      *     flags: array<string, bool>,
      *     version: string,
      * }
@@ -66,28 +67,42 @@ class PlatformHealthService
     }
 
     /**
-     * @return array{status: string, latency_ms?: float, message?: string}
+     * @return array{status: string, latency_ms?: float, message?: string, driver?: string}
      */
     private function checkCache(): array
     {
         $started = microtime(true);
+        $driver = (string) config('cache.default', 'redis');
         $key = 'platform:health:'.uniqid('', true);
 
         try {
+            if ($driver === 'redis') {
+                Redis::connection((string) config('cache.stores.redis.connection', 'cache'))->ping();
+            }
+
             Cache::put($key, 'ok', 10);
             $value = Cache::get($key);
             Cache::forget($key);
 
             if ($value !== 'ok') {
-                return ['status' => 'degraded', 'message' => 'cache_read_mismatch'];
+                return [
+                    'status' => 'degraded',
+                    'driver' => $driver,
+                    'message' => 'cache_read_mismatch',
+                ];
             }
 
             return [
                 'status' => 'ok',
+                'driver' => $driver,
                 'latency_ms' => round((microtime(true) - $started) * 1000, 2),
             ];
         } catch (\Throwable) {
-            return ['status' => 'degraded', 'message' => 'cache_unavailable'];
+            return [
+                'status' => 'degraded',
+                'driver' => $driver,
+                'message' => 'cache_unavailable',
+            ];
         }
     }
 

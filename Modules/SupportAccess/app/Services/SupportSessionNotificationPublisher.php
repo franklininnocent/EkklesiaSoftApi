@@ -175,7 +175,7 @@ class SupportSessionNotificationPublisher
             ->all();
 
         $subject = sprintf(
-            '[EkklesiaSoft] Support access %s — %s',
+            '[EkklesiaNexus] Support access %s — %s',
             $event === 'session_started' ? 'started' : 'ended',
             $session->tenant?->name ?? ('tenant #'.$session->tenant_id)
         );

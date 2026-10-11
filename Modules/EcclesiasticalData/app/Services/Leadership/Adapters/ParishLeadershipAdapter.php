@@ -20,8 +20,8 @@ class ParishLeadershipAdapter implements LeadershipAdapterInterface
      * @var array<string, list<string>>
      */
     private const ROLE_TITLES = [
-        LeadershipOfficeCode::ParishPriest->value => ['Pastor'],
-        LeadershipOfficeCode::AssociateParishPriest->value => ['Parochial Vicar'],
+        LeadershipOfficeCode::ParishPriest->value => ['Pastor', 'Parish Priest'],
+        LeadershipOfficeCode::AssociateParishPriest->value => ['Parochial Vicar', 'Assistant Parish Priest'],
         LeadershipOfficeCode::ParishAdministrator->value => ['Parochial Administrator'],
     ];
 

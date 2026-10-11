@@ -23,9 +23,12 @@ final class TenantDemoResolver
             return Tenant::query()->find($explicitId);
         }
 
-        $fromEnv = env(TenantDemoMarkers::ENV_TENANT_ID);
-        if ($fromEnv !== null && $fromEnv !== '') {
-            return Tenant::query()->find((int) $fromEnv);
+        $fromEnv = self::readEnvTenantId();
+        if ($fromEnv !== null) {
+            $tenant = Tenant::query()->find($fromEnv);
+            if ($tenant) {
+                return $tenant;
+            }
         }
 
         foreach (self::PREFERRED_TENANT_NAMES as $name) {
@@ -93,5 +96,26 @@ final class TenantDemoResolver
     public static function flagIsTrue(string $envKey): bool
     {
         return filter_var(env($envKey, false), FILTER_VALIDATE_BOOL);
+    }
+
+    /**
+     * Resolve tenant id from CLI/env (works when config is cached).
+     */
+    public static function readEnvTenantId(): ?int
+    {
+        $raw = env(TenantDemoMarkers::ENV_TENANT_ID);
+        if ($raw === null || $raw === '') {
+            $raw = $_ENV[TenantDemoMarkers::ENV_TENANT_ID]
+                ?? $_SERVER[TenantDemoMarkers::ENV_TENANT_ID]
+                ?? getenv(TenantDemoMarkers::ENV_TENANT_ID);
+        }
+
+        if ($raw === false || $raw === null || $raw === '') {
+            return null;
+        }
+
+        $id = (int) $raw;
+
+        return $id > 0 ? $id : null;
     }
 }

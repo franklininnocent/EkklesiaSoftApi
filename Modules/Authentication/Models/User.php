@@ -20,18 +20,18 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
-use Modules\Authentication\Support\UserProfileImageAuthorization;
-use Modules\Tenants\Services\Media\ImageMediaUrlSigner;
 use Laravel\Passport\HasApiTokens;
 use Modules\Authentication\Database\Factories\UserFactory;
+use Modules\Authentication\Support\UserProfileImageAuthorization;
 use Modules\Family\Models\Person;
 use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Tenants\Models\Address;
 use Modules\Tenants\Models\LeadershipAssignment;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Services\Media\ImageMediaUrlSigner;
 use Modules\Tenants\Support\LeadershipAssignmentStatus;
-use Modules\Tenants\Support\TenantContext;
 use Modules\Tenants\Support\TenantCacheVersion;
+use Modules\Tenants\Support\TenantContext;
 
 class User extends Authenticatable
 {
@@ -290,6 +290,9 @@ class User extends Authenticatable
      */
     private static array $requestPermissionCache = [];
 
+    /** @var array<string, bool> */
+    private static array $requestSuperAdminCache = [];
+
     /**
      * Get hash of user's active role IDs for cache versioning
      */
@@ -308,11 +311,13 @@ class User extends Authenticatable
     {
         $cacheKey = "user_{$this->id}_permissions";
         unset(self::$requestPermissionCache[$cacheKey]);
+        unset(self::$requestSuperAdminCache["user_{$this->id}_super_admin"]);
     }
 
     public static function flushRequestPermissionCache(): void
     {
         self::$requestPermissionCache = [];
+        self::$requestSuperAdminCache = [];
     }
 
     /**
@@ -784,6 +789,16 @@ class User extends Authenticatable
      * to support multi-role architecture
      */
     public function isSuperAdmin(): bool
+    {
+        $cacheKey = "user_{$this->id}_super_admin";
+        if (! isset(self::$requestSuperAdminCache[$cacheKey])) {
+            self::$requestSuperAdminCache[$cacheKey] = $this->resolveIsSuperAdmin();
+        }
+
+        return self::$requestSuperAdminCache[$cacheKey];
+    }
+
+    private function resolveIsSuperAdmin(): bool
     {
         // Check legacy role relationship (for backward compatibility)
         // SECURITY: Must verify role is active and not deleted

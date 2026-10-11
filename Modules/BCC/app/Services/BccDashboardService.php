@@ -4,15 +4,15 @@ namespace Modules\BCC\Services;
 
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Modules\BCC\Models\BCC;
-use Modules\BCC\Models\BCCLeader;
 use Modules\BCC\Models\BccAuditLog;
 use Modules\BCC\Models\BccFamilyMembership;
+use Modules\BCC\Models\BCCLeader;
 use Modules\BCC\Support\BccAgeBands;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
-use Illuminate\Support\Facades\Auth;
 use Modules\Tenants\Support\AuditLogViewerAuthorization;
 use Modules\Tenants\Support\TenantFacingAuditActor;
 
@@ -229,6 +229,7 @@ class BccDashboardService
         $coordinators = $this->buildCoordinatorOptions($tenantId);
 
         $snapshot = [
+
             'bccs_total' => $totalBccs,
             'bccs_active' => $activeBccs,
             'bccs_inactive' => $inactiveBccs,
@@ -308,6 +309,44 @@ class BccDashboardService
     }
 
     /**
+     * Parish-wide coverage KPIs used by the tenant executive dashboard.
+     * Matches unfiltered {@see summary()} snapshot fields without loading the full pastoral payload.
+     *
+     * @return array{
+     *     bccs_active: int,
+     *     families_connected: int,
+     *     families_without_bcc: int,
+     *     coverage_percent: float|null
+     * }
+     */
+    public function executiveCoverageSnapshot(int $tenantId): array
+    {
+        $activeBccs = BCC::query()
+            ->forTenant((string) $tenantId)
+            ->where('status', 'active')
+            ->count();
+
+        $familyRow = Family::query()
+            ->where('tenant_id', $tenantId)
+            ->selectRaw('SUM(CASE WHEN bcc_id IS NOT NULL THEN 1 ELSE 0 END) as families_connected')
+            ->selectRaw('SUM(CASE WHEN bcc_id IS NULL THEN 1 ELSE 0 END) as families_without_bcc')
+            ->first();
+
+        $allLinked = (int) ($familyRow->families_connected ?? 0);
+        $familiesWithout = (int) ($familyRow->families_without_bcc ?? 0);
+        $coverageDenom = $allLinked + $familiesWithout;
+
+        return [
+            'bccs_active' => $activeBccs,
+            'families_connected' => $allLinked,
+            'families_without_bcc' => $familiesWithout,
+            'coverage_percent' => $coverageDenom > 0
+                ? round(($allLinked / $coverageDenom) * 100, 1)
+                : null,
+        ];
+    }
+
+    /**
      * @return array<string, string>
      */
     private function definitions(): array
@@ -319,7 +358,7 @@ class BccDashboardService
             'family_growth' => 'Change in BCC-connected family counts over the selected period.',
             'people_growth' => 'Change in BCC-connected people counts over the selected period.',
             'leadership_coverage' => 'Share of active BCCs that have a primary leader (role = leader).',
-            'life_stage' => 'Derived from date of birth using EkklesiaSoft BCC age bands (babies 0–2, children 3–12, teenagers 13–17, young adults 18–25, adults 26–59, seniors 60+).',
+            'life_stage' => 'Derived from date of birth using EkklesiaNexus BCC age bands (babies 0–2, children 3–12, teenagers 13–17, young adults 18–25, adults 26–59, seniors 60+).',
             'data_quality' => 'Share of reviewed records without common completeness issues (missing address, missing phone on BCC-linked members, missing primary leader on active BCCs).',
             'coverage_point_change' => 'Difference in coverage percentage compared with the start of the selected period, expressed in percentage points.',
         ];

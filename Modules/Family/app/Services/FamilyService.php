@@ -16,7 +16,7 @@ use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
 use Modules\Family\Models\Person;
 use Modules\Sacraments\Models\Sacrament;
-use Modules\Tenants\Contracts\TenantLimitGuard;
+use Modules\Family\Support\FamilyDashboardCache;
 use Modules\Tenants\Services\Media\ImageMediaException;
 
 class FamilyService
@@ -38,6 +38,7 @@ class FamilyService
         protected FamilyMemberParentNameResolver $parentNameResolver,
         protected PersonParentRelationshipService $parentRelationshipService,
         protected FamilyDuplicateDetectionService $duplicateDetectionService,
+        protected MarriageDateSyncService $marriageDateSyncService,
     ) {
         $this->familyRepository = $familyRepository;
         $this->fileUploadService = $fileUploadService;
@@ -69,6 +70,7 @@ class FamilyService
 
         if ($family !== null && $family->relationLoaded('members') && $family->members->isNotEmpty()) {
             $this->parentNameResolver->attachToMembers($family->members);
+            $this->marriageDateSyncService->attachToMembers($family->members, $tenantId);
         }
 
         return $family;
@@ -125,6 +127,8 @@ class FamilyService
             }
 
             DB::commit();
+
+            FamilyDashboardCache::bump($tenantId);
 
             Log::info('Family created', [
                 'family_id' => $family->id,
@@ -283,6 +287,8 @@ class FamilyService
 
             DB::commit();
 
+            FamilyDashboardCache::bump($tenantId);
+
             foreach ($pendingStatusChangeEvents as $statusChangeEvent) {
                 $this->dispatchFamilyMemberStatusChangedEvent(
                     $tenantId,
@@ -358,6 +364,8 @@ class FamilyService
             $result = $this->familyRepository->delete($family);
 
             DB::commit();
+
+            FamilyDashboardCache::bump($tenantId);
 
             Log::info('Family deleted', [
                 'family_id' => $id,
@@ -447,6 +455,7 @@ class FamilyService
 
             $this->enforceSacramentDependencies($memberData);
             $this->enforceSingleActiveHead($familyId, $memberData);
+            $spouseToSync = $this->marriageDateSyncService->assertAndPrepare(null, $memberData, $familyId, $tenantId);
 
             // Create member
             $member = $this->familyRepository->addMember($family, $memberData);
@@ -455,7 +464,18 @@ class FamilyService
                 $this->applyBaptismRegisterToMemberIfEmpty($member, (string) $member->person_id, (int) $tenantId);
             }
 
+            $this->marriageDateSyncService->syncLinkedSpouseAndAudit(
+                $member,
+                $spouseToSync,
+                null,
+                $memberData,
+                $tenantId,
+                $userId
+            );
+
             DB::commit();
+
+            FamilyDashboardCache::bump($tenantId);
 
             Log::info('Family member added', [
                 'member_id' => $member->id,
@@ -537,6 +557,8 @@ class FamilyService
 
             $this->enforceSacramentDependencies($data, $member);
             $this->enforceSingleActiveHead($familyId, $data, $memberId);
+            $previousMarriageDate = $member->marriage_date;
+            $spouseToSync = $this->marriageDateSyncService->assertAndPrepare($member, $data, $familyId, $tenantId);
 
             // Update member
             $updated = $this->familyRepository->updateMember($member, $data);
@@ -555,7 +577,18 @@ class FamilyService
 
             $this->syncMemberPersonFromPayload($member, $data, $parentPayload, $tenantId, $userId, $memberId);
 
+            $this->marriageDateSyncService->syncLinkedSpouseAndAudit(
+                $member,
+                $spouseToSync,
+                $previousMarriageDate,
+                $data,
+                $tenantId,
+                $userId
+            );
+
             DB::commit();
+
+            FamilyDashboardCache::bump($tenantId);
 
             $member->refresh();
             $this->dispatchFamilyMemberStatusChangedEvent($tenantId, $member, $previousStatus);
@@ -574,6 +607,7 @@ class FamilyService
                 'person.mother:id,first_name,middle_name,last_name,deleted_at',
             ]);
             $this->parentNameResolver->attachToMembers([$member]);
+            $this->marriageDateSyncService->attachToMembers([$member], $tenantId);
 
             return $member;
 
@@ -630,6 +664,8 @@ class FamilyService
 
             DB::commit();
 
+            FamilyDashboardCache::bump($tenantId);
+
             $this->dispatchFamilyMemberStatusChangedEvent(
                 $tenantId,
                 null,
@@ -674,6 +710,7 @@ class FamilyService
         $members = $this->familyRepository->getFamilyMembers($familyId);
         if ($members !== null) {
             $this->parentNameResolver->attachToMembers($members);
+            $this->marriageDateSyncService->attachToMembers($members, $tenantId);
         }
 
         return $members;

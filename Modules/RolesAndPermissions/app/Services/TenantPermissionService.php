@@ -7,6 +7,7 @@ use Modules\Authentication\Models\Role;
 use Modules\Authentication\Models\User;
 use Modules\Authentication\Services\PasswordAuthorizationService;
 use Modules\RolesAndPermissions\Models\Permission;
+use Modules\RolesAndPermissions\Support\RetiredProductPermissionCatalog;
 
 class TenantPermissionService
 {
@@ -42,6 +43,10 @@ class TenantPermissionService
         }
 
         foreach ($permissions as $permission) {
+            if (RetiredProductPermissionCatalog::isRetired($permission)) {
+                throw new \RuntimeException("Permission '{$permission->name}' is not an available product capability.", 422);
+            }
+
             if (!$permission->isTenantAssignable()) {
                 throw new \RuntimeException("Permission '{$permission->name}' is platform-only and cannot be assigned in tenant scope.", 422);
             }

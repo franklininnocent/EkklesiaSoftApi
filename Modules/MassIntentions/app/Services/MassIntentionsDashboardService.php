@@ -3,27 +3,64 @@
 namespace Modules\MassIntentions\Services;
 
 use App\Support\MoneyMath;
+use App\Support\UserFacingDate;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Modules\Donations\Support\DonationBusinessDate;
 use Modules\MassIntentions\Models\MassCelebration;
+use Modules\MassIntentions\Models\MassSchedule;
+use Modules\MassIntentions\Support\MassGenerationStatus;
 use Modules\MassIntentions\Models\MassIntentionRequest;
+use Modules\MassIntentions\Services\MassGenerationHealthService;
 use Modules\MassIntentions\Services\MassIntentionOfficeCloseService;
 use Modules\MassIntentions\Support\MassIntentionStatus;
+use Modules\MassIntentions\Support\MassIntentionsParishTime;
 use Modules\MassIntentions\Support\MassObligationStatus;
 
 class MassIntentionsDashboardService
 {
     public function __construct(
         private readonly MassIntentionOfficeCloseService $officeClose,
+        private readonly MassGenerationHealthService $generationHealth,
+        private readonly MassNextUpcomingCelebrationService $nextUpcomingCelebrations,
     ) {
     }
 
     /**
-     * Parish Mass Intention workspace snapshot. Counts are tenant-scoped.
+     * Same counts as the Mass Intentions home snapshot. Does not run office-close side effects.
      *
-     * @return array<string, mixed>
+     * @return array{
+     *   open: int,
+     *   intentions_registered_this_month: int,
+     *   registered_from: string,
+     *   registered_to: string,
+     *   needs_a_mass: int,
+     *   needs_a_tick: int,
+     *   schedule_attention: int,
+     *   this_week_masses: int
+     * }
      */
+    public function executiveOperationalCounts(int $tenantId): array
+    {
+        $timezone = DonationBusinessDate::timezoneForTenant($tenantId);
+        $now = Carbon::now($timezone);
+        $today = $now->toDateString();
+        $monthStart = $now->copy()->startOfMonth()->toDateString();
+        $nextMonthStart = $now->copy()->addMonthNoOverflow()->startOfMonth()->toDateString();
+        $weekBounds = MassIntentionsParishTime::weekBoundsContaining($tenantId, $today);
+
+        return [
+            'open' => $this->requestStatusCounts($tenantId)['open'],
+            'intentions_registered_this_month' => $this->countCreatedBetween($tenantId, $monthStart, $nextMonthStart),
+            'registered_from' => $monthStart,
+            'registered_to' => $nextMonthStart,
+            'needs_a_mass' => $this->countNeedsAMass($tenantId),
+            'needs_a_tick' => $this->countCelebrationsNeedingTick($tenantId),
+            'schedule_attention' => $this->countScheduleAttention($tenantId),
+            'this_week_masses' => $this->countCelebrationsInWeek($tenantId, $weekBounds['sunday'], $weekBounds['saturday']),
+        ];
+    }
+
     public function homeSummary(int $tenantId, bool $includeOfferings = false): array
     {
         $this->officeClose->closeExpiredForTenant($tenantId);
@@ -45,10 +82,20 @@ class MassIntentionsDashboardService
         $intentionsThisMonth = $this->countCreatedBetween($tenantId, $monthStart, $thisMonthStartExclusiveEnd);
         $intentionsLastMonth = $this->countCreatedBetween($tenantId, $lastMonthStart, $monthStart);
 
+        $weekBounds = MassIntentionsParishTime::weekBoundsContaining($tenantId, $today);
+        $thisWeekMasses = $this->countCelebrationsInWeek($tenantId, $weekBounds['sunday'], $weekBounds['saturday']);
+        $needsTick = $this->countCelebrationsNeedingTick($tenantId);
+        $needsAMass = $this->countNeedsAMass($tenantId);
+        $scheduleAttention = $this->countScheduleAttention($tenantId);
+        $generation = $this->generationHealth->assessForTenant($tenantId);
+        $upcomingCelebrations = $this->upcomingCelebrationsWithCounts($tenantId, 8);
+
         $period = [
-            'label' => $now->format('F Y'),
+            'label' => UserFacingDate::formatMonthYear($now),
             'intentions_registered_this_month' => $intentionsThisMonth,
             'intentions_registered_last_month' => $intentionsLastMonth,
+            'created_from' => $monthStart,
+            'created_to' => $thisMonthStartExclusiveEnd,
         ];
 
         $payload = [
@@ -58,10 +105,34 @@ class MassIntentionsDashboardService
                 'closed' => $requestCounts['closed'],
                 'intentions_registered_this_month' => $intentionsThisMonth,
                 'intentions_registered_last_month' => $intentionsLastMonth,
+                'upcoming_masses' => $this->nextUpcomingCelebrations->countUpcomingCelebrations($tenantId),
+                'needs_a_tick' => $needsTick,
+                'needs_a_mass' => $needsAMass,
+                'schedule_attention' => $scheduleAttention,
+                'this_week_masses' => $thisWeekMasses,
             ],
             'requests' => $requestCounts,
             'period' => $period,
             'trend' => $this->monthlyTrend($tenantId, $now, $includeOfferings),
+            'operational' => [
+                'upcoming' => $this->countUpcomingIntentions($tenantId),
+                'needs_a_tick' => $needsTick,
+                'needs_a_mass' => $needsAMass,
+                'schedule_attention' => $scheduleAttention,
+            ],
+            'upcoming_celebrations' => $upcomingCelebrations,
+            'generation' => [
+                'attention_required' => $generation['attention_required'],
+                'attention_reason' => $generation['attention_reason'],
+            ],
+            'meta' => [
+                'parish_today' => $today,
+                'timezone' => $timezone,
+                'parish_now' => $now->toIso8601String(),
+                'next_upcoming_celebration_id' => $upcomingCelebrations[0]['id'] ?? null,
+                'week_from' => $weekBounds['sunday'],
+                'week_to' => $weekBounds['saturday'],
+            ],
         ];
 
         if ($includeOfferings) {
@@ -116,10 +187,12 @@ class MassIntentionsDashboardService
 
     private function countCreatedBetween(int $tenantId, string $fromInclusive, string $toExclusive): int
     {
+        [$startUtc, $endUtc] = MassIntentionsParishTime::timestampRangeUtc($tenantId, $fromInclusive, $toExclusive);
+
         return MassIntentionRequest::query()
             ->where('tenant_id', $tenantId)
-            ->where('created_at', '>=', $fromInclusive)
-            ->where('created_at', '<', $toExclusive)
+            ->where('created_at', '>=', $startUtc)
+            ->where('created_at', '<', $endUtc)
             ->count();
     }
 
@@ -171,33 +244,102 @@ class MassIntentionsDashboardService
             ->count();
     }
 
-    private function countNeedsTick(int $tenantId): int
+    private function countScheduleAttention(int $tenantId): int
     {
-        $today = DonationBusinessDate::today($tenantId);
+        $count = MassSchedule::query()
+            ->where('tenant_id', $tenantId)
+            ->where('kind', 'regular')
+            ->where('status', 'active')
+            ->value('last_preview_conflict_count');
 
-        return (int) DB::table('mass_intention_obligations as o')
+        return max(0, (int) $count);
+    }
+
+    private function countNeedsAMass(int $tenantId): int
+    {
+        return (int) DB::table('mass_intention_requests as r')
+            ->where('r.tenant_id', $tenantId)
+            ->where('r.status', MassIntentionStatus::OPEN)
+            ->whereNotExists(function ($sub): void {
+                $sub->select(DB::raw('1'))
+                    ->from('mass_intention_obligations as o')
+                    ->join('mass_intention_assignments as a', function ($join): void {
+                        $join->on('a.obligation_id', '=', 'o.id')->whereNull('a.unassigned_at');
+                    })
+                    ->whereColumn('o.request_id', 'r.id');
+            })
+            ->count();
+    }
+
+    private function countUpcomingIntentions(int $tenantId): int
+    {
+        $upcomingCelebrationIds = $this->nextUpcomingCelebrations
+            ->upcomingCelebrationsQuery($tenantId)
+            ->select('id');
+
+        return (int) DB::table('mass_intention_requests as r')
+            ->join('mass_intention_obligations as o', 'o.request_id', '=', 'r.id')
             ->join('mass_intention_assignments as a', function ($join): void {
                 $join->on('a.obligation_id', '=', 'o.id')->whereNull('a.unassigned_at');
             })
             ->join('mass_celebrations as c', 'c.id', '=', 'a.celebration_id')
-            ->leftJoin('mass_intention_fulfilments as f', function ($join): void {
-                $join->on('f.obligation_id', '=', 'o.id')->whereNull('f.undone_at');
-            })
-            ->where('o.tenant_id', $tenantId)
-            ->where('o.status', MassObligationStatus::SCHEDULED)
-            ->where('c.status', 'scheduled')
-            ->whereDate('c.celebrated_on', '<=', $today)
-            ->whereNull('f.id')
-            ->count();
+            ->where('r.tenant_id', $tenantId)
+            ->where('r.status', MassIntentionStatus::OPEN)
+            ->whereIn('c.id', $upcomingCelebrationIds)
+            ->distinct('r.id')
+            ->count('r.id');
     }
 
-    private function countUpcomingCelebrations(int $tenantId, string $today): int
+    private function countCelebrationsNeedingTick(int $tenantId): int
     {
+        $today = DonationBusinessDate::today($tenantId);
+
         return MassCelebration::query()
             ->where('tenant_id', $tenantId)
             ->where('status', 'scheduled')
-            ->whereDate('celebrated_on', '>=', $today)
+            ->where('generation_status', MassGenerationStatus::ACTIVE)
+            ->whereDate('celebrated_on', '<=', $today)
+            ->where(function ($q): void {
+                $q->where('generation_status', MassGenerationStatus::ACTIVE)
+                    ->orWhere('status', 'cancelled');
+            })
+            ->whereExists(function ($sub) use ($tenantId): void {
+                $sub->select(DB::raw('1'))
+                    ->from('mass_intention_assignments as a')
+                    ->join('mass_intention_obligations as o', 'o.id', '=', 'a.obligation_id')
+                    ->leftJoin('mass_intention_fulfilments as f', function ($join): void {
+                        $join->on('f.obligation_id', '=', 'o.id')->whereNull('f.undone_at');
+                    })
+                    ->whereColumn('a.celebration_id', 'mass_celebrations.id')
+                    ->where('a.tenant_id', $tenantId)
+                    ->whereNull('a.unassigned_at')
+                    ->where('o.status', MassObligationStatus::SCHEDULED)
+                    ->whereNull('f.id');
+            })
             ->count();
+    }
+
+    private function countCelebrationsInWeek(int $tenantId, string $from, string $to): int
+    {
+        return $this->celebrationsWeekListQuery($tenantId, $from, $to)->count();
+    }
+
+    private function celebrationsWeekListQuery(int $tenantId, string $from, string $to)
+    {
+        return MassCelebration::query()
+            ->where('tenant_id', $tenantId)
+            ->whereDate('celebrated_on', '>=', $from)
+            ->whereDate('celebrated_on', '<=', $to)
+            ->where(function ($q): void {
+                $q->where(function ($inner): void {
+                    $inner->where('status', 'scheduled')
+                        ->where('generation_status', MassGenerationStatus::ACTIVE);
+                })->orWhere('status', 'cancelled');
+            })
+            ->where(function ($q): void {
+                $q->where('generation_status', MassGenerationStatus::ACTIVE)
+                    ->orWhere('status', 'cancelled');
+            });
     }
 
     private function countAcceptedBetween(int $tenantId, string $fromInclusive, string $toExclusive): int
@@ -212,11 +354,13 @@ class MassIntentionsDashboardService
 
     private function countFulfilmentsBetween(int $tenantId, string $fromInclusive, string $toExclusive): int
     {
+        [$startUtc, $endUtc] = MassIntentionsParishTime::timestampRangeUtc($tenantId, $fromInclusive, $toExclusive);
+
         return (int) DB::table('mass_intention_fulfilments')
             ->where('tenant_id', $tenantId)
             ->whereNull('undone_at')
-            ->where('fulfilled_at', '>=', $fromInclusive)
-            ->where('fulfilled_at', '<', $toExclusive)
+            ->where('fulfilled_at', '>=', $startUtc)
+            ->where('fulfilled_at', '<', $endUtc)
             ->count();
     }
 
@@ -256,10 +400,12 @@ class MassIntentionsDashboardService
     {
         $points = [];
 
-        for ($offset = 5; $offset >= 0; $offset--) {
+        for ($offset = 0; $offset <= 3; $offset++) {
             $month = $now->copy()->subMonthsNoOverflow($offset)->startOfMonth();
             $from = $month->toDateString();
             $to = $month->copy()->addMonthNoOverflow()->toDateString();
+
+            [$closedStartUtc, $closedEndUtc] = MassIntentionsParishTime::timestampRangeUtc($tenantId, $from, $to);
 
             $point = [
                 'month' => $month->format('Y-m'),
@@ -268,9 +414,10 @@ class MassIntentionsDashboardService
                 'closed' => MassIntentionRequest::query()
                     ->where('tenant_id', $tenantId)
                     ->where('status', MassIntentionStatus::CLOSED)
-                    ->where('closed_at', '>=', $from)
-                    ->where('closed_at', '<', $to)
+                    ->where('closed_at', '>=', $closedStartUtc)
+                    ->where('closed_at', '<', $closedEndUtc)
                     ->count(),
+                'said' => $this->countFulfilmentsBetween($tenantId, $from, $to),
                 'is_current' => $offset === 0,
             ];
 
@@ -289,21 +436,36 @@ class MassIntentionsDashboardService
      */
     public function upcomingCelebrations(int $tenantId, int $limit = 8): array
     {
-        return MassCelebration::query()
-            ->where('tenant_id', $tenantId)
-            ->where('status', 'scheduled')
-            ->where('celebrated_on', '>=', DonationBusinessDate::today($tenantId))
-            ->orderBy('celebrated_on')
-            ->orderBy('celebrated_at')
-            ->limit($limit)
-            ->get()
-            ->map(fn ($c) => [
-                'id' => $c->id,
-                'celebrated_on' => $c->celebrated_on?->format('Y-m-d'),
-                'celebrated_at' => $c->celebrated_at,
-                'place' => $c->place,
-                'celebrant_name' => $c->celebrant_name,
-            ])
-            ->all();
+        return $this->upcomingCelebrationsWithCounts($tenantId, $limit);
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function upcomingCelebrationsWithCounts(int $tenantId, int $limit): array
+    {
+        $rows = $this->nextUpcomingCelebrations->listUpcomingCelebrations($tenantId, $limit);
+
+        $ids = $rows->pluck('id')->all();
+        $counts = [];
+        if ($ids !== []) {
+            $counts = DB::table('mass_intention_assignments')
+                ->where('tenant_id', $tenantId)
+                ->whereIn('celebration_id', $ids)
+                ->whereNull('unassigned_at')
+                ->select('celebration_id', DB::raw('count(distinct obligation_id) as intention_count'))
+                ->groupBy('celebration_id')
+                ->pluck('intention_count', 'celebration_id')
+                ->all();
+        }
+
+        return $rows->map(fn ($c) => [
+            'id' => $c->id,
+            'celebrated_on' => $c->celebrated_on?->format('Y-m-d'),
+            'celebrated_at' => $c->celebrated_at,
+            'place' => $c->place,
+            'celebrant_name' => $c->celebrant_name,
+            'intention_count' => (int) ($counts[$c->id] ?? 0),
+        ])->all();
     }
 }

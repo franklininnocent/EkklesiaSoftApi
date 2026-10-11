@@ -67,7 +67,12 @@ class FamilyMemberModule360Test extends FamilyCertificationTestCase
 
         $byFirst = $this->getJson('/api/members?search=zEpHyR&per_page=50');
         $byFirst->assertOk();
-        $this->assertSame([$visible->id], $this->memberIds($byFirst));
+        $zephyrIds = $this->memberIds($byFirst);
+        $this->assertContains($visible->id, $zephyrIds);
+        $this->assertNotContains(
+            FamilyMember::query()->where('family_id', $householdB['family']->id)->where('first_name', 'Zephyr')->value('id'),
+            $zephyrIds
+        );
 
         $byFullName = $this->getJson('/api/members?search=Zephyr Quintana&per_page=50');
         $byFullName->assertOk()->assertJsonPath('success', true);
@@ -75,6 +80,122 @@ class FamilyMemberModule360Test extends FamilyCertificationTestCase
             FamilyMember::query()->where('family_id', $householdB['family']->id)->where('first_name', 'Zephyr')->value('id'),
             $this->memberIds($byFullName)
         );
+    }
+
+    #[Test]
+    public function it_should_ignore_member_directory_search_shorter_than_two_characters(): void
+    {
+        $ctx = $this->authenticateAsStaff();
+        $household = $this->seedHousehold($ctx['tenant']);
+        $needle = FamilyMember::factory()->active()->create([
+            'family_id' => $household['family']->id,
+            'first_name' => 'ZaraMinLen',
+            'middle_name' => null,
+            'last_name' => 'SearchToken',
+            'relationship_to_head' => 'cousin',
+        ]);
+
+        $unfiltered = $this->getJson('/api/members?per_page=50');
+        $unfiltered->assertOk();
+
+        $oneChar = $this->getJson('/api/members?search=Z&per_page=50');
+        $oneChar->assertOk();
+        $this->assertSame($unfiltered->json('total'), $oneChar->json('total'));
+
+        $twoChar = $this->getJson('/api/members?search='.urlencode('ZaraMin'));
+        $twoChar->assertOk();
+        $this->assertContains($needle->id, $this->memberIds($twoChar));
+        $this->assertLessThan($unfiltered->json('total'), $twoChar->json('total'));
+    }
+
+    #[Test]
+    public function it_should_find_members_by_father_name_and_household_parent_names(): void
+    {
+        $ctx = $this->authenticateAsStaff();
+        $household = $this->seedHousehold($ctx['tenant']);
+
+        $childWithSnapshot = FamilyMember::factory()->active()->create([
+            'family_id' => $household['family']->id,
+            'first_name' => 'Nina',
+            'last_name' => 'FatherSearchSnap',
+            'relationship_to_head' => 'daughter',
+        ]);
+        $childWithSnapshot->person?->update(['father_name' => 'Roderick FatherSearchSnap']);
+
+        $familyB = Family::factory()->create(['tenant_id' => $ctx['tenant']->id, 'status' => 'active']);
+        FamilyMember::factory()->active()->create([
+            'family_id' => $familyB->id,
+            'first_name' => 'Basil',
+            'last_name' => 'FatherSearchHouse',
+            'relationship_to_head' => 'father',
+        ]);
+        $childInHouse = FamilyMember::factory()->active()->create([
+            'family_id' => $familyB->id,
+            'first_name' => 'Owen',
+            'last_name' => 'FatherSearchHouse',
+            'relationship_to_head' => 'son',
+        ]);
+
+        $byFatherSnapshot = $this->getJson('/api/members?search=Roderick&per_page=50');
+        $byFatherSnapshot->assertOk();
+        $this->assertContains($childWithSnapshot->id, $this->memberIds($byFatherSnapshot));
+
+        $byHouseholdFather = $this->getJson('/api/members?search=FatherSearchHouse&per_page=50');
+        $byHouseholdFather->assertOk();
+        $householdIds = $this->memberIds($byHouseholdFather);
+        $this->assertContains($childInHouse->id, $householdIds);
+    }
+
+    #[Test]
+    public function it_should_match_member_directory_search_case_insensitively_and_trim_whitespace(): void
+    {
+        $ctx = $this->authenticateAsStaff();
+        $household = $this->seedHousehold($ctx['tenant']);
+        $antony = FamilyMember::factory()->active()->create([
+            'family_id' => $household['family']->id,
+            'first_name' => 'Antony',
+            'middle_name' => null,
+            'last_name' => 'KozlovaSearch',
+            'relationship_to_head' => 'cousin',
+            'email' => 'antony.kozlova.search@example.test',
+        ]);
+        $george = FamilyMember::factory()->active()->create([
+            'family_id' => $household['family']->id,
+            'first_name' => 'George',
+            'middle_name' => 'M',
+            'last_name' => 'KozlovaSearch',
+            'relationship_to_head' => 'cousin',
+            'email' => 'george.kozlova.search@example.test',
+        ]);
+        $partial = FamilyMember::factory()->active()->create([
+            'family_id' => $household['family']->id,
+            'first_name' => 'Antonyjoseph',
+            'middle_name' => null,
+            'last_name' => 'KozlovaSearch',
+            'relationship_to_head' => 'cousin',
+            'email' => 'antonyjoseph.kozlova.search@example.test',
+        ]);
+
+        $antonyIds = [];
+        foreach (['ANTONY', 'antony', 'AntOnY', '  ANTONY  '] as $term) {
+            $response = $this->getJson('/api/members?search='.urlencode($term).'&per_page=50');
+            $response->assertOk()->assertJsonPath('success', true);
+            $ids = $this->memberIds($response);
+            $this->assertContains($antony->id, $ids);
+            $this->assertContains($partial->id, $ids, 'Partial name match must remain case-insensitive.');
+            $this->assertNotContains($george->id, $ids);
+            $antonyIds[] = $ids;
+        }
+
+        $this->assertSame($antonyIds[0], $antonyIds[1]);
+        $this->assertSame($antonyIds[0], $antonyIds[2]);
+        $this->assertSame($antonyIds[0], $antonyIds[3]);
+
+        $byGeorgeUpper = $this->memberIds($this->getJson('/api/members?search=GEORGE&per_page=50')->assertOk());
+        $byGeorgeLower = $this->memberIds($this->getJson('/api/members?search=george&per_page=50')->assertOk());
+        $this->assertSame($byGeorgeUpper, $byGeorgeLower);
+        $this->assertContains($george->id, $byGeorgeUpper);
+        $this->assertNotContains($antony->id, $byGeorgeUpper);
     }
 
     #[Test]

@@ -25,7 +25,7 @@ class EmailDesignSystemTest extends TestCase
         $html = $mail->render();
         $text = $this->renderText($mail);
 
-        $this->assertStringContainsString('EkklesiaSoft', $html);
+        $this->assertStringContainsString('EkklesiaNexus', $html);
         $this->assertStringContainsString('Password Recovery', $html);
         $this->assertStringContainsString('TmpPass123!', $html);
         $this->assertStringContainsString('do not share this password', strtolower($html));

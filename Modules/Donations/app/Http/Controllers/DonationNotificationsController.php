@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Modules\Donations\Http\Requests\IndexDonationNotificationsRequest;
 use Modules\Donations\Models\DonationNotificationLog;
 use Modules\Donations\Services\DonationNotificationService;
 
@@ -15,14 +16,17 @@ class DonationNotificationsController extends Controller
     {
     }
 
-    public function index(Request $request): JsonResponse
+    public function index(IndexDonationNotificationsRequest $request): JsonResponse
     {
         $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
-        $query = DonationNotificationLog::forTenant($tenantId)->orderByDesc('created_at');
+        $table = (new DonationNotificationLog)->getTable();
+        $query = DonationNotificationLog::forTenant($tenantId);
 
         if ($request->filled('status')) {
-            $query->where('status', $request->string('status'));
+            $query->where("{$table}.status", $request->string('status'));
         }
+
+        $query->orderBy("{$table}.{$request->sortColumn()}", $request->sortDirection());
 
         return response()->json([
             'success' => true,

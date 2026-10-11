@@ -4,6 +4,7 @@ namespace Modules\Tenants\Tests\Feature\ChurchProfile;
 
 use Illuminate\Support\Facades\Storage;
 use Laravel\Passport\Passport;
+use Modules\Authentication\Models\Role;
 use Modules\EcclesiasticalData\Tests\Support\CreatesEkklesiaTestUser;
 use Modules\Tenants\Models\PopeDetails;
 use Modules\Tenants\Testing\ChurchProfileCertificationTestCase;
@@ -88,5 +89,26 @@ class ChurchProfilePopeMediaTest extends ChurchProfileCertificationTestCase
 
         Storage::disk('local')->assertMissing($path);
         $this->assertNull(PopeDetails::getCurrent()?->pope_image_path);
+    }
+
+    #[Test]
+    public function parish_admin_cannot_upload_pope_image_even_with_the_permission(): void
+    {
+        $this->actingAsTenantWith(['manage_pope_details', 'church.settings.edit']);
+
+        $this->postJson('/api/church-profile/pope/upload-image', [
+            'image' => MediaSecurityFixtures::validJpeg(200, 200),
+        ])->assertForbidden();
+    }
+
+    #[Test]
+    public function ekklesia_manager_can_upload_pope_image(): void
+    {
+        Passport::actingAs($this->createEkklesiaUser([], Role::EKKLESIA_MANAGER));
+
+        $this->postJson('/api/church-profile/pope/upload-image', [
+            'image' => MediaSecurityFixtures::validJpeg(200, 200),
+        ])->assertOk()
+            ->assertJsonPath('success', true);
     }
 }

@@ -5,6 +5,8 @@ namespace Modules\Subscriptions\Providers;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Routing\Router;
 use Illuminate\Support\ServiceProvider;
+use Modules\Subscriptions\Console\Commands\AlignLaunchPlanFeatures;
+use Modules\Subscriptions\Console\Commands\RebuildLaunchPlanCatalog;
 use Modules\Subscriptions\Console\Commands\ApplyScheduledSubscriptionChanges;
 use Modules\Subscriptions\Console\Commands\BackfillTenantSubscriptions;
 use Modules\Subscriptions\Console\Commands\SendUsageThresholdAlerts;
@@ -64,6 +66,8 @@ class SubscriptionsServiceProvider extends ServiceProvider
             ApplyScheduledSubscriptionChanges::class,
             SnapshotTenantUsage::class,
             SendUsageThresholdAlerts::class,
+            AlignLaunchPlanFeatures::class,
+            RebuildLaunchPlanCatalog::class,
         ]);
 
         $this->registerCommandSchedules();

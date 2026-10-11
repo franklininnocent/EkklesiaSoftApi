@@ -16,6 +16,7 @@ use Modules\RolesAndPermissions\Services\PermissionAuditService;
 use Modules\RolesAndPermissions\Services\TenantPermissionCatalogService;
 use Modules\RolesAndPermissions\Services\TenantPermissionCrudService;
 use Modules\RolesAndPermissions\Services\TenantPermissionService;
+use Modules\RolesAndPermissions\Support\RetiredProductPermissionCatalog;
 use Modules\RolesAndPermissions\Traits\EnforcesTenantIsolation;
 
 class PermissionsController extends Controller
@@ -59,7 +60,7 @@ class PermissionsController extends Controller
             $user = auth()->user();
 
             // List only — tenant custom permission creation belongs on POST /permissions (store).
-            $query = Permission::query();
+            $query = RetiredProductPermissionCatalog::applyExclusion(Permission::query());
 
             $scopeDenied = $this->applyPermissionListScope($query, $user);
             if ($scopeDenied !== null) {
@@ -1062,7 +1063,9 @@ class PermissionsController extends Controller
             }
 
             // Get permissions for the role
-            $permissions = $role->permissions;
+            $permissions = $role->permissions->reject(
+                fn ($permission) => RetiredProductPermissionCatalog::isRetired($permission)
+            )->values();
 
             // CRITICAL SECURITY: Filter out "Tenants" and "Pope" module permissions for non-SuperAdmin users
             if (! $user->isSuperAdmin()) {

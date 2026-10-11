@@ -29,7 +29,11 @@ use Modules\Family\app\Services\FamilyService;
 use Modules\Family\app\Services\FamilySplitService;
 use Modules\Family\app\Services\HouseholdTransitionHistoryRecorder;
 use Modules\Family\app\Services\MarriageHouseholdService;
+use Modules\Family\app\Http\Requests\FamilyDashboardRequest;
+use Modules\Family\app\Http\Requests\MemberCelebrationsListRequest;
+use Modules\Family\app\Services\FamilyDashboardService;
 use Modules\Family\app\Services\MemberCelebrationsService;
+use Modules\Family\app\Services\MemberDashboardService;
 use Modules\Family\app\Services\ParishionerFamilyAccessService;
 use Modules\Family\Models\Family;
 use Modules\Tenants\Services\Media\ImageMediaException;
@@ -54,6 +58,10 @@ class FamilyController extends Controller
 
     protected MemberCelebrationsService $memberCelebrationsService;
 
+    protected MemberDashboardService $memberDashboardService;
+
+    protected FamilyDashboardService $familyDashboardService;
+
     /**
      * FamilyController constructor.
      */
@@ -66,6 +74,8 @@ class FamilyController extends Controller
         MarriageHouseholdService $marriageHouseholdService,
         HouseholdTransitionHistoryRecorder $historyRecorder,
         MemberCelebrationsService $memberCelebrationsService,
+        MemberDashboardService $memberDashboardService,
+        FamilyDashboardService $familyDashboardService,
     ) {
         $this->familyService = $familyService;
         $this->familySplitService = $familySplitService;
@@ -75,6 +85,8 @@ class FamilyController extends Controller
         $this->marriageHouseholdService = $marriageHouseholdService;
         $this->historyRecorder = $historyRecorder;
         $this->memberCelebrationsService = $memberCelebrationsService;
+        $this->memberDashboardService = $memberDashboardService;
+        $this->familyDashboardService = $familyDashboardService;
     }
 
     private function parishionerMutationForbidden(): ?JsonResponse
@@ -328,6 +340,12 @@ class FamilyController extends Controller
                 'progression' => $request->input('progression'),
                 'parish_zone_id' => $request->input('parish_zone_id'),
                 'city' => $request->input('city'),
+                'city_exact' => $request->input('city_exact'),
+                'missing' => $request->input('missing'),
+                'size_band' => $request->input('size_band'),
+                'household' => $request->input('household'),
+                'created_from' => $request->input('created_from'),
+                'created_to' => $request->input('created_to'),
                 'sort_by' => $request->input('sort_by', 'family_code'),
                 'sort_order' => $request->input('sort_order', 'asc'),
             ];
@@ -637,6 +655,52 @@ class FamilyController extends Controller
                 'success' => false,
                 'message' => 'Failed to retrieve statistics',
                 'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function dashboard(FamilyDashboardRequest $request): JsonResponse
+    {
+        try {
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+
+            $user = Auth::user();
+            if ($user && $this->parishionerAccessService->isParishioner($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Parishioners cannot view the family dashboard.',
+                ], 403);
+            }
+
+            if ($response = $this->denyUnlessCanViewFamilies()) {
+                return $response;
+            }
+
+            $includeContributions = (bool) ($user && $user->hasPermission('donations.view'));
+            $includePastoral = (bool) ($user && $user->hasPermission('sacraments.view'));
+
+            $data = $this->familyDashboardService->summary(
+                (int) $tenantId,
+                [
+                    'bcc_id' => $request->input('bcc_id'),
+                    'status' => $request->input('status'),
+                    'period' => $request->input('period', '12m'),
+                    'from' => $request->input('from'),
+                    'to' => $request->input('to'),
+                    'refresh' => $request->boolean('refresh'),
+                ],
+                $includeContributions,
+                $includePastoral,
+            );
+
+            return response()->json([
+                'success' => true,
+                'data' => $data,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve family dashboard',
             ], 500);
         }
     }
@@ -1328,6 +1392,47 @@ class FamilyController extends Controller
     }
 
     /**
+     * Members module dashboard — parish-wide statistics and demographics.
+     */
+    public function memberDashboard(): JsonResponse
+    {
+        try {
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+
+            if (! $tenantId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tenant ID is required',
+                ], 403);
+            }
+
+            $user = Auth::user();
+            if ($user && $this->parishionerAccessService->isParishioner($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Parishioners cannot view the parish member directory.',
+                ], 403);
+            }
+
+            if ($response = $this->denyUnlessCanViewFamilies()) {
+                return $response;
+            }
+
+            $data = $this->memberDashboardService->summary((int) $tenantId);
+
+            return response()->json([
+                'success' => true,
+                'data' => $data,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve member dashboard',
+            ], 500);
+        }
+    }
+
+    /**
      * Birthdays and wedding anniversaries for the current parish week (Mon–Sun, tenant timezone).
      */
     public function memberCelebrations(): JsonResponse
@@ -1369,6 +1474,75 @@ class FamilyController extends Controller
     }
 
     /**
+     * Paginated birthdays or wedding anniversaries for the parish week (Mon–Sun) or an explicit from/to range.
+     */
+    public function memberCelebrationsList(MemberCelebrationsListRequest $request): JsonResponse
+    {
+        try {
+            $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
+
+            if (! $tenantId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tenant ID is required',
+                ], 403);
+            }
+
+            $user = Auth::user();
+            if ($user && $this->parishionerAccessService->isParishioner($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Parishioners cannot view the parish member directory.',
+                ], 403);
+            }
+
+            if ($response = $this->denyUnlessCanViewFamilies()) {
+                return $response;
+            }
+
+            $validated = $request->validated();
+            $perPage = max(1, min(100, (int) ($validated['per_page'] ?? 20)));
+            $page = max(1, (int) ($validated['page'] ?? 1));
+
+            $payload = $this->memberCelebrationsService->paginatedCelebrations(
+                (int) $tenantId,
+                (string) $validated['type'],
+                [
+                    'from' => $validated['from'] ?? null,
+                    'to' => $validated['to'] ?? null,
+                    'search' => $validated['search'] ?? null,
+                    'bcc_id' => $validated['bcc_id'] ?? null,
+                    'event_date' => $validated['event_date'] ?? null,
+                    'event_date_from' => $validated['event_date_from'] ?? null,
+                    'event_date_to' => $validated['event_date_to'] ?? null,
+                    'sort_by' => $validated['sort_by'] ?? 'event_date',
+                    'sort_order' => $validated['sort_order'] ?? 'asc',
+                ],
+                $page,
+                $perPage
+            );
+
+            return response()->json([
+                'success' => true,
+                'window' => $payload['window'],
+                'type' => $payload['type'],
+                'data' => $payload['data'],
+                'total' => $payload['total'],
+                'current_page' => $payload['current_page'],
+                'last_page' => $payload['last_page'],
+                'per_page' => $payload['per_page'],
+                'from' => $payload['from'],
+                'to' => $payload['to'],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve member celebrations',
+            ], 500);
+        }
+    }
+
+    /**
      * Get all members across all families for the current tenant
      */
     public function allMembers(Request $request): JsonResponse
@@ -1398,9 +1572,15 @@ class FamilyController extends Controller
             $filters = [
                 'search' => $request->input('search'),
                 'status' => $request->input('status'),
+                'family_status' => $request->input('family_status'),
                 'bcc_id' => $request->input('bcc_id'),
                 'is_head' => $request->input('is_head'),
                 'progression' => $request->input('progression'),
+                'age_band' => $request->input('age_band'),
+                'gender' => $request->input('gender'),
+                'missing' => $request->input('missing'),
+                'occupation' => $request->input('occupation'),
+                'education' => $request->input('education'),
                 'sort_by' => $request->input('sort_by', 'name'),
                 'sort_order' => $request->input('sort_order', 'asc'),
             ];

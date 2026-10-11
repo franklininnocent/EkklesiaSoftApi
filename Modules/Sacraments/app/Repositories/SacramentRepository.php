@@ -5,6 +5,7 @@ namespace Modules\Sacraments\Repositories;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Modules\Sacraments\Models\Sacrament;
 use Modules\Sacraments\Support\MarriageCanonicalClassification;
+use Modules\Sacraments\Support\MarriageParishResolutionSql;
 use Modules\Sacraments\Support\MarriageRegisterFilter;
 use Modules\Sacraments\Support\SacramentAnnotationType;
 use Modules\Sacraments\Support\SacramentTypeCode;
@@ -15,7 +16,7 @@ class SacramentRepository
 
     public function getPaginated(array $params = []): LengthAwarePaginator
     {
-        $query = $this->model->newQuery()->with(['sacramentType', 'participants']);
+        $query = $this->model->newQuery()->with(['sacramentType']);
 
         if (! empty($params['tenant_id'])) {
             $query->forTenant((int) $params['tenant_id']);
@@ -195,16 +196,7 @@ class SacramentRepository
 
     private function resolvedMarriageParishSql(string $role, string $fallbackColumn): string
     {
-        return "COALESCE(
-            (SELECT NULLIF(TRIM(sp.affiliation_parish_name), '')
-             FROM sacrament_participants sp
-             WHERE sp.sacrament_id = sacraments.id
-               AND sp.role = '{$role}'
-               AND sp.deleted_at IS NULL
-             ORDER BY sp.id
-             LIMIT 1),
-            NULLIF(TRIM(sacraments.{$fallbackColumn}), '')
-        )";
+        return MarriageParishResolutionSql::resolvedParishExpression($role, $fallbackColumn);
     }
 
     public function create(array $data): Sacrament

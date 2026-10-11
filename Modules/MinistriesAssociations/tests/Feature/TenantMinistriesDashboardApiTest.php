@@ -6,11 +6,14 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Passport\Passport;
 use Modules\Authentication\Models\Role;
 use Modules\Authentication\Models\User;
+use Modules\MinistriesAssociations\Models\GuestMember;
 use Modules\MinistriesAssociations\Models\LeadershipTerm;
 use Modules\MinistriesAssociations\Models\Organization;
 use Modules\MinistriesAssociations\Models\OrganizationCategory;
+use Modules\MinistriesAssociations\Models\OrganizationMembership;
 use Modules\MinistriesAssociations\Models\OrganizationType;
 use Modules\MinistriesAssociations\Models\Position;
+use Modules\MinistriesAssociations\Services\MinistriesDashboardService;
 use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Tenants\Models\Tenant;
 use PHPUnit\Framework\Attributes\Test;
@@ -129,9 +132,26 @@ class TenantMinistriesDashboardApiTest extends TestCase
             'status' => Organization::STATUS_ACTIVE,
         ]);
 
+        $guest = GuestMember::query()->create([
+            'tenant_id' => $this->tenant->id,
+            'first_name' => 'Sam',
+            'last_name' => 'Volunteer',
+            'guest_type' => GuestMember::GUEST_TYPE_VOLUNTEER,
+        ]);
+        $membership = OrganizationMembership::query()->create([
+            'tenant_id' => $this->tenant->id,
+            'organization_id' => $filledOrg->id,
+            'member_source' => OrganizationMembership::SOURCE_GUEST,
+            'guest_member_id' => $guest->id,
+            'status' => OrganizationMembership::STATUS_ACTIVE,
+            'joined_date' => now()->toDateString(),
+            'is_current' => true,
+        ]);
+
         LeadershipTerm::query()->create([
             'tenant_id' => $this->tenant->id,
             'organization_id' => $filledOrg->id,
+            'membership_id' => $membership->id,
             'position_id' => $positionA->id,
             'status' => LeadershipTerm::STATUS_ACTIVE,
             'appointment_date' => now()->toDateString(),
@@ -146,5 +166,11 @@ class TenantMinistriesDashboardApiTest extends TestCase
 
         // Two single-occupancy positions × two active orgs = 4 slots; one filled → 3 vacancies.
         $this->assertSame(3, $response->json('data.leadership.vacancies'));
+
+        $executive = app(MinistriesDashboardService::class)->executiveSummary((int) $this->tenant->id);
+        $this->assertSame(3, $executive['leadership']['vacancies']);
+        $this->assertSame(2, $executive['organizations']['active']);
+        $this->assertSame(2, $executive['organizations']['active_by_type'][0]['count'] ?? 0);
+        $this->assertSame(1, $executive['memberships']['active']);
     }
 }

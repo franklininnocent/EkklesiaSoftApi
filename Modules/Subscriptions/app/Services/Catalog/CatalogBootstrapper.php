@@ -4,10 +4,13 @@ namespace Modules\Subscriptions\Services\Catalog;
 
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Modules\Subscriptions\Models\Feature;
 use Modules\Subscriptions\Models\Plan;
+use Modules\Subscriptions\Models\PlanCatalogPrice;
 use Modules\Subscriptions\Models\PlanVersion;
+use Modules\Tenants\Models\Country;
 use Modules\Subscriptions\Services\Entitlements\EntitlementCatalog;
 use Modules\Subscriptions\Support\SubscriptionCatalogDefinition;
 use Modules\Tenants\Models\SubscriptionSettings;
@@ -28,7 +31,7 @@ class CatalogBootstrapper
      * Order matters: features first, then legacy rows are grandfathered (so "enterprise" is
      * adopted rather than duplicated), then launch plans and policies.
      *
-     * @return array{features_created: int, dependencies_created: int, entitlements_attached: int, legacy_converted: list<string>, plans_created: list<string>}
+     * @return array{features_created: int, dependencies_created: int, entitlements_attached: int, legacy_converted: list<string>, plans_created: list<string>, catalog_prices_created: int}
      */
     public function run(): array
     {
@@ -39,6 +42,7 @@ class CatalogBootstrapper
             $legacyConverted = $this->legacyConverter->convert();
             $plansCreated = $this->syncLaunchPlans();
             $entitlementsAttached = $this->attachMissingPlanEntitlements();
+            $catalogPricesCreated = $this->syncCatalogPrices();
             $this->syncPolicies();
             $this->catalog->flush();
 
@@ -48,6 +52,7 @@ class CatalogBootstrapper
                 'entitlements_attached' => $entitlementsAttached,
                 'legacy_converted' => $legacyConverted,
                 'plans_created' => $plansCreated,
+                'catalog_prices_created' => $catalogPricesCreated,
             ];
         });
     }
@@ -197,6 +202,45 @@ class CatalogBootstrapper
         return $created;
     }
 
+    /**
+     * Insert-if-missing country list prices. Existing Super Admin rows are never overwritten.
+     */
+    public function syncCatalogPrices(): int
+    {
+        if (! Schema::hasTable('plan_catalog_prices')) {
+            return 0;
+        }
+
+        $created = 0;
+        $plans = Plan::withTrashed()->get()->keyBy('code');
+
+        foreach (SubscriptionCatalogDefinition::regionalPrices() as $region) {
+            $countryCode = strtoupper((string) $region['country_code']);
+            $currencyCode = $this->billedCurrencyForCountry($countryCode, (string) $region['currency_code']);
+
+            foreach ($region['plans'] as $planCode => $amounts) {
+                $plan = $plans->get($planCode);
+                if (! $plan) {
+                    continue;
+                }
+                if (PlanCatalogPrice::query()->where('plan_id', $plan->id)->where('country_code', $countryCode)->exists()) {
+                    continue;
+                }
+
+                PlanCatalogPrice::query()->create([
+                    'plan_id' => $plan->id,
+                    'country_code' => $countryCode,
+                    'currency_code' => $currencyCode,
+                    'monthly_price' => $amounts['monthly_price'],
+                    'annual_price' => $amounts['annual_price'],
+                ]);
+                $created++;
+            }
+        }
+
+        return $created;
+    }
+
     public function syncPolicies(): void
     {
         $settings = SubscriptionSettings::current();
@@ -314,5 +358,18 @@ class CatalogBootstrapper
             'max_storage_mb' => $definition['limits']['STORAGE_MB'] ?? LegacyColumns::UNLIMITED,
             'max_users' => $definition['limits']['STAFF_USER_LIMIT'] ?? LegacyColumns::UNLIMITED,
         ])->save();
+    }
+
+    /**
+     * Billed currency for a catalog country comes from countries master when present.
+     */
+    private function billedCurrencyForCountry(string $countryCode, string $fallbackCode): string
+    {
+        $country = Country::query()->where('iso2', $countryCode)->first();
+        $fromCountry = $country?->currency !== null && $country->currency !== ''
+            ? strtoupper((string) $country->currency)
+            : null;
+
+        return $fromCountry ?: strtoupper($fallbackCode);
     }
 }

@@ -9,7 +9,7 @@ final class EmailTheme
 {
     public static function productName(): string
     {
-        return (string) config('email.product_name', 'EkklesiaSoft');
+        return (string) config('email.product_name', 'EkklesiaNexus');
     }
 
     public static function logoUrl(): ?string

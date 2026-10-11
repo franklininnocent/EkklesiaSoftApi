@@ -32,6 +32,7 @@ class TenantsDatabaseSeeder extends Seeder
             SubscriptionPlansSeeder::class,
             SubscriptionDurationOptionsSeeder::class,
             PopeDetailsSeeder::class,
+            LeadershipRolesSeeder::class,
         ]);
 
         $this->command->line('');

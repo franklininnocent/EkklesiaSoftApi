@@ -29,4 +29,19 @@ final class SubscriptionJobWriteGuard
 
         return $this->subscriptionService->isWriteAllowed($tenant);
     }
+
+    public function allowsExportForTenantId(int $tenantId): bool
+    {
+        if ($tenantId <= 0) {
+            return false;
+        }
+
+        $tenant = Tenant::query()->find($tenantId);
+
+        if (! $tenant) {
+            return false;
+        }
+
+        return $this->subscriptionService->isExportAllowed($tenant);
+    }
 }

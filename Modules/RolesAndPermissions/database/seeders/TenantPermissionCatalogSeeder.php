@@ -35,12 +35,6 @@ class TenantPermissionCatalogSeeder extends Seeder
             ['name' => 'events.edit', 'display_name' => 'Edit Events', 'description' => 'Edit events', 'module' => 'Events', 'category' => 'events'],
             ['name' => 'events.delete', 'display_name' => 'Delete Events', 'description' => 'Delete events', 'module' => 'Events', 'category' => 'events'],
 
-            // Attendance
-            ['name' => 'attendance.view', 'display_name' => 'View Attendance', 'description' => 'View attendance', 'module' => 'Attendance', 'category' => 'attendance'],
-            ['name' => 'attendance.create', 'display_name' => 'Create Attendance', 'description' => 'Create attendance records', 'module' => 'Attendance', 'category' => 'attendance'],
-            ['name' => 'attendance.edit', 'display_name' => 'Edit Attendance', 'description' => 'Edit attendance records', 'module' => 'Attendance', 'category' => 'attendance'],
-            ['name' => 'attendance.delete', 'display_name' => 'Delete Attendance', 'description' => 'Delete attendance records', 'module' => 'Attendance', 'category' => 'attendance'],
-
             // Donations
             ['name' => 'donations.view', 'display_name' => 'View Donations', 'description' => 'View donations', 'module' => 'Donations', 'category' => 'donations'],
             ['name' => 'donations.create', 'display_name' => 'Create Donations', 'description' => 'Create donations', 'module' => 'Donations', 'category' => 'donations'],

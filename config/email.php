@@ -1,16 +1,16 @@
 <?php
 
 /**
- * EkklesiaSoft Email Design System — single source of truth for transactional mail.
+ * EkklesiaNexus Email Design System — single source of truth for transactional mail.
  * Colors align with Church Financial OS tokens (not the legacy purple login gradient).
  */
 return [
 
-    'product_name' => env('EMAIL_PRODUCT_NAME', 'EkklesiaSoft'),
+    'product_name' => env('EMAIL_PRODUCT_NAME', 'EkklesiaNexus'),
 
     'logo_url' => env('EMAIL_LOGO_URL'),
 
-    'support_address' => env('EMAIL_SUPPORT_ADDRESS'),
+    'support_address' => env('EMAIL_SUPPORT_ADDRESS', 'contact@ekklesianexus.com'),
 
     'container_width' => 640,
 

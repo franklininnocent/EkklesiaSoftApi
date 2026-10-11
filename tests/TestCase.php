@@ -7,6 +7,7 @@ use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Laravel\Passport\Passport;
 use Modules\Authentication\Models\User;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Support\TenantTimezone;
 
 abstract class TestCase extends BaseTestCase
 {
@@ -19,6 +20,7 @@ abstract class TestCase extends BaseTestCase
     {
         parent::setUp();
         User::flushRequestPermissionCache();
+        TenantTimezone::flush();
     }
 
     /**

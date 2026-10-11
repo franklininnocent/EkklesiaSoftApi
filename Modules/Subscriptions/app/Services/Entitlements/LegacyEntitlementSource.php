@@ -2,6 +2,7 @@
 
 namespace Modules\Subscriptions\Services\Entitlements;
 
+use Modules\Subscriptions\Services\CurrentPlanIdentityService;
 use Modules\Tenants\Models\Tenant;
 
 /**
@@ -13,7 +14,10 @@ use Modules\Tenants\Models\Tenant;
  */
 class LegacyEntitlementSource
 {
-    public function __construct(private readonly EntitlementCatalog $catalog) {}
+    public function __construct(
+        private readonly EntitlementCatalog $catalog,
+        private readonly CurrentPlanIdentityService $currentPlan,
+    ) {}
 
     public function resolve(Tenant $tenant): ResolvedEntitlements
     {
@@ -30,10 +34,20 @@ class LegacyEntitlementSource
 
         $features = DependencyEnforcer::apply($features, $this->catalog);
 
+        $catalogPlan = $this->currentPlan->findPlan($tenant->plan);
+
         return new ResolvedEntitlements(
             (int) ($tenant->getKey() ?? 0),
             ResolvedEntitlements::SOURCE_LEGACY,
-            $tenant->plan ? ['key' => (string) $tenant->plan, 'code' => null, 'legacy' => true] : null,
+            $tenant->plan || $catalogPlan ? [
+                'id' => $catalogPlan ? (int) $catalogPlan->id : null,
+                'key' => $catalogPlan?->key ?? (string) $tenant->plan,
+                'code' => $catalogPlan?->code,
+                'name' => $catalogPlan?->name ?? $tenant->plan,
+                'pricing_type' => $catalogPlan?->pricing_type,
+                'is_legacy' => (bool) ($catalogPlan?->is_legacy ?? true),
+                'legacy' => true,
+            ] : null,
             $features,
             true,
         );

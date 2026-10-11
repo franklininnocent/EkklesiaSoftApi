@@ -16,6 +16,7 @@ use Modules\Tenants\Http\Controllers\PlatformHealthController;
 use Modules\Tenants\Http\Controllers\PopeDetailsController;
 use Modules\Tenants\Http\Controllers\SecureFileController;
 use Modules\Tenants\Http\Controllers\TenantDataExportController;
+use Modules\Tenants\Http\Controllers\TenantExecutiveDashboardController;
 use Modules\Tenants\Http\Controllers\TenantsController;
 use Modules\Tenants\Http\Middleware\VerifyPlatformHealthToken;
 
@@ -52,10 +53,16 @@ Route::middleware('auth:api')->group(function () {
     // Get tenant statistics
     Route::get('/tenant/statistics', [TenantsController::class, 'statistics']);
 
+    Route::get('/tenant/dashboard/executive', [TenantExecutiveDashboardController::class, 'executive']);
+
     // Church Profile endpoints - for tenant users to view/edit their own church
     Route::get('/tenant/church-profile', [TenantsController::class, 'getChurchProfile']);
     Route::put('/tenant/church-profile', [TenantsController::class, 'updateChurchProfile'])
         ->middleware('tenant.permission:church.settings.edit');
+    Route::post('/tenant/church-profile/logo', [TenantsController::class, 'uploadChurchLogo'])
+        ->middleware(['tenant.permission:church.settings.edit', 'api.throttle:uploads']);
+    Route::delete('/tenant/church-profile/logo', [TenantsController::class, 'deleteChurchLogo'])
+        ->middleware(['tenant.permission:church.settings.delete', 'api.throttle:uploads']);
 
     // Create a new tenant
     Route::post('/tenant', [TenantsController::class, 'store']);
@@ -101,6 +108,10 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/tenant/{id}/subscription/reactivate', [TenantsController::class, 'reactivateSubscription'])
         ->where('id', '[0-9]+');
     Route::get('/tenant/{id}/subscription/audits', [TenantsController::class, 'subscriptionAudits'])
+        ->where('id', '[0-9]+');
+    Route::get('/tenant/{id}/subscription/access-policy', [TenantsController::class, 'getTenantSubscriptionAccessPolicy'])
+        ->where('id', '[0-9]+');
+    Route::put('/tenant/{id}/subscription/access-policy', [TenantsController::class, 'updateTenantSubscriptionAccessPolicy'])
         ->where('id', '[0-9]+');
 
     // Platform subscription settings (SuperAdmin/EkklesiaAdmin) — includes configurable grace days
@@ -155,7 +166,7 @@ Route::middleware('auth:api')->group(function () {
         Route::delete('/patron-image', [ChurchProfileController::class, 'deletePatronImage'])
             ->middleware(['tenant.permission:church.settings.delete', 'api.throttle:uploads']);
 
-        // Pope Details Management (requires manage_pope_details permission)
+        // Pope details: any signed-in user may view. Only Ekklesia roles may change them.
         Route::prefix('pope')->group(function () {
             Route::get('/', [PopeDetailsController::class, 'show']);
             Route::put('/', [PopeDetailsController::class, 'update']);

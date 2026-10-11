@@ -1160,4 +1160,73 @@ class SacramentDashboardApiTest extends TestCase
             ->assertJsonPath('data.total', 1)
             ->assertJsonPath('data.data.0.marriage_canonical_classification', 'both_catholic');
     }
+
+    #[Test]
+    public function it_returns_gaps_only_payload_when_requested(): void
+    {
+        $family = Family::factory()->create(['tenant_id' => $this->tenant->id]);
+        FamilyMember::factory()->create([
+            'family_id' => $family->id,
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+        ]);
+
+        $response = $this->getJson('/api/sacraments/dashboard/summary?'.http_build_query([
+            'include_gaps' => true,
+            'gaps_only' => true,
+        ]));
+
+        $response->assertOk()
+            ->assertJsonPath('data.meta.gaps_only', true)
+            ->assertJsonStructure([
+                'data' => [
+                    'gaps' => [
+                        'eligible_members',
+                        'by_sacrament',
+                        'progression',
+                    ],
+                ],
+            ]);
+
+        $this->assertArrayNotHasKey('kpis', $response->json('data'));
+    }
+
+    #[Test]
+    public function it_rejects_gaps_only_without_include_gaps(): void
+    {
+        $this->getJson('/api/sacraments/dashboard/summary?'.http_build_query([
+            'include_gaps' => false,
+            'gaps_only' => true,
+        ]))
+            ->assertStatus(422)
+            ->assertJsonPath('success', false);
+    }
+
+    #[Test]
+    public function it_invalidates_dashboard_cache_after_family_member_update(): void
+    {
+        Sacrament::factory()->registered()->create([
+            'tenant_id' => $this->tenant->id,
+            'sacrament_type_id' => $this->baptismType->id,
+            'date_administered' => now()->toDateString(),
+        ]);
+
+        $family = Family::factory()->create(['tenant_id' => $this->tenant->id]);
+        $member = FamilyMember::factory()->create([
+            'family_id' => $family->id,
+            'tenant_id' => $this->tenant->id,
+            'status' => 'active',
+        ]);
+
+        $first = $this->getJson('/api/sacraments/dashboard/summary');
+        $first->assertOk()->assertJsonPath('data.meta.cached', false);
+
+        $second = $this->getJson('/api/sacraments/dashboard/summary');
+        $second->assertOk()->assertJsonPath('data.meta.cached', true);
+
+        $member->update(['marital_status' => 'married']);
+
+        $third = $this->getJson('/api/sacraments/dashboard/summary');
+        $third->assertOk()->assertJsonPath('data.meta.cached', false);
+    }
 }
