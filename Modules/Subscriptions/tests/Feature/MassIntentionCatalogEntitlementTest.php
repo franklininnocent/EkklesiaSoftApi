@@ -45,8 +45,7 @@ class MassIntentionCatalogEntitlementTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.enabled', false);
 
-        $this->enableMassIntentionsOnPlan('STANDARD');
-        $this->assignPlan($ctx['tenant']->fresh(), 'STANDARD');
+        $this->assignPlan($ctx['tenant']->fresh(), 'PROFESSIONAL');
         app(EntitlementResolver::class)->forget((int) $ctx['tenant']->id);
 
         Passport::actingAs($ctx['user']->fresh());
@@ -62,7 +61,7 @@ class MassIntentionCatalogEntitlementTest extends TestCase
     #[Test]
     public function enabling_mass_intentions_on_one_plan_does_not_open_it_for_other_plans(): void
     {
-        $this->enableMassIntentionsOnPlan('STANDARD');
+        $this->enableMassIntentionsOnPlan('PROFESSIONAL');
 
         $starter = $this->asTenantAdmin();
         $this->grantMassIntentionsView($starter['user']);
@@ -71,12 +70,19 @@ class MassIntentionCatalogEntitlementTest extends TestCase
         Passport::actingAs($starter['user']->fresh());
         $this->getJson('/api/tenant/mass-intentions/home')->assertForbidden();
 
+        $professional = $this->asTenantAdmin();
+        $this->grantMassIntentionsView($professional['user']);
+        $this->assignPlan($professional['tenant'], 'PROFESSIONAL');
+        $this->useEntitlementEngine('enforce');
+        Passport::actingAs($professional['user']->fresh());
+        $this->getJson('/api/tenant/mass-intentions/home')->assertOk();
+
         $standard = $this->asTenantAdmin();
         $this->grantMassIntentionsView($standard['user']);
         $this->assignPlan($standard['tenant'], 'STANDARD');
         $this->useEntitlementEngine('enforce');
         Passport::actingAs($standard['user']->fresh());
-        $this->getJson('/api/tenant/mass-intentions/home')->assertOk();
+        $this->getJson('/api/tenant/mass-intentions/home')->assertForbidden();
     }
 
     private function enableMassIntentionsOnPlan(string $planCode): void

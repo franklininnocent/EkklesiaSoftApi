@@ -1,7 +1,7 @@
 # Authentication Module
 
 **Version**: 1.0.0  
-**Author**: EkklesiaSoft Team  
+**Author**: EkklesiaNexus Team  
 **Purpose**: Complete authentication and authorization system for large-scale SaaS application
 
 ---
@@ -457,7 +457,7 @@ For issues or questions:
 
 ## 📄 License
 
-Proprietary - EkklesiaSoft  
+Proprietary - EkklesiaNexus  
 All rights reserved.
 
 ---

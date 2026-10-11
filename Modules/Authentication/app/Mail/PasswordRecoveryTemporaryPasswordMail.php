@@ -21,7 +21,7 @@ class PasswordRecoveryTemporaryPasswordMail extends Mailable
 
     public function envelope(): Envelope
     {
-        return RecoveryMailEnvelope::make('EkklesiaSoft — Password Recovery');
+        return RecoveryMailEnvelope::make('EkklesiaNexus — Password Recovery');
     }
 
     public function content(): Content

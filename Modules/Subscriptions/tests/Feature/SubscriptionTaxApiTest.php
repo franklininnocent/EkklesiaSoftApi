@@ -7,7 +7,9 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Modules\Subscriptions\Models\SubscriptionCatalogAudit;
 use Modules\Subscriptions\Services\SubscriptionPolicyService;
-use Modules\Subscriptions\Support\EntitlementCacheVersion;
+use Modules\Marketing\Services\MarketingPlanCatalogService;
+use Modules\Marketing\Support\MarketingPlanCatalogCache;
+use Modules\Marketing\Tests\Support\PublishesMarketingPlanCatalog;
 use Modules\Subscriptions\Tests\Concerns\InteractsWithSubscriptions;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Concerns\ActsAsTenantRoles;
@@ -17,6 +19,7 @@ class SubscriptionTaxApiTest extends TestCase
 {
     use ActsAsTenantRoles;
     use InteractsWithSubscriptions;
+    use PublishesMarketingPlanCatalog;
     use RefreshDatabase;
 
     #[Test]
@@ -74,31 +77,36 @@ class SubscriptionTaxApiTest extends TestCase
     }
 
     #[Test]
-    public function tax_update_forgets_public_plans_cache_key(): void
+    public function tax_update_does_not_change_published_marketing_catalog_until_republished(): void
     {
-        $this->asSuperAdmin();
-        $key = 'subscriptions:public_plans:c_'.EntitlementCacheVersion::catalog();
-        Cache::put($key, ['stale'], 300);
-        $this->assertTrue(Cache::has($key));
+        $this->publishMarketingPlanCatalog();
+        Cache::put(MarketingPlanCatalogCache::KEY_PUBLISHED, [['code' => 'CACHED']], 300);
 
+        $this->asSuperAdmin();
         $this->putJson('/api/admin/subscriptions/tax', [
             'tax' => [
                 'label' => 'GST',
-                'rate_percent' => '18.00',
+                'rate_percent' => '19.00',
                 'prices_include_tax' => false,
             ],
         ])->assertOk();
 
-        $this->assertFalse(Cache::has($key));
+        $this->assertTrue(Cache::has(MarketingPlanCatalogCache::KEY_PUBLISHED));
     }
 
     #[Test]
-    public function inherited_plan_uses_new_platform_rate_after_update(): void
+    public function inherited_plan_uses_new_platform_rate_after_marketing_republish(): void
     {
         $admin = $this->asSuperAdmin()['user'];
         $plan = $this->plan('STARTER');
         $version = $plan->activeVersion;
         $this->assertNull($version->tax_rate_percent);
+
+        $this->publishMarketingPlanCatalog($admin);
+
+        $public = collect($this->getJson('/api/public/subscription-plans')->json('data'));
+        $starter = $public->firstWhere('code', 'STARTER');
+        $this->assertSame('18.00', $starter['tax']['rate_percent']);
 
         app(SubscriptionPolicyService::class)->updateTax([
             'tax' => [
@@ -108,9 +116,16 @@ class SubscriptionTaxApiTest extends TestCase
             ],
         ], $admin, 'sync');
 
-        $public = collect($this->getJson('/api/public/subscription-plans')->json('data'));
-        $starter = $public->firstWhere('code', 'STARTER');
-        $this->assertSame('20.00', $starter['tax']['rate_percent']);
+        $publicAfterTax = collect($this->getJson('/api/public/subscription-plans')->json('data'));
+        $this->assertSame('18.00', $publicAfterTax->firstWhere('code', 'STARTER')['tax']['rate_percent']);
+
+        $catalog = app(MarketingPlanCatalogService::class);
+        $revision = $catalog->generatePreview($admin);
+        $published = $catalog->publishRevision($admin, (int) $revision->id, $revision->payload_hash);
+        $catalog->afterPublishCommit($published);
+
+        $publicRepublished = collect($this->getJson('/api/public/subscription-plans')->json('data'));
+        $this->assertSame('20.00', $publicRepublished->firstWhere('code', 'STARTER')['tax']['rate_percent']);
 
         app(SubscriptionPolicyService::class)->updateTax([
             'tax' => [
@@ -131,6 +146,8 @@ class SubscriptionTaxApiTest extends TestCase
             'tax_rate_percent' => '12.00',
             'tax_label' => 'GST',
         ]);
+
+        $this->publishMarketingPlanCatalog($admin);
 
         app(SubscriptionPolicyService::class)->updateTax([
             'tax' => [

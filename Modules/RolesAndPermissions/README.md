@@ -7,7 +7,7 @@
 
 ## 📋 Module Overview
 
-The Roles module provides comprehensive role management for EkklesiaSoft, supporting both global system roles and tenant-specific custom roles. It enables fine-grained access control with a hierarchical role structure.
+The Roles module provides comprehensive role management for EkklesiaNexus, supporting both global system roles and tenant-specific custom roles. It enables fine-grained access control with a hierarchical role structure.
 
 ---
 

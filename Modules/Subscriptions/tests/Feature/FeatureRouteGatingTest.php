@@ -39,6 +39,9 @@ class FeatureRouteGatingTest extends TestCase
             'report drill-down' => ['GET', 'api/tenant/donations/reports/drill-down', 'ADVANCED_FINANCIAL_REPORTING'],
             'donation audit log' => ['GET', 'api/tenant/donations/audit-logs', 'AUDIT_LOG'],
             'data export' => ['GET', 'api/tenant/export/modules', 'IMPORT_EXPORT'],
+            'tenant roles list' => ['GET', 'api/tenant/roles', 'RBAC_BASIC'],
+            'tenant permissions list' => ['GET', 'api/tenant/permissions', 'RBAC_BASIC'],
+            'tenant user role assign' => ['PUT', 'api/tenant/users/{id}/roles', 'RBAC_BASIC'],
             'custom role create' => ['POST', 'api/tenant/roles', 'RBAC_ADVANCED'],
             'role permission sync' => ['PUT', 'api/tenant/roles/{roleId}/permissions', 'RBAC_ADVANCED'],
             'leadership assign' => ['POST', 'api/church-profile/leadership/assign', 'CHURCH_LEADERSHIP'],
@@ -70,8 +73,6 @@ class FeatureRouteGatingTest extends TestCase
             ['POST', 'api/tenant/donations/reports/export'],
             ['GET', 'api/tenant/donations/expenses'],
             ['GET', 'api/tenant/donations/dues'],
-            ['GET', 'api/tenant/roles'],
-            ['PUT', 'api/tenant/users/{id}/roles'],
             ['GET', 'api/church-profile/leadership/current'],
             ['GET', 'api/church-leadership'],
         ] as [$method, $uri]) {

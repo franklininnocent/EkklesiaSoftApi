@@ -14,11 +14,13 @@ class SubscriptionSettings extends Model
     protected $fillable = [
         'grace_period_days',
         'expiring_warning_days',
+        'view_only_allowance_days',
     ];
 
     protected $casts = [
         'grace_period_days' => 'integer',
         'expiring_warning_days' => 'integer',
+        'view_only_allowance_days' => 'integer',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
@@ -37,6 +39,7 @@ class SubscriptionSettings extends Model
         return static::query()->create([
             'grace_period_days' => (int) config('tenants.subscription.grace_period_days', 7),
             'expiring_warning_days' => (int) config('tenants.subscription.expiring_warning_days', 14),
+            'view_only_allowance_days' => (int) config('tenants.subscription.view_only_allowance_days', 90),
         ]);
     }
 }

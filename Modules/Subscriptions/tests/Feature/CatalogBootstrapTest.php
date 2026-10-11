@@ -47,6 +47,27 @@ class CatalogBootstrapTest extends TestCase
     }
 
     #[Test]
+    public function us_and_brazil_list_prices_are_seeded_in_billed_currency(): void
+    {
+        $expected = [
+            'US' => ['STARTER' => '39.00', 'STANDARD' => '59.00', 'PROFESSIONAL' => '89.00'],
+            'BR' => ['STARTER' => '99.00', 'STANDARD' => '199.00', 'PROFESSIONAL' => '399.00'],
+        ];
+
+        foreach ($expected as $country => $plans) {
+            foreach ($plans as $code => $monthly) {
+                $row = $this->plan($code)->catalogPrices()->where('country_code', $country)->first();
+                $this->assertNotNull($row, "{$code} {$country}");
+                $this->assertSame($monthly, (string) $row->monthly_price, "{$code} {$country}");
+                $this->assertNull($row->annual_price, "{$code} {$country}");
+            }
+            $enterprise = $this->plan('ENTERPRISE')->catalogPrices()->where('country_code', $country)->first();
+            $this->assertNotNull($enterprise, $country);
+            $this->assertNull($enterprise->monthly_price, $country);
+        }
+    }
+
+    #[Test]
     public function plan_feature_sets_are_cumulative(): void
     {
         $order = ['STARTER', 'STANDARD', 'PROFESSIONAL', 'ENTERPRISE'];
@@ -89,7 +110,7 @@ class CatalogBootstrapTest extends TestCase
     }
 
     #[Test]
-    public function mass_intentions_is_catalogued_and_off_on_every_launch_plan(): void
+    public function mass_intentions_is_on_professional_and_enterprise_only(): void
     {
         $feature = Feature::query()->where('code', 'MASS_INTENTIONS')->first();
         $this->assertNotNull($feature);
@@ -97,14 +118,12 @@ class CatalogBootstrapTest extends TestCase
         $this->assertTrue((bool) $feature->is_active);
         $this->assertFalse((bool) $feature->is_core);
 
-        foreach (['STARTER', 'STANDARD', 'PROFESSIONAL', 'ENTERPRISE'] as $code) {
+        foreach (['STARTER', 'STANDARD'] as $code) {
             $this->assertNotContains('MASS_INTENTIONS', $this->enabledCodes($this->plan($code)->activeVersion), $code);
-            $row = PlanEntitlement::query()
-                ->where('plan_version_id', $this->plan($code)->activeVersion->id)
-                ->where('feature_id', $feature->id)
-                ->first();
-            $this->assertNotNull($row, $code);
-            $this->assertFalse((bool) $row->is_enabled, $code);
+        }
+
+        foreach (['PROFESSIONAL', 'ENTERPRISE'] as $code) {
+            $this->assertContains('MASS_INTENTIONS', $this->enabledCodes($this->plan($code)->activeVersion), $code);
         }
     }
 
@@ -122,9 +141,21 @@ class CatalogBootstrapTest extends TestCase
         $restored = Feature::query()->where('code', 'MASS_INTENTIONS')->first();
         $this->assertNotNull($restored);
         $this->assertGreaterThan(0, $result['entitlements_attached']);
-        foreach (['STARTER', 'STANDARD', 'PROFESSIONAL', 'ENTERPRISE'] as $code) {
+        foreach (['STARTER', 'STANDARD'] as $code) {
             $this->assertNotContains('MASS_INTENTIONS', $this->enabledCodes($this->plan($code)->activeVersion), $code);
         }
+    }
+
+    #[Test]
+    public function launch_plans_exclude_unimplemented_marketing_features(): void
+    {
+        $professional = $this->enabledCodes($this->plan('PROFESSIONAL')->activeVersion);
+        $this->assertNotContains('ADVANCED_ANALYTICS', $professional);
+        $this->assertNotContains('AUTOMATION', $professional);
+        $this->assertContains('MASS_INTENTIONS', $professional);
+
+        $standard = $this->enabledCodes($this->plan('STANDARD')->activeVersion);
+        $this->assertNotContains('ADVANCED_DASHBOARDS', $standard);
     }
 
     #[Test]

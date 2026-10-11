@@ -49,3 +49,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Local file inventory (not source)
+/allfileshas.txt

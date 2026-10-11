@@ -19,11 +19,12 @@ return [
 
     'allowed_methods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 
-    'allowed_origins' => [
+    'allowed_origins' => array_values(array_unique(array_filter([
         'http://localhost:4200',
         'http://127.0.0.1:4200',
         env('FRONTEND_URL', 'http://localhost:4200'),
-    ],
+        env('MARKETING_URL'),
+    ]))),
 
     'allowed_origins_patterns' => [],
 
@@ -36,6 +37,9 @@ return [
         'X-CSRF-TOKEN',
         'X-Tenant-Country',
         'X-Support-Session-Id',
+        'X-Correlation-Id',
+        'X-Marketing-Proxy-Secret',
+        'X-Marketing-Client-Ip',
     ],
 
     'exposed_headers' => [

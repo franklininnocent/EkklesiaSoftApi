@@ -1,10 +1,10 @@
 {
     "name": "nwidart/supporttickets",
-    "description": "Support ticket module for EkklesiaSoft",
+    "description": "Support ticket module for EkklesiaNexus",
     "authors": [
         {
-            "name": "EkklesiaSoft",
-            "email": "dev@ekklesiasoft.com"
+            "name": "EkklesiaNexus",
+            "email": "contact@ekklesianexus.com"
         }
     ],
     "extra": {

@@ -68,7 +68,8 @@ class ProcessSubscriptionLifecycle extends Command
     ): void
     {
         $status = $subscriptionService->resolveStatus($tenant);
-        $operation = $this->operationForStatus($status);
+        $access = $subscriptionService->evaluateAccess($tenant);
+        $operation = $this->operationForAccess($status, $access['effective_status'] ?? $status);
 
         if ($operation === null) {
             return;
@@ -97,9 +98,17 @@ class ProcessSubscriptionLifecycle extends Command
         $processed++;
     }
 
-    private function operationForStatus(string $status): ?string
+    private function operationForAccess(string $storedStatus, string $effectiveStatus): ?string
     {
-        return match ($status) {
+        if ($effectiveStatus === SubscriptionService::EFFECTIVE_VIEW_ONLY) {
+            return 'entered_view_only';
+        }
+
+        if ($effectiveStatus === SubscriptionService::EFFECTIVE_LOCKED) {
+            return 'entered_locked';
+        }
+
+        return match ($storedStatus) {
             SubscriptionService::STATUS_EXPIRING => 'entered_expiring',
             SubscriptionService::STATUS_GRACE_PERIOD => 'entered_grace',
             SubscriptionService::STATUS_EXPIRED => 'entered_expired',

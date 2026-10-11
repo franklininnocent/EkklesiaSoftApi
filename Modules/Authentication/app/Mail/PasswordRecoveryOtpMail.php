@@ -24,7 +24,7 @@ class PasswordRecoveryOtpMail extends Mailable
 
     public function envelope(): Envelope
     {
-        return RecoveryMailEnvelope::make('EkklesiaSoft — Password Reset Verification');
+        return RecoveryMailEnvelope::make('EkklesiaNexus — Password Reset Verification');
     }
 
     public function content(): Content

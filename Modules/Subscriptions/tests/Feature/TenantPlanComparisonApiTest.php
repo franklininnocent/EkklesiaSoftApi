@@ -6,6 +6,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Modules\Subscriptions\Models\Plan;
 use Modules\Subscriptions\Models\TenantSubscription;
+use Modules\Marketing\Tests\Support\PublishesMarketingPlanCatalog;
 use Modules\Subscriptions\Tests\Concerns\InteractsWithSubscriptions;
 use Modules\Tenants\Models\Tenant;
 use PHPUnit\Framework\Attributes\Test;
@@ -16,7 +17,34 @@ class TenantPlanComparisonApiTest extends TestCase
 {
     use ActsAsTenantRoles;
     use InteractsWithSubscriptions;
+    use PublishesMarketingPlanCatalog;
     use RefreshDatabase;
+
+    #[Test]
+    public function comparison_includes_rbac_capability_matrix_for_customers(): void
+    {
+        $ctx = $this->asTenantAdmin();
+        $this->assignPlan($ctx['tenant'], 'STARTER');
+
+        $rows = $this->getJson('/api/tenant/subscription/comparison')
+            ->assertOk()
+            ->json('data.rbac_capability_comparison');
+
+        $this->assertIsArray($rows);
+        $this->assertNotEmpty($rows);
+        $this->assertContains('RBAC_BASIC', array_column($rows, 'entitlement'));
+        $this->assertContains('RBAC_ADVANCED', array_column($rows, 'entitlement'));
+
+        $sections = $this->getJson('/api/tenant/subscription/comparison')
+            ->assertOk()
+            ->json('data.feature_capability_sections');
+        $this->assertIsArray($sections);
+        $this->assertNotEmpty($sections);
+        $ids = array_column($sections, 'id');
+        $this->assertContains('finance', $ids);
+        $this->assertContains('ministries', $ids);
+        $this->assertContains('reporting', $ids);
+    }
 
     #[Test]
     public function enterprise_lifetime_subscription_is_flagged_as_current_with_quote_pricing(): void
@@ -192,8 +220,49 @@ class TenantPlanComparisonApiTest extends TestCase
     }
 
     #[Test]
+    public function comparison_cards_include_public_coverage_with_descriptions(): void
+    {
+        $this->publishMarketingPlanCatalog();
+        $ctx = $this->asTenantAdmin();
+        $this->assignPlan($ctx['tenant'], 'STARTER');
+
+        $starter = collect($this->getJson('/api/tenant/subscription/comparison')->json('data.plans'))
+            ->firstWhere('code', 'STARTER');
+
+        $this->assertNotEmpty($starter['coverage']);
+        $families = collect($starter['coverage'])->firstWhere('code', 'FAMILIES');
+        $this->assertTrue($families['included']);
+        $this->assertNotEmpty($families['description']);
+        $this->assertNull(collect($starter['coverage'])->firstWhere('code', 'FAMILY_LIMIT'));
+
+        $public = collect($this->getJson('/api/public/subscription-plans')->json('data'))->firstWhere('code', 'STARTER');
+        $this->assertNotEmpty($public['coverage']);
+    }
+
+    #[Test]
+    public function standard_plan_advertises_church_data_export_not_bulk_import(): void
+    {
+        $ctx = $this->asTenantAdmin();
+        $this->assignPlan($ctx['tenant'], 'STANDARD');
+
+        $standard = collect($this->getJson('/api/tenant/subscription/comparison')->json('data.plans'))
+            ->firstWhere('code', 'STANDARD');
+        $export = collect($standard['coverage'])->firstWhere('code', 'IMPORT_EXPORT');
+        $this->assertNotNull($export);
+        $this->assertTrue($export['included']);
+        $this->assertSame('Church Data Export', $export['name']);
+        $this->assertStringNotContainsString('import and export', strtolower((string) $export['description']));
+        $this->assertStringContainsString('export', strtolower((string) $export['description']));
+
+        $dataSection = collect($this->getJson('/api/tenant/subscription/comparison')->json('data.feature_capability_sections'))
+            ->firstWhere('id', 'data');
+        $this->assertStringContainsString('export only', strtolower((string) $dataSection['intro']));
+    }
+
+    #[Test]
     public function public_catalog_does_not_include_tenant_current_plan_flags(): void
     {
+        $this->publishMarketingPlanCatalog();
         $ctx = $this->asTenantAdmin();
         $this->assignLifetime($ctx['tenant'], 'ENTERPRISE');
 

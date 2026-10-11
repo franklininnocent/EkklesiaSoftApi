@@ -175,6 +175,36 @@ class SubscriptionServiceTest extends TestCase
         $this->assertTrue($this->service->allowsGatedAccess($tenant));
     }
 
+    public function test_expired_enters_view_only_when_enforcement_and_allowance(): void
+    {
+        if (! Schema::hasTable('subscription_settings')) {
+            $this->markTestSkipped('subscription_settings table not migrated');
+        }
+
+        config([
+            'tenants.subscription.write_policy' => SubscriptionService::WRITE_POLICY_READ_ONLY_WHEN_EXPIRED,
+            'tenants.subscription.view_only_locked_enforcement' => true,
+        ]);
+
+        SubscriptionSettings::current()->update([
+            'grace_period_days' => 0,
+            'view_only_allowance_days' => 30,
+        ]);
+
+        $tenant = new Tenant([
+            'plan' => 'starter',
+            'active' => 1,
+            'trial_ends_at' => null,
+            'subscription_ends_at' => Carbon::now()->subDays(5),
+            'subscription_suspended_at' => null,
+            'features' => ['donations'],
+        ]);
+
+        $access = $this->service->evaluateAccess($tenant);
+        $this->assertSame(SubscriptionService::ACCESS_MODE_VIEW_ONLY, $access['access_mode']);
+        $this->assertSame(SubscriptionService::EFFECTIVE_VIEW_ONLY, $access['effective_status']);
+    }
+
     public function test_update_settings_persists_grace_days(): void
     {
         if (! Schema::hasTable('subscription_settings')) {

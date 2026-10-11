@@ -1,4 +1,4 @@
-EkklesiaSoft
+EkklesiaNexus
 
 Security Alert — Password Recovery Limit Reached
 

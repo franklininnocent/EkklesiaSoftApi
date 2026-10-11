@@ -8,6 +8,7 @@ use Modules\Subscriptions\Models\Plan;
 use Modules\Subscriptions\Models\PlanVersion;
 use Modules\Subscriptions\Models\TenantEntitlementOverride;
 use Modules\Subscriptions\Models\TenantSubscription;
+use Modules\Subscriptions\Services\Catalog\CatalogListPriceResolver;
 use Modules\Subscriptions\Services\Entitlements\EntitlementCatalog;
 use Modules\Subscriptions\Services\Entitlements\EntitlementResolver;
 use Modules\Subscriptions\Services\Entitlements\LegacyEntitlementSource;
@@ -31,6 +32,7 @@ class SubscriptionPresenter
         private readonly SubscriptionService $lifecycle,
         private readonly PlanService $plans,
         private readonly CurrentPlanIdentityService $currentPlan,
+        private readonly CatalogListPriceResolver $listPrices,
     ) {}
 
     /**
@@ -54,7 +56,10 @@ class SubscriptionPresenter
             'edit_policy' => $this->plans->editPolicy($plan, $occupancy),
             'can_delete' => $deleteRestriction === null,
             'delete_restriction' => $deleteRestriction,
-            'active_version' => $active ? $this->version($active, false) : null,
+            'active_version' => $active ? array_merge($this->version($active, false), [
+                'limit_summary' => $this->limitSummary($active),
+                'discovery' => $this->versionDiscovery($active),
+            ]) : null,
             'created_at' => $plan->created_at?->toIso8601String(),
             'updated_at' => $plan->updated_at?->toIso8601String(),
         ];
@@ -103,6 +108,7 @@ class SubscriptionPresenter
                 ->map(fn ($e) => [
                     'feature_code' => $e->feature->code,
                     'feature_name' => $e->feature->name,
+                    'description' => $e->feature->description,
                     'feature_type' => $e->feature->feature_type,
                     'category' => $e->feature->category,
                     'unit' => $e->feature->unit,
@@ -148,13 +154,26 @@ class SubscriptionPresenter
      *
      * @return array<string, mixed>
      */
-    public function publicPlan(Plan $plan, PlanVersion $version): array
+    public function publicPlan(Plan $plan, PlanVersion $version, ?Tenant $tenant = null): array
     {
         $version->loadMissing('entitlements.feature');
-        $resolved = TaxPolicy::resolve($version, $this->policies->platformTax());
-        $taxRate = $resolved['rate_percent'];
-        $inclusive = $resolved['prices_include_tax'];
-        $taxLabel = $resolved['label'];
+        $terms = $this->listPrices->billedTerms($plan, $version, $tenant);
+        if ($terms['uses_regional_price']) {
+            $taxRate = '0.00';
+            $inclusive = false;
+            $taxLabel = 'Tax';
+            $resolved = [
+                'label' => $taxLabel,
+                'rate_percent' => $taxRate,
+                'prices_include_tax' => $inclusive,
+                'source' => 'catalog_country',
+            ];
+        } else {
+            $resolved = TaxPolicy::resolve($version, $this->policies->platformTax());
+            $taxRate = $resolved['rate_percent'];
+            $inclusive = $resolved['prices_include_tax'];
+            $taxLabel = $resolved['label'];
+        }
 
         $features = [];
         $limits = [];
@@ -171,10 +190,19 @@ class SubscriptionPresenter
                 continue;
             }
             if ($e->is_enabled) {
-                $features[] = ['code' => $f->code, 'name' => $f->name, 'category' => $f->category, 'display_order' => $f->display_order];
+                $features[] = [
+                    'code' => $f->code,
+                    'name' => $f->name,
+                    'description' => $f->description,
+                    'category' => $f->category,
+                    'display_order' => $f->display_order,
+                    'is_core' => (bool) $f->is_core,
+                    'included' => true,
+                ];
             }
         }
         usort($features, static fn ($a, $b) => [$a['category'], $a['display_order']] <=> [$b['category'], $b['display_order']]);
+        $coverage = $this->publicFeatureCoverage($version);
 
         return [
             'code' => $plan->code,
@@ -185,9 +213,9 @@ class SubscriptionPresenter
             'is_featured' => (bool) $plan->is_featured,
             'pricing_type' => $plan->pricing_type,
             'display_order' => $plan->display_order,
-            'currency_code' => $version->currency_code,
-            'monthly_price' => $this->money($version->monthly_price),
-            'annual_price' => $this->money($version->annual_price),
+            'currency_code' => $terms['currency_code'],
+            'monthly_price' => $this->money($terms['monthly_price']),
+            'annual_price' => $this->money($terms['annual_price']),
             'setup_fee' => $this->money($version->setup_fee),
             'billing_intervals' => array_values((array) $version->billing_intervals),
             'trial_days' => $version->trial_days,
@@ -196,11 +224,19 @@ class SubscriptionPresenter
                 'rate_percent' => $this->money($taxRate),
                 'prices_include_tax' => $inclusive,
                 'source' => $resolved['source'],
-                'monthly' => TaxCalculator::breakdown($this->money($version->monthly_price), $taxRate, $inclusive),
-                'annual' => TaxCalculator::breakdown($this->money($version->annual_price), $taxRate, $inclusive),
+                'monthly' => TaxCalculator::breakdown($this->money($terms['monthly_price']), $taxRate, $inclusive),
+                'annual' => TaxCalculator::breakdown($this->money($terms['annual_price']), $taxRate, $inclusive),
             ],
-            'features' => array_map(static fn ($f) => ['code' => $f['code'], 'name' => $f['name'], 'category' => $f['category']], $features),
+            'features' => array_map(static fn ($f) => [
+                'code' => $f['code'],
+                'name' => $f['name'],
+                'category' => $f['category'],
+                'description' => $f['description'],
+                'is_core' => $f['is_core'],
+                'included' => true,
+            ], $features),
             'limits' => $limits,
+            'coverage' => $coverage,
             'version_number' => $version->version_number,
         ];
     }
@@ -211,7 +247,12 @@ class SubscriptionPresenter
      *
      * @return array<string, mixed>
      */
-    public function versionPreview(Plan $plan, PlanVersion $version): array
+    /**
+     * Full catalog join for one plan version (admin discovery / preview).
+     *
+     * @return array{modules: list<array<string, mixed>>, limits: list<array<string, mixed>>}
+     */
+    public function versionDiscovery(PlanVersion $version): array
     {
         $version->loadMissing('entitlements.feature');
         $byFeature = $version->entitlements->keyBy('feature_id');
@@ -224,9 +265,11 @@ class SubscriptionPresenter
                 $limits[] = [
                     'code' => $feature->code,
                     'name' => $feature->name,
+                    'description' => $feature->description,
                     'unit' => $feature->unit,
                     'value' => $enabled ? $e?->numeric_value : 0,
                     'unlimited' => $enabled && $e?->numeric_value === null,
+                    'included' => $enabled,
                 ];
 
                 continue;
@@ -234,19 +277,28 @@ class SubscriptionPresenter
             $modules[] = [
                 'code' => $feature->code,
                 'name' => $feature->name,
+                'description' => $feature->description,
                 'category' => $feature->category,
                 'module_key' => $feature->module_key,
                 'is_core' => (bool) $feature->is_core,
                 'enabled' => $enabled,
+                'included' => $enabled,
                 'tier' => $enabled ? $e?->tier_value : null,
             ];
         }
 
+        return ['modules' => $modules, 'limits' => $limits];
+    }
+
+    public function versionPreview(Plan $plan, PlanVersion $version): array
+    {
+        $discovery = $this->versionDiscovery($version);
+
         return [
             'card' => $this->publicPlan($plan, $version),
             'version' => ['id' => $version->id, 'version_number' => $version->version_number, 'status' => $version->status],
-            'modules' => $modules,
-            'limits' => $limits,
+            'modules' => $discovery['modules'],
+            'limits' => $discovery['limits'],
         ];
     }
 
@@ -318,6 +370,7 @@ class SubscriptionPresenter
             ->with('plan')
             ->first();
 
+        $descriptions = Feature::query()->where('is_active', true)->pluck('description', 'code');
         $entitlements = [];
         foreach ($this->catalog->features() as $code => $feature) {
             if (! $feature['is_active'] || in_array($feature['type'], ['LIMIT', 'QUOTA', 'USAGE'], true)) {
@@ -326,6 +379,7 @@ class SubscriptionPresenter
             $entitlements[] = [
                 'code' => $code,
                 'name' => $feature['name'],
+                'description' => $descriptions[$code] ?? null,
                 'category' => $feature['category'],
                 'enabled' => $resolved->allows($code),
                 'is_core' => (bool) $feature['is_core'],
@@ -395,21 +449,32 @@ class SubscriptionPresenter
                 $currentListed = true;
             }
             $version = $this->comparisonVersion($plan, $identity, $isCurrent);
-            $cards[] = $this->comparisonCard($plan, $version, $identity, $isCurrent, true);
+            $cards[] = $this->comparisonCard($plan, $version, $identity, $isCurrent, true, $tenant);
         }
 
         if (($identity['matched'] ?? false) && ! $currentListed && ($identity['id'] ?? null)) {
             $plan = Plan::withTrashed()->with('activeVersion.entitlements.feature')->find((int) $identity['id']);
             $version = $plan ? $this->comparisonVersion($plan, $identity, true) : null;
             if ($plan && $version) {
-                $cards[] = $this->comparisonCard($plan, $version, $identity, true, false);
+                $cards[] = $this->comparisonCard($plan, $version, $identity, true, false, $tenant);
             }
         }
 
+        $currentCard = collect($cards)->firstWhere('is_current', true);
+        $listedPlan = $catalog->firstWhere('id', (int) ($identity['id'] ?? 0));
+
         return [
-            'current_plan' => $identity,
+            'current_plan' => $identity + [
+                'using_subscribed_version' => (bool) ($currentCard['using_subscribed_version'] ?? false),
+                'subscribed_version_number' => $currentCard['version_number'] ?? ($identity['version_number'] ?? null),
+                'catalog_version_number' => ($currentCard['using_subscribed_version'] ?? false)
+                    ? $listedPlan?->activeVersion?->version_number
+                    : null,
+            ],
             'current_plan_listed' => $currentListed,
             'plans' => $cards,
+            'rbac_capability_comparison' => \Modules\Subscriptions\Support\SubscriptionRbacCapabilityCatalog::rows(),
+            'feature_capability_sections' => \Modules\Subscriptions\Support\SubscriptionFeatureCapabilityCatalog::sections(),
         ];
     }
 
@@ -520,7 +585,7 @@ class SubscriptionPresenter
      * @param  array<string, mixed>  $identity
      * @return array<string, mixed>
      */
-    private function comparisonCard(Plan $plan, PlanVersion $version, array $identity, bool $isCurrent, bool $listedInCatalog): array
+    private function comparisonCard(Plan $plan, PlanVersion $version, array $identity, bool $isCurrent, bool $listedInCatalog, ?Tenant $tenant = null): array
     {
         $isLifetime = $isCurrent && (bool) ($identity['is_lifetime'] ?? false);
         $primaryAction = 'request';
@@ -533,7 +598,7 @@ class SubscriptionPresenter
         $subscribedVersionId = $isCurrent ? ($identity['version_id'] ?? null) : null;
         $activeId = $plan->activeVersion?->id;
 
-        return $this->publicPlan($plan, $version) + [
+        return $this->publicPlan($plan, $version, $tenant) + [
             'id' => (int) $plan->id,
             'is_current' => $isCurrent,
             'listed_in_catalog' => $listedInCatalog,
@@ -561,5 +626,68 @@ class SubscriptionPresenter
     private function money(mixed $value): ?string
     {
         return $value === null || $value === '' ? null : MoneyMath::normalize((string) $value);
+    }
+
+    /**
+     * Public, active features for a plan version with included / limit state (discovery only).
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function publicFeatureCoverage(PlanVersion $version): array
+    {
+        $version->loadMissing('entitlements.feature');
+        $byFeature = $version->entitlements->keyBy('feature_id');
+        $coverage = [];
+        foreach (Feature::query()->active()->where('is_public', true)->ordered()->get() as $feature) {
+            $e = $byFeature[$feature->id] ?? null;
+            $enabled = $feature->is_core || ($e && $e->is_enabled);
+            $row = [
+                'code' => $feature->code,
+                'name' => $feature->name,
+                'description' => $feature->description,
+                'category' => $feature->category,
+                'feature_type' => $feature->feature_type,
+                'unit' => $feature->unit,
+                'display_order' => $feature->display_order,
+                'is_core' => (bool) $feature->is_core,
+                'included' => $enabled,
+            ];
+            if ($feature->isNumeric()) {
+                $row['value'] = $enabled ? $e?->numeric_value : null;
+                $row['unlimited'] = $enabled && $e && $e->numeric_value === null;
+            } else {
+                $row['value'] = null;
+                $row['unlimited'] = false;
+            }
+            $coverage[] = $row;
+        }
+
+        return $coverage;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function limitSummary(PlanVersion $version): array
+    {
+        $version->loadMissing('entitlements.feature');
+        $rows = [];
+        foreach ($version->entitlements as $e) {
+            $f = $e->feature;
+            if (! $f || ! $f->is_active || ! $f->is_public || ! $f->isNumeric() || ! $e->is_enabled) {
+                continue;
+            }
+            $rows[] = [
+                'code' => $f->code,
+                'name' => $f->name,
+                'unit' => $f->unit,
+                'value' => $e->numeric_value,
+                'unlimited' => $e->numeric_value === null,
+                'display_order' => $f->display_order,
+            ];
+        }
+        usort($rows, static fn ($a, $b) => ($a['display_order'] ?? 0) <=> ($b['display_order'] ?? 0));
+
+        return array_values(array_slice($rows, 0, 4));
     }
 }

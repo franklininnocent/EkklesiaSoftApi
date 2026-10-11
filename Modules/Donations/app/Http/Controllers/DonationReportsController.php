@@ -108,7 +108,10 @@ class DonationReportsController extends Controller
     public function exports(Request $request): JsonResponse
     {
         $tenantId = app(TenantContext::class)->requireEffectiveTenantId();
-        $this->exportOrchestrator->processQueuedForTenant($tenantId);
+        $tenant = \Modules\Tenants\Models\Tenant::query()->findOrFail($tenantId);
+        if (app(\Modules\Tenants\Services\SubscriptionService::class)->isExportAllowed($tenant)) {
+            $this->exportOrchestrator->processQueuedForTenant($tenantId);
+        }
 
         $perPage = min(100, max(1, (int) $request->query('per_page', 20)));
 

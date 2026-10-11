@@ -41,7 +41,7 @@ class EnsureMinistriesFeatureEnabled
         $result = $this->subscriptionService->evaluateModuleAccess($tenant, 'ministries_associations');
         if (! $result['allowed']) {
             $message = match ($result['reason']) {
-                'subscription_blocked' => 'Your subscription has ended or is suspended. Contact EkklesiaSoft or your administrator to restore access.',
+                'subscription_blocked' => 'Your subscription has ended or is suspended. Contact EkklesiaNexus or your administrator to restore access.',
                 'account_inactive' => 'This church account is inactive.',
                 default => 'Ministries & Associations is not enabled for this church.',
             };

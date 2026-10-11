@@ -26,11 +26,24 @@ class ProcessTenantDataExportJob extends TenantAwareJob
 
     protected function allowsTenantMutations(): bool
     {
-        return true;
+        return app(\Modules\Tenants\Support\SubscriptionJobWriteGuard::class)
+            ->allowsExportForTenantId($this->tenantId);
     }
 
     protected function handleWithTenantContext(): void
     {
+        if (! app(\Modules\Tenants\Support\SubscriptionJobWriteGuard::class)->allowsExportForTenantId($this->tenantId)) {
+            $export = TenantDataExport::find($this->exportId);
+            if ($export && in_array($export->status, [TenantDataExport::STATUS_QUEUED, TenantDataExport::STATUS_PROCESSING], true)) {
+                $export->update([
+                    'status' => TenantDataExport::STATUS_FAILED,
+                    'error_message' => 'subscription_access_denied',
+                ]);
+            }
+
+            return;
+        }
+
         $export = TenantDataExport::find($this->exportId);
         if (! $export) {
             return;

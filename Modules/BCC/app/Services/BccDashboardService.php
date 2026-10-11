@@ -358,7 +358,7 @@ class BccDashboardService
             'family_growth' => 'Change in BCC-connected family counts over the selected period.',
             'people_growth' => 'Change in BCC-connected people counts over the selected period.',
             'leadership_coverage' => 'Share of active BCCs that have a primary leader (role = leader).',
-            'life_stage' => 'Derived from date of birth using EkklesiaSoft BCC age bands (babies 0–2, children 3–12, teenagers 13–17, young adults 18–25, adults 26–59, seniors 60+).',
+            'life_stage' => 'Derived from date of birth using EkklesiaNexus BCC age bands (babies 0–2, children 3–12, teenagers 13–17, young adults 18–25, adults 26–59, seniors 60+).',
             'data_quality' => 'Share of reviewed records without common completeness issues (missing address, missing phone on BCC-linked members, missing primary leader on active BCCs).',
             'coverage_point_change' => 'Difference in coverage percentage compared with the start of the selected period, expressed in percentage points.',
         ];

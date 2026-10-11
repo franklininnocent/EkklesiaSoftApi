@@ -159,8 +159,8 @@ return [
         'mail_enabled' => (bool) env('AUTH_RECOVERY_MAIL_ENABLED', true),
         'test_inbox_enabled' => (bool) env('AUTH_RECOVERY_TEST_INBOX', false),
         'mail_from' => [
-            'address' => env('AUTH_RECOVERY_MAIL_FROM_ADDRESS', 'franklininnocent.fs@gmail.com'),
-            'name' => env('AUTH_RECOVERY_MAIL_FROM_NAME', 'EkklesiaSoft'),
+            'address' => env('AUTH_RECOVERY_MAIL_FROM_ADDRESS', 'contact@ekklesianexus.com'),
+            'name' => env('AUTH_RECOVERY_MAIL_FROM_NAME', 'EkklesiaNexus'),
         ],
     ],
 

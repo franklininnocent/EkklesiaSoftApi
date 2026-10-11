@@ -34,12 +34,23 @@ final class DonationReportAuthorization
         }
 
         $definition = DonationReportCatalog::definition($reportType);
-        if (! ($definition['requires_advanced'] ?? false)) {
+        $gate = app(TenantEntitlementGate::class);
+
+        if ($definition['requires_advanced'] ?? false) {
+            if (! $gate->allows($tenant, 'ADVANCED_FINANCIAL_REPORTING')) {
+                throw new AuthorizationException('This report is included in larger plans.');
+            }
+
             return;
         }
 
-        $gate = app(TenantEntitlementGate::class);
-        if (! $gate->allows($tenant, 'ADVANCED_FINANCIAL_REPORTING')) {
+        if (DonationReportCatalog::requiresAdvancedReportsTier($reportType)
+            && ! $gate->allows($tenant, 'ADVANCED_REPORTS')) {
+            throw new AuthorizationException('This report is included in larger plans.');
+        }
+
+        if (DonationReportCatalog::requiresBasicReportsTier($reportType)
+            && ! $gate->allows($tenant, 'BASIC_REPORTS')) {
             throw new AuthorizationException('This report is included in larger plans.');
         }
     }

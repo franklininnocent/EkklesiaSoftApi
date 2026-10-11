@@ -3,6 +3,7 @@
 namespace Modules\Subscriptions\Tests\Feature;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Modules\Marketing\Tests\Support\PublishesMarketingPlanCatalog;
 use Modules\Subscriptions\Tests\Concerns\InteractsWithSubscriptions;
 use Modules\Tenants\Models\Tenant;
 use PHPUnit\Framework\Attributes\Test;
@@ -13,11 +14,14 @@ class TenantAndPublicSubscriptionApiTest extends TestCase
 {
     use ActsAsTenantRoles;
     use InteractsWithSubscriptions;
+    use PublishesMarketingPlanCatalog;
     use RefreshDatabase;
 
     #[Test]
     public function public_plans_list_only_public_active_non_legacy_plans(): void
     {
+        $this->publishMarketingPlanCatalog();
+
         $response = $this->getJson('/api/public/subscription-plans')->assertOk();
         $codes = array_column($response->json('data'), 'code');
 

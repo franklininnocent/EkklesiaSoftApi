@@ -38,7 +38,19 @@ class SubscriptionService
 
     public const ACCESS_MODE_READ_ONLY = 'read_only';
 
+    public const ACCESS_MODE_VIEW_ONLY = 'view_only';
+
+    public const ACCESS_MODE_LOCKED = 'locked';
+
+    public const EFFECTIVE_VIEW_ONLY = 'VIEW_ONLY';
+
+    public const EFFECTIVE_LOCKED = 'LOCKED';
+
     public const CODE_SUBSCRIPTION_READ_ONLY = 'SUBSCRIPTION_READ_ONLY';
+
+    public const CODE_SUBSCRIPTION_VIEW_ONLY = 'SUBSCRIPTION_VIEW_ONLY';
+
+    public const CODE_SUBSCRIPTION_LOCKED = 'SUBSCRIPTION_LOCKED';
 
     public const WRITE_POLICY_LEGACY = 'legacy';
 
@@ -67,27 +79,28 @@ class SubscriptionService
     }
 
     /**
-     * @param  array{grace_period_days?: int, expiring_warning_days?: int}  $data
+     * @param  array{grace_period_days?: int, expiring_warning_days?: int, view_only_allowance_days?: int}  $data
      */
     public function updateSettings(array $data, ?int $actorId = null, ?string $actorRole = null): SubscriptionSettings
     {
         $settings = $this->getSettings();
-        $before = $settings->only(['grace_period_days', 'expiring_warning_days']);
+        $before = $settings->only(['grace_period_days', 'expiring_warning_days', 'view_only_allowance_days']);
 
         $settings->fill([
             'grace_period_days' => $data['grace_period_days'] ?? $settings->grace_period_days,
             'expiring_warning_days' => $data['expiring_warning_days'] ?? $settings->expiring_warning_days,
+            'view_only_allowance_days' => $data['view_only_allowance_days'] ?? $settings->view_only_allowance_days,
         ]);
         $settings->save();
 
-        Log::info('Subscription settings updated', [
-            'before' => $before,
-            'after' => $settings->only(['grace_period_days', 'expiring_warning_days']),
-            'updated_by' => $actorId,
-            'role' => $actorRole,
-        ]);
+        $this->auditPlatformSettings($before, $settings->only(['grace_period_days', 'expiring_warning_days', 'view_only_allowance_days']), $actorId, $actorRole);
 
         return $settings->fresh();
+    }
+
+    public function usesViewOnlyLockedEnforcement(): bool
+    {
+        return (bool) config('tenants.subscription.view_only_locked_enforcement', false);
     }
 
     public function usesReadOnlyWhenExpiredPolicy(): bool
@@ -98,17 +111,7 @@ class SubscriptionService
 
     public function accessMode(Tenant $tenant): string
     {
-        if ((int) $tenant->active !== 1) {
-            return self::ACCESS_MODE_READ_ONLY;
-        }
-
-        $status = $this->resolveStatus($tenant);
-
-        if (in_array($status, [self::STATUS_EXPIRED, self::STATUS_SUSPENDED], true)) {
-            return self::ACCESS_MODE_READ_ONLY;
-        }
-
-        return self::ACCESS_MODE_FULL;
+        return $this->evaluateAccess($tenant)['access_mode'];
     }
 
     public function isWriteAllowed(Tenant $tenant): bool
@@ -117,7 +120,305 @@ class SubscriptionService
             return true;
         }
 
-        return $this->accessMode($tenant) === self::ACCESS_MODE_FULL;
+        return $this->evaluateAccess($tenant)['access_mode'] === self::ACCESS_MODE_FULL;
+    }
+
+    public function isExportAllowed(Tenant $tenant): bool
+    {
+        if (! $this->usesReadOnlyWhenExpiredPolicy()) {
+            return true;
+        }
+
+        if (! $this->usesViewOnlyLockedEnforcement()) {
+            return $this->isWriteAllowed($tenant);
+        }
+
+        return $this->evaluateAccess($tenant)['access_mode'] === self::ACCESS_MODE_FULL;
+    }
+
+    public function isParishDataReadAllowed(Tenant $tenant): bool
+    {
+        if (! $this->usesViewOnlyLockedEnforcement()) {
+            return true;
+        }
+
+        return $this->evaluateAccess($tenant)['access_mode'] !== self::ACCESS_MODE_LOCKED;
+    }
+
+    /**
+     * Authoritative effective subscription access for middleware, snapshots, and jobs.
+     *
+     * @return array{
+     *     access_mode: string,
+     *     effective_status: string,
+     *     stored_status: string,
+     *     subscription_ends_at: ?Carbon,
+     *     grace_ends_at: ?Carbon,
+     *     view_only_ends_at: ?Carbon,
+     *     grandfather_until: ?Carbon,
+     *     grace_period_days: int,
+     *     view_only_allowance_days: int,
+     *     grace_period_inherited: bool,
+     *     view_only_allowance_inherited: bool,
+     *     renewal_available: bool,
+     * }
+     */
+    public function evaluateAccess(Tenant $tenant, bool $ignoreGrandfather = false, bool $assumeLockedEnforcement = false): array
+    {
+        $storedStatus = $this->resolveStatus($tenant);
+        $endsAt = $tenant->subscription_ends_at;
+        $graceDays = $this->effectiveGracePeriodDays($tenant);
+        $viewOnlyDays = $this->effectiveViewOnlyAllowanceDays($tenant);
+        $graceEndsAt = $endsAt && $graceDays > 0 ? $endsAt->copy()->addDays($graceDays) : ($endsAt?->copy());
+        $viewOnlyEndsAt = null;
+        if ($graceEndsAt && $viewOnlyDays > 0) {
+            $viewOnlyEndsAt = $graceEndsAt->copy()->addDays($viewOnlyDays);
+        }
+
+        $grandfatherUntil = $tenant->view_only_grandfather_until;
+        $renewalAvailable = (int) $tenant->active === 1 && empty($tenant->subscription_suspended_at);
+
+        if (! empty($tenant->subscription_suspended_at)) {
+            return $this->accessResult(
+                self::ACCESS_MODE_READ_ONLY,
+                self::STATUS_SUSPENDED,
+                $storedStatus,
+                $endsAt,
+                $graceEndsAt,
+                $viewOnlyEndsAt,
+                $grandfatherUntil,
+                $graceDays,
+                $viewOnlyDays,
+                $tenant,
+                $renewalAvailable
+            );
+        }
+
+        if ((int) $tenant->active !== 1) {
+            return $this->accessResult(
+                self::ACCESS_MODE_READ_ONLY,
+                'INACTIVE',
+                $storedStatus,
+                $endsAt,
+                $graceEndsAt,
+                $viewOnlyEndsAt,
+                $grandfatherUntil,
+                $graceDays,
+                $viewOnlyDays,
+                $tenant,
+                false
+            );
+        }
+
+        if ($tenant->trial_ends_at && $tenant->trial_ends_at->isFuture()) {
+            return $this->accessResult(
+                self::ACCESS_MODE_FULL,
+                self::STATUS_TRIAL,
+                $storedStatus,
+                $endsAt,
+                $graceEndsAt,
+                $viewOnlyEndsAt,
+                $grandfatherUntil,
+                $graceDays,
+                $viewOnlyDays,
+                $tenant,
+                $renewalAvailable
+            );
+        }
+
+        if ($endsAt === null) {
+            return $this->accessResult(
+                self::ACCESS_MODE_FULL,
+                self::STATUS_LIFETIME,
+                $storedStatus,
+                $endsAt,
+                $graceEndsAt,
+                $viewOnlyEndsAt,
+                $grandfatherUntil,
+                $graceDays,
+                $viewOnlyDays,
+                $tenant,
+                $renewalAvailable
+            );
+        }
+
+        $now = now();
+
+        if ($endsAt->isFuture()) {
+            $effective = $storedStatus === self::STATUS_EXPIRING ? self::STATUS_EXPIRING : self::STATUS_ACTIVE;
+
+            return $this->accessResult(
+                self::ACCESS_MODE_FULL,
+                $effective,
+                $storedStatus,
+                $endsAt,
+                $graceEndsAt,
+                $viewOnlyEndsAt,
+                $grandfatherUntil,
+                $graceDays,
+                $viewOnlyDays,
+                $tenant,
+                $renewalAvailable
+            );
+        }
+
+        if ($graceDays > 0 && $now->lte($endsAt->copy()->addDays($graceDays))) {
+            return $this->accessResult(
+                self::ACCESS_MODE_FULL,
+                self::STATUS_GRACE_PERIOD,
+                $storedStatus,
+                $endsAt,
+                $graceEndsAt,
+                $viewOnlyEndsAt,
+                $grandfatherUntil,
+                $graceDays,
+                $viewOnlyDays,
+                $tenant,
+                $renewalAvailable
+            );
+        }
+
+        $inGrandfather = ! $ignoreGrandfather
+            && $grandfatherUntil !== null
+            && $now->lte($grandfatherUntil);
+
+        $inViewOnlyWindow = $viewOnlyDays > 0 && $viewOnlyEndsAt && $now->lte($viewOnlyEndsAt);
+
+        if ($inGrandfather || ($inViewOnlyWindow && $this->usesViewOnlyLockedEnforcement())) {
+            return $this->accessResult(
+                self::ACCESS_MODE_VIEW_ONLY,
+                self::EFFECTIVE_VIEW_ONLY,
+                $storedStatus,
+                $endsAt,
+                $graceEndsAt,
+                $inGrandfather ? $grandfatherUntil : $viewOnlyEndsAt,
+                $grandfatherUntil,
+                $graceDays,
+                $viewOnlyDays,
+                $tenant,
+                $renewalAvailable
+            );
+        }
+
+        if ($this->usesViewOnlyLockedEnforcement() || $assumeLockedEnforcement) {
+            return $this->accessResult(
+                self::ACCESS_MODE_LOCKED,
+                self::EFFECTIVE_LOCKED,
+                $storedStatus,
+                $endsAt,
+                $graceEndsAt,
+                $viewOnlyEndsAt,
+                $grandfatherUntil,
+                $graceDays,
+                $viewOnlyDays,
+                $tenant,
+                $renewalAvailable
+            );
+        }
+
+        return $this->accessResult(
+            self::ACCESS_MODE_READ_ONLY,
+            self::STATUS_EXPIRED,
+            $storedStatus,
+            $endsAt,
+            $graceEndsAt,
+            $viewOnlyEndsAt,
+            $grandfatherUntil,
+            $graceDays,
+            $viewOnlyDays,
+            $tenant,
+            $renewalAvailable
+        );
+    }
+
+    public function effectiveGracePeriodDays(Tenant $tenant): int
+    {
+        if ($tenant->custom_grace_period_days !== null) {
+            return max(0, (int) $tenant->custom_grace_period_days);
+        }
+
+        return max(0, (int) $this->getSettings()->grace_period_days);
+    }
+
+    public function effectiveViewOnlyAllowanceDays(Tenant $tenant): int
+    {
+        if ($tenant->custom_view_only_allowance_days !== null) {
+            return max(0, (int) $tenant->custom_view_only_allowance_days);
+        }
+
+        $settings = $this->getSettings();
+        $fromDb = $settings->view_only_allowance_days ?? null;
+
+        return max(0, (int) ($fromDb ?? config('tenants.subscription.view_only_allowance_days', 90)));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function buildAccessPolicyPayload(Tenant $tenant): array
+    {
+        $access = $this->evaluateAccess($tenant);
+
+        return [
+            'tenant_id' => $tenant->id,
+            'tenant_name' => $tenant->name,
+            'stored_status' => $access['stored_status'],
+            'effective_status' => $access['effective_status'],
+            'access_mode' => $access['access_mode'],
+            'subscription_ends_at' => $access['subscription_ends_at']?->toIso8601String(),
+            'grace_ends_at' => $access['grace_ends_at']?->toIso8601String(),
+            'view_only_starts_at' => $access['grace_ends_at']?->toIso8601String(),
+            'view_only_ends_at' => $access['view_only_ends_at']?->toIso8601String(),
+            'grandfather_until' => $access['grandfather_until']?->toIso8601String(),
+            'grace_period_days' => $access['grace_period_days'],
+            'view_only_allowance_days' => $access['view_only_allowance_days'],
+            'grace_period_inherited' => $access['grace_period_inherited'],
+            'view_only_allowance_inherited' => $access['view_only_allowance_inherited'],
+            'custom_grace_period_days' => $tenant->custom_grace_period_days,
+            'custom_view_only_allowance_days' => $tenant->custom_view_only_allowance_days,
+            'renewal_available' => $access['renewal_available'],
+        ];
+    }
+
+    /**
+     * @param  array{custom_grace_period_days?: int|null, custom_view_only_allowance_days?: int|null}  $data
+     */
+    public function updateTenantAccessPolicy(Tenant $tenant, array $data, ?int $actorId = null, ?string $actorRole = null): Tenant
+    {
+        $before = [
+            'custom_grace_period_days' => $tenant->custom_grace_period_days,
+            'custom_view_only_allowance_days' => $tenant->custom_view_only_allowance_days,
+        ];
+
+        $update = [];
+        if (array_key_exists('custom_grace_period_days', $data)) {
+            $update['custom_grace_period_days'] = $data['custom_grace_period_days'];
+        }
+        if (array_key_exists('custom_view_only_allowance_days', $data)) {
+            $update['custom_view_only_allowance_days'] = $data['custom_view_only_allowance_days'];
+        }
+
+        return DB::transaction(function () use ($tenant, $update, $before, $actorId, $actorRole) {
+            $tenant->update($update);
+            $tenant->refresh();
+            $after = [
+                'custom_grace_period_days' => $tenant->custom_grace_period_days,
+                'custom_view_only_allowance_days' => $tenant->custom_view_only_allowance_days,
+            ];
+            $this->audit($tenant, 'access_policy_updated', $before, $after, $actorId, $actorRole, 'admin_ui', null);
+            TenantCacheVersion::bump($tenant->id);
+
+            return $tenant;
+        });
+    }
+
+    public function setGrandfatherUntil(Tenant $tenant, ?Carbon $until, ?int $actorId = null): void
+    {
+        $before = ['view_only_grandfather_until' => $tenant->view_only_grandfather_until?->toIso8601String()];
+        $tenant->update(['view_only_grandfather_until' => $until]);
+        $tenant->refresh();
+        $after = ['view_only_grandfather_until' => $tenant->view_only_grandfather_until?->toIso8601String()];
+        $this->audit($tenant, 'view_only_grandfather_set', $before, $after, $actorId, 'system', 'migration', null);
     }
 
     public function resolveStatus(Tenant $tenant): string
@@ -133,7 +434,7 @@ class SubscriptionService
         }
 
         $settings = $this->getSettings();
-        $graceDays = max(0, (int) $settings->grace_period_days);
+        $graceDays = $this->effectiveGracePeriodDays($tenant);
         $warningDays = max(0, (int) $settings->expiring_warning_days);
 
         $endsAt = $tenant->subscription_ends_at;
@@ -163,6 +464,12 @@ class SubscriptionService
     {
         if ((int) $tenant->active !== 1) {
             return false;
+        }
+
+        if ($this->usesViewOnlyLockedEnforcement()) {
+            $mode = $this->evaluateAccess($tenant)['access_mode'];
+
+            return $mode !== self::ACCESS_MODE_LOCKED;
         }
 
         if ($this->usesReadOnlyWhenExpiredPolicy()) {
@@ -366,10 +673,9 @@ class SubscriptionService
     public function buildAccessSnapshot(Tenant $tenant): array
     {
         $settings = $this->getSettings();
-        $status = $this->resolveStatus($tenant);
+        $access = $this->evaluateAccess($tenant);
+        $status = $access['stored_status'];
         $endsAt = $tenant->subscription_ends_at;
-        $graceDays = max(0, (int) $settings->grace_period_days);
-        $graceEndsAt = $endsAt && $graceDays > 0 ? $endsAt->copy()->addDays($graceDays) : null;
 
         $daysUntilEnd = null;
         if ($endsAt) {
@@ -378,20 +684,31 @@ class SubscriptionService
             $daysUntilEnd = (int) floor(($end - $start) / 86400);
         }
 
-        $accessMode = $this->accessMode($tenant);
+        $accessMode = $access['access_mode'];
+        $isReadOnly = $accessMode !== self::ACCESS_MODE_FULL;
 
         return [
             'status' => $status,
+            'effective_status' => $access['effective_status'],
             'access_mode' => $accessMode,
-            'is_read_only' => $accessMode === self::ACCESS_MODE_READ_ONLY,
+            'is_read_only' => $isReadOnly,
+            'is_view_only' => $accessMode === self::ACCESS_MODE_VIEW_ONLY,
+            'is_locked' => $accessMode === self::ACCESS_MODE_LOCKED,
             'allows_gated_access' => $this->allowsGatedAccess($tenant),
             'gated_modules' => $this->gatedModules(),
             'subscription_ends_at' => $endsAt?->toIso8601String(),
-            'grace_ends_at' => $graceEndsAt?->toIso8601String(),
+            'grace_ends_at' => $access['grace_ends_at']?->toIso8601String(),
+            'view_only_ends_at' => $access['view_only_ends_at']?->toIso8601String(),
+            'grandfather_until' => $access['grandfather_until']?->toIso8601String(),
             'days_until_end' => $daysUntilEnd,
-            'grace_period_days' => $graceDays,
+            'grace_period_days' => $access['grace_period_days'],
+            'view_only_allowance_days' => $access['view_only_allowance_days'],
+            'grace_period_inherited' => $access['grace_period_inherited'],
+            'view_only_allowance_inherited' => $access['view_only_allowance_inherited'],
             'expiring_warning_days' => (int) $settings->expiring_warning_days,
+            'renewal_available' => $access['renewal_available'],
             'write_policy' => config('tenants.subscription.write_policy', self::WRITE_POLICY_LEGACY),
+            'view_only_locked_enforcement' => $this->usesViewOnlyLockedEnforcement(),
         ];
     }
 
@@ -492,6 +809,11 @@ class SubscriptionService
             'entered_expiring' => 'Entered expiring window',
             'entered_grace' => 'Entered grace period',
             'entered_expired' => 'Entered read-only (expired)',
+            'entered_view_only' => 'Entered view-only mode',
+            'entered_locked' => 'Entered locked (access restricted)',
+            'access_policy_updated' => 'Access policy updated',
+            'view_only_grandfather_set' => 'View-only grandfather deadline set',
+            'subscription_settings_updated' => 'Platform subscription settings updated',
         ];
     }
 
@@ -614,7 +936,71 @@ class SubscriptionService
      * @param  array<string, mixed>  $before
      * @param  array<string, mixed>  $after
      */
-    private function audit(
+    /**
+     * @param  array<string, mixed>  $before
+     * @param  array<string, mixed>  $after
+     */
+    private function auditPlatformSettings(array $before, array $after, ?int $actorId, ?string $actorRole): void
+    {
+        Log::info('Subscription settings updated', [
+            'operation' => 'subscription_settings_updated',
+            'before' => $before,
+            'after' => $after,
+            'updated_by' => $actorId,
+            'role' => $actorRole,
+        ]);
+    }
+
+    /**
+     * @return array{
+     *     access_mode: string,
+     *     effective_status: string,
+     *     stored_status: string,
+     *     subscription_ends_at: ?Carbon,
+     *     grace_ends_at: ?Carbon,
+     *     view_only_ends_at: ?Carbon,
+     *     grandfather_until: ?Carbon,
+     *     grace_period_days: int,
+     *     view_only_allowance_days: int,
+     *     grace_period_inherited: bool,
+     *     view_only_allowance_inherited: bool,
+     *     renewal_available: bool,
+     * }
+     */
+    private function accessResult(
+        string $accessMode,
+        string $effectiveStatus,
+        string $storedStatus,
+        ?Carbon $endsAt,
+        ?Carbon $graceEndsAt,
+        ?Carbon $viewOnlyEndsAt,
+        ?Carbon $grandfatherUntil,
+        int $graceDays,
+        int $viewOnlyDays,
+        Tenant $tenant,
+        bool $renewalAvailable
+    ): array {
+        return [
+            'access_mode' => $accessMode,
+            'effective_status' => $effectiveStatus,
+            'stored_status' => $storedStatus,
+            'subscription_ends_at' => $endsAt,
+            'grace_ends_at' => $graceEndsAt,
+            'view_only_ends_at' => $viewOnlyEndsAt,
+            'grandfather_until' => $grandfatherUntil,
+            'grace_period_days' => $graceDays,
+            'view_only_allowance_days' => $viewOnlyDays,
+            'grace_period_inherited' => $tenant->custom_grace_period_days === null,
+            'view_only_allowance_inherited' => $tenant->custom_view_only_allowance_days === null,
+            'renewal_available' => $renewalAvailable,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $before
+     * @param  array<string, mixed>  $after
+     */
+    public function audit(
         Tenant $tenant,
         string $operation,
         array $before,

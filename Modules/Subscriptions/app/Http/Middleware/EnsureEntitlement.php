@@ -49,12 +49,24 @@ class EnsureEntitlement
         }
 
         if ((int) $tenant->active !== 1 || ! $this->lifecycle->allowsGatedAccess($tenant)) {
+            $access = $this->lifecycle->evaluateAccess($tenant);
+            $mode = (string) ($access['access_mode'] ?? '');
+            $code = $mode === SubscriptionService::ACCESS_MODE_LOCKED
+                ? SubscriptionService::CODE_SUBSCRIPTION_LOCKED
+                : 'SUBSCRIPTION_EXPIRED';
+            $message = $mode === SubscriptionService::ACCESS_MODE_LOCKED
+                ? 'Your subscription access has ended. Renew your subscription or contact EkklesiaNexus for assistance.'
+                : 'Your subscription has ended or is suspended. Contact EkklesiaNexus or your administrator to restore access.';
+
             return response()->json([
                 'success' => false,
-                'code' => 'SUBSCRIPTION_EXPIRED',
-                'message' => 'Your subscription has ended or is suspended. Contact EkklesiaSoft or your administrator to restore access.',
+                'code' => $code,
+                'message' => $message,
                 'reason' => 'subscription_blocked',
-                'subscription_status' => $this->lifecycle->resolveStatus($tenant),
+                'subscription_status' => $access['stored_status'] ?? $this->lifecycle->resolveStatus($tenant),
+                'effective_status' => $access['effective_status'] ?? null,
+                'access_mode' => $mode !== '' ? $mode : null,
+                'renewal_available' => (bool) ($access['renewal_available'] ?? false),
             ], 403);
         }
 

@@ -109,6 +109,10 @@ Route::middleware('auth:api')->group(function () {
         ->where('id', '[0-9]+');
     Route::get('/tenant/{id}/subscription/audits', [TenantsController::class, 'subscriptionAudits'])
         ->where('id', '[0-9]+');
+    Route::get('/tenant/{id}/subscription/access-policy', [TenantsController::class, 'getTenantSubscriptionAccessPolicy'])
+        ->where('id', '[0-9]+');
+    Route::put('/tenant/{id}/subscription/access-policy', [TenantsController::class, 'updateTenantSubscriptionAccessPolicy'])
+        ->where('id', '[0-9]+');
 
     // Platform subscription settings (SuperAdmin/EkklesiaAdmin) — includes configurable grace days
     Route::get('/subscription/settings', [TenantsController::class, 'getSubscriptionSettings']);

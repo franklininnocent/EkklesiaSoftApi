@@ -1,4 +1,4 @@
-EkklesiaSoft
+EkklesiaNexus
 
 Password Recovery Request
 
@@ -13,4 +13,4 @@ Church: {{ $tenantName }}
 @endif
 Requested: {{ $requestedAt }}
 
-Sign in to EkklesiaSoft and open Settings → Forgot Password Requests to review this request.
+Sign in to EkklesiaNexus and open Settings → Forgot Password Requests to review this request.

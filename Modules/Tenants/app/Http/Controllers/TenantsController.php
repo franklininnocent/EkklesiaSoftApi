@@ -22,6 +22,8 @@ use Modules\Tenants\Contracts\TenantPlanAssigner;
 use Modules\Tenants\Http\Requests\StoreTenantRequest;
 use Modules\Tenants\Http\Requests\UpdateTenantRequest;
 use Modules\Tenants\Http\Requests\UploadChurchProfileLogoRequest;
+use Modules\Tenants\Http\Requests\UpdateSubscriptionSettingsRequest;
+use Modules\Tenants\Http\Requests\UpdateTenantSubscriptionAccessPolicyRequest;
 use Modules\Tenants\Http\Requests\UploadTenantLogoRequest;
 use Modules\Tenants\Http\Resources\TenantDetailsResource;
 use Modules\Tenants\Models\ChurchProfile;
@@ -1992,6 +1994,88 @@ class TenantsController extends Controller
     }
 
     /**
+     * Super Admin: effective subscription access policy for a tenant.
+     *
+     * @route GET /api/tenant/{id}/subscription/access-policy
+     */
+    public function getTenantSubscriptionAccessPolicy(int $id): JsonResponse
+    {
+        try {
+            if (! $this->canManageTenants()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Only SuperAdmin and EkklesiaAdmin can manage subscription settings.',
+                ], 403);
+            }
+
+            $tenant = Tenant::query()->findOrFail($id);
+
+            return response()->json([
+                'success' => true,
+                'data' => $this->subscriptionService->buildAccessPolicyPayload($tenant),
+            ]);
+        } catch (ModelNotFoundException) {
+            return response()->json(['success' => false, 'message' => 'Tenant not found'], 404);
+        } catch (\Exception $e) {
+            Log::error('Error fetching tenant subscription access policy: '.$e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error fetching subscription access policy',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
+        }
+    }
+
+    /**
+     * Super Admin: update per-tenant grace / view-only overrides (null resets to global).
+     *
+     * @route PUT /api/tenant/{id}/subscription/access-policy
+     */
+    public function updateTenantSubscriptionAccessPolicy(UpdateTenantSubscriptionAccessPolicyRequest $request, int $id): JsonResponse
+    {
+        try {
+            if (! $this->canManageTenants()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Only SuperAdmin and EkklesiaAdmin can manage subscription settings.',
+                ], 403);
+            }
+
+            $tenant = Tenant::query()->findOrFail($id);
+            $user = auth()->user();
+            $tenant = $this->subscriptionService->updateTenantAccessPolicy(
+                $tenant,
+                $request->validated(),
+                $user?->id,
+                $user?->role_name ?? $user?->role?->name
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Subscription access policy updated successfully',
+                'data' => $this->subscriptionService->buildAccessPolicyPayload($tenant),
+            ]);
+        } catch (ModelNotFoundException) {
+            return response()->json(['success' => false, 'message' => 'Tenant not found'], 404);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Error updating tenant subscription access policy: '.$e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error updating subscription access policy',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
+        }
+    }
+
+    /**
      * Super Admin: get platform subscription settings (includes configurable grace days).
      *
      * @route GET /api/subscription/settings
@@ -2013,6 +2097,7 @@ class TenantsController extends Controller
                 'data' => [
                     'grace_period_days' => (int) $settings->grace_period_days,
                     'expiring_warning_days' => (int) $settings->expiring_warning_days,
+                    'view_only_allowance_days' => (int) ($settings->view_only_allowance_days ?? config('tenants.subscription.view_only_allowance_days', 90)),
                 ],
             ]);
         } catch (\Exception $e) {
@@ -2031,7 +2116,7 @@ class TenantsController extends Controller
      *
      * @route PUT /api/subscription/settings
      */
-    public function updateSubscriptionSettings(Request $request): JsonResponse
+    public function updateSubscriptionSettings(UpdateSubscriptionSettingsRequest $request): JsonResponse
     {
         try {
             if (! $this->canManageTenants()) {
@@ -2041,10 +2126,7 @@ class TenantsController extends Controller
                 ], 403);
             }
 
-            $validated = $request->validate([
-                'grace_period_days' => 'required|integer|min:0|max:365',
-                'expiring_warning_days' => 'required|integer|min:0|max:365',
-            ]);
+            $validated = $request->validated();
 
             $user = auth()->user();
             $settings = $this->subscriptionService->updateSettings(
@@ -2059,6 +2141,7 @@ class TenantsController extends Controller
                 'data' => [
                     'grace_period_days' => (int) $settings->grace_period_days,
                     'expiring_warning_days' => (int) $settings->expiring_warning_days,
+                    'view_only_allowance_days' => (int) ($settings->view_only_allowance_days ?? 90),
                 ],
             ]);
         } catch (ValidationException $e) {

@@ -25,7 +25,7 @@ class PasswordRecoveryCompletedMail extends Mailable implements ShouldQueue
 
     public function envelope(): Envelope
     {
-        return RecoveryMailEnvelope::make('EkklesiaSoft — Password reset completed');
+        return RecoveryMailEnvelope::make('EkklesiaNexus — Password reset completed');
     }
 
     public function content(): Content

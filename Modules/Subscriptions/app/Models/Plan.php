@@ -81,6 +81,11 @@ class Plan extends SubscriptionPlan
         return $this->hasMany(PlanVersion::class, 'plan_id')->orderByDesc('version_number');
     }
 
+    public function catalogPrices(): HasMany
+    {
+        return $this->hasMany(PlanCatalogPrice::class, 'plan_id');
+    }
+
     public function activeVersion(): HasOne
     {
         return $this->hasOne(PlanVersion::class, 'plan_id')->where('status', PlanVersion::STATUS_ACTIVE);

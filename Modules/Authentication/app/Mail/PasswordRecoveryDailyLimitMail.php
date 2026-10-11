@@ -26,7 +26,7 @@ class PasswordRecoveryDailyLimitMail extends Mailable implements ShouldQueue
 
     public function envelope(): Envelope
     {
-        return RecoveryMailEnvelope::make('EkklesiaSoft — Security alert: password recovery limit reached');
+        return RecoveryMailEnvelope::make('EkklesiaNexus — Security alert: password recovery limit reached');
     }
 
     public function content(): Content

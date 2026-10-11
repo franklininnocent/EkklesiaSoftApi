@@ -221,6 +221,32 @@ final class DonationReportCatalog
     /**
      * @return array<string, mixed>
      */
+    /**
+     * Stewardship exports in follow-up / books categories require ADVANCED_REPORTS (not ADVANCED_FINANCIAL_REPORTING).
+     */
+    public static function requiresAdvancedReportsTier(string $reportType): bool
+    {
+        $definition = self::definitions()[$reportType] ?? null;
+        if ($definition === null || ($definition['requires_advanced'] ?? false)) {
+            return false;
+        }
+
+        return in_array($definition['category'] ?? '', ['follow_up', 'books'], true);
+    }
+
+    /**
+     * Core stewardship exports in the collect category require BASIC_REPORTS.
+     */
+    public static function requiresBasicReportsTier(string $reportType): bool
+    {
+        $definition = self::definitions()[$reportType] ?? null;
+        if ($definition === null || ($definition['requires_advanced'] ?? false)) {
+            return false;
+        }
+
+        return ($definition['category'] ?? '') === 'collect';
+    }
+
     public static function definition(string $reportType): array
     {
         $definitions = self::definitions();
