@@ -103,7 +103,8 @@
             "Modules\\SupportAccess\\Tests\\": "Modules/SupportAccess/tests/",
             "Modules\\Subscriptions\\Tests\\": "Modules/Subscriptions/tests/",
             "Modules\\SupportTickets\\Tests\\": "Modules/SupportTickets/tests/",
-            "Modules\\Tenants\\Tests\\": "Modules/Tenants/tests/"
+            "Modules\\Tenants\\Tests\\": "Modules/Tenants/tests/",
+            "Modules\\Marketing\\Tests\\": "Modules/Marketing/tests/"
         }
     },
     "scripts": {

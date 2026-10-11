@@ -4,33 +4,32 @@ namespace Modules\Subscriptions\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Routing\Controller;
-use Illuminate\Support\Facades\Cache;
-use Modules\Subscriptions\Models\Plan;
-use Modules\Subscriptions\Services\SubscriptionPresenter;
-use Modules\Subscriptions\Support\EntitlementCacheVersion;
+use Modules\Marketing\Services\MarketingPlanCatalogService;
 
 /**
- * Unauthenticated pricing catalog: only ACTIVE, public, non-legacy plans with an ACTIVE version.
+ * Unauthenticated pricing catalog: only the Super Admin–approved marketing revision.
  */
 class PublicPlanController extends Controller
 {
-    public function __construct(private readonly SubscriptionPresenter $presenter) {}
+    public function __construct(private readonly MarketingPlanCatalogService $catalog) {}
 
     public function index(): JsonResponse
     {
-        $ttl = max(0, (int) config('subscriptions.public_api.cache_seconds', 300));
-        $key = 'subscriptions:public_plans:c_'.EntitlementCacheVersion::catalog();
+        $ttl = max(0, (int) config('marketing.plan_catalog.public_cache_seconds', 300));
 
-        $build = fn () => Plan::query()->publiclyListed()
-            ->with('activeVersion.entitlements.feature')
-            ->orderBy('display_order')
-            ->get()
-            ->filter(fn (Plan $p) => $p->activeVersion !== null)
-            ->map(fn (Plan $p) => $this->presenter->publicPlan($p, $p->activeVersion))
-            ->values()
-            ->all();
-
-        $plans = $ttl > 0 ? Cache::remember($key, $ttl, $build) : $build();
+        try {
+            $plans = $this->catalog->getPublishedPlans();
+        } catch (\Illuminate\Database\QueryException) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Published plan catalog is not available.',
+            ], 503);
+        } catch (\Throwable) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unable to load the published plan catalog.',
+            ], 500);
+        }
 
         return response()->json(['success' => true, 'data' => $plans])
             ->header('Cache-Control', 'public, max-age='.min($ttl, 300));

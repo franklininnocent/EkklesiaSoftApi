@@ -7,7 +7,7 @@ use Modules\Tenants\Services\SubscriptionService;
 
 /**
  * "Contracted Subscription Revenue" — what churches have agreed to pay, not cash received
- * (EkklesiaSoft does not take payments). See docs/platform/subscriptions-entitlements.md.
+ * (EkklesiaNexus does not take payments). See docs/platform/subscriptions-entitlements.md.
  *
  * Monthly equivalent of a contracted price:
  *   MONTHLY → price, ANNUAL → price ÷ 12, CUSTOM (agreed yearly amount) → price ÷ 12, NONE → not counted.

@@ -146,27 +146,35 @@ class SubscriptionLifecycleNotificationPublisher
         return match ($operation) {
             'entered_expiring' => [
                 "Subscription ending soon — {$church}",
-                "Hello,\n\nThe subscription for {$church} is ending soon. Please contact EkklesiaSoft to renew access before it expires.\n\n— EkklesiaSoft",
+                "Hello,\n\nThe subscription for {$church} is ending soon. Please contact EkklesiaNexus to renew access before it expires.\n\n— EkklesiaNexus",
             ],
             'entered_grace' => [
                 "Subscription grace period — {$church}",
-                "Hello,\n\nThe subscription end date for {$church} has passed. You are now in the grace period and can still save changes. Please contact EkklesiaSoft to renew.\n\n— EkklesiaSoft",
+                "Hello,\n\nThe subscription end date for {$church} has passed. You are now in the grace period and can still save changes. Please contact EkklesiaNexus to renew.\n\n— EkklesiaNexus",
             ],
             'entered_expired' => [
                 "Subscription read-only — {$church}",
-                "Hello,\n\nThe subscription for {$church} has ended. Your church can still view, print, and download records, but cannot save changes. Contact EkklesiaSoft to renew.\n\n— EkklesiaSoft",
+                "Hello,\n\nThe subscription for {$church} has ended. Your church can still view records, but cannot save changes. Contact EkklesiaNexus to renew.\n\n— EkklesiaNexus",
+            ],
+            'entered_view_only' => [
+                "Subscription view-only — {$church}",
+                "Hello,\n\nThe subscription and grace period for {$church} have ended. Your church is in view-only mode: you can view existing records, but operational actions are restricted. Contact EkklesiaNexus to renew.\n\n— EkklesiaNexus",
+            ],
+            'entered_locked' => [
+                "Subscription access restricted — {$church}",
+                "Hello,\n\nView-only access for {$church} has ended. Sign in to request renewal or contact EkklesiaNexus for assistance.\n\n— EkklesiaNexus",
             ],
             'subscription_extended', 'plan_changed' => [
                 "Subscription renewed — {$church}",
-                "Hello,\n\nAccess for {$church} has been renewed. You can save changes again.\n\n— EkklesiaSoft",
+                "Hello,\n\nAccess for {$church} has been renewed. You can save changes again.\n\n— EkklesiaNexus",
             ],
             'subscription_reactivated' => [
                 "Subscription reactivated — {$church}",
-                "Hello,\n\nSubscription suspension for {$church} has been cleared. If your term is still past the end date, the church may remain in read-only mode until EkklesiaSoft renews access.\n\n— EkklesiaSoft",
+                "Hello,\n\nSubscription suspension for {$church} has been cleared. If your term is still past the end date, the church may remain in read-only mode until EkklesiaNexus renews access.\n\n— EkklesiaNexus",
             ],
             default => [
                 "Subscription update — {$church}",
-                "Hello,\n\nThere is a subscription update for {$church}. Sign in to My Subscription for details.\n\n— EkklesiaSoft",
+                "Hello,\n\nThere is a subscription update for {$church}. Sign in to My Subscription for details.\n\n— EkklesiaNexus",
             ],
         };
     }

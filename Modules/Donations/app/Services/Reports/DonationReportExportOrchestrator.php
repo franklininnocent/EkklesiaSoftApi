@@ -10,6 +10,7 @@ use Modules\Donations\Support\Reports\DonationReportCatalog;
 use Modules\Donations\Support\Reports\DonationReportExportFormat;
 use Modules\Donations\Support\Reports\ReportFilter;
 use Modules\Tenants\Models\Tenant;
+use Modules\Tenants\Services\SubscriptionService;
 use Modules\Tenants\Support\TenantContext;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -31,6 +32,14 @@ final class DonationReportExportOrchestrator
     {
         $this->authorization->assertCanExport($user);
         $tenant = Tenant::query()->findOrFail($tenantId);
+        if (! app(SubscriptionService::class)->isExportAllowed($tenant)) {
+            throw new HttpResponseException(response()->json([
+                'success' => false,
+                'code' => SubscriptionService::CODE_SUBSCRIPTION_VIEW_ONLY,
+                'reason' => 'subscription_blocked',
+                'message' => 'Report export is not available while subscription access is restricted.',
+            ], 403));
+        }
         $this->authorization->assertReportEntitlements($tenant, $filter->reportType);
 
         DonationReportCatalog::definition($filter->reportType);

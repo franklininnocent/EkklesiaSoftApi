@@ -46,6 +46,10 @@ class RolesAndPermissionsDatabaseSeeder extends Seeder
             $this->call(\Modules\SupportTickets\Database\Seeders\SupportTicketsPermissionSeeder::class);
         }
 
+        if (class_exists(\Modules\Marketing\Database\Seeders\WebSettingsPermissionSeeder::class)) {
+            $this->call(\Modules\Marketing\Database\Seeders\WebSettingsPermissionSeeder::class);
+        }
+
         if (class_exists(\Modules\EcclesiasticalData\Database\Seeders\EcclesiasticalPermissionSeeder::class)) {
             $this->call([
                 \Modules\EcclesiasticalData\Database\Seeders\EcclesiasticalPermissionSeeder::class,

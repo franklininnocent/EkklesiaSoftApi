@@ -14,8 +14,8 @@ final class RecoveryMailEnvelope
 
         return new Envelope(
             from: new Address(
-                (string) ($from['address'] ?? 'franklininnocent.fs@gmail.com'),
-                (string) ($from['name'] ?? 'EkklesiaSoft'),
+                (string) ($from['address'] ?? 'contact@ekklesianexus.com'),
+                (string) ($from['name'] ?? 'EkklesiaNexus'),
             ),
             subject: EmailSubject::sanitize($subject),
         );

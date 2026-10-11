@@ -9,6 +9,7 @@ use Modules\Subscriptions\Models\PlanVersion;
 use Modules\Subscriptions\Models\SubscriptionCatalogAudit;
 use Modules\Subscriptions\Models\SubscriptionUpgradeRequest;
 use Modules\Subscriptions\Models\TenantSubscription;
+use Modules\Marketing\Tests\Support\PublishesMarketingPlanCatalog;
 use Modules\Subscriptions\Tests\Concerns\InteractsWithSubscriptions;
 use Modules\Tenants\Models\Tenant;
 use PHPUnit\Framework\Attributes\Test;
@@ -19,6 +20,7 @@ class PlanCatalogAdminApiTest extends TestCase
 {
     use ActsAsTenantRoles;
     use InteractsWithSubscriptions;
+    use PublishesMarketingPlanCatalog;
     use RefreshDatabase;
 
     #[Test]
@@ -97,6 +99,8 @@ class PlanCatalogAdminApiTest extends TestCase
             ->assertJsonPath('data.status', PlanVersion::STATUS_ACTIVE);
 
         $this->assertTrue(SubscriptionCatalogAudit::query()->where('entity_type', 'plan_version')->where('entity_id', $versionId)->exists());
+
+        $this->publishMarketingPlanCatalog();
 
         $public = $this->getJson('/api/public/subscription-plans')->assertOk();
         $this->assertContains('PARISH_PLUS', array_column($public->json('data'), 'code'));

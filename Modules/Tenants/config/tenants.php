@@ -98,6 +98,8 @@ return [
     'subscription' => [
         'grace_period_days' => 7,
         'expiring_warning_days' => 14,
+        'view_only_allowance_days' => 90,
+        'view_only_locked_enforcement' => env('TENANT_SUBSCRIPTION_VIEW_ONLY_LOCKED_ENFORCEMENT', false),
         /*
         | legacy — Donations/Ministries blocked when expired; other modules writable.
         | read_only_when_expired — after grace, all parish mutations blocked; views allowed.
@@ -136,6 +138,45 @@ return [
             'api/sacraments/*/certificates/latest/download',
             'api/sacraments/certificates/*/download',
             'api/sacraments/certificates/*/print',
+        ],
+        'recovery_allowlist' => [
+            'api/auth/refresh',
+            'api/auth/logout',
+            'api/auth/password/change',
+            'api/auth/password-recovery-requests*',
+            'api/users/*/password/reset',
+            'GET:api/tenant/subscription-access',
+            'GET:api/tenant/my-subscription',
+            'api/tenant/subscription/upgrade-requests',
+            'api/donations/webhooks/*',
+            // Parish support tickets (renewal / locked recovery — narrow, not all tenant/support-access ops)
+            'GET:api/tenant/support/dashboard',
+            'GET:api/tenant/support/lookups',
+            'GET:api/tenant/support/tickets',
+            'GET:api/tenant/support/tickets/*',
+            'POST:api/tenant/support/tickets',
+            'POST:api/tenant/support/tickets/*/comments',
+            'POST:api/tenant/support/tickets/*/attachments',
+        ],
+        'read_only_post_allowlist' => [
+            'POST:api/persons/matches',
+        ],
+        'restricted_generation_paths' => [
+            'POST:api/tenant/export/bulk',
+            'GET:api/tenant/export/bulk/*/download',
+            'POST:api/tenant/donations/reports/export',
+            'GET:api/tenant/donations/reports/exports/*/download',
+            'GET:api/tenant/donations/reports/print',
+            'GET:api/tenant/donations/reports/stewardship/print',
+            'GET:api/tenant/donations/reports/executive-board/print',
+            'GET:api/tenant/donations/families/*/financial-profile/print',
+            'GET:api/tenant/donations/payments/*/receipt/print',
+            'POST:api/sacraments/*/certificates/preview',
+            'GET:api/sacraments/*/certificates/latest/download',
+            'GET:api/sacraments/certificates/*/download',
+            'GET:api/sacraments/certificates/*/print',
+            'GET:api/tenant/mass-intentions/requests/export/pdf',
+            'POST:api/tenant/files/signed-url',
         ],
         'lifecycle' => [
             'scheduler_enabled' => env('TENANT_SUBSCRIPTION_LIFECYCLE_ENABLED', true),
@@ -302,6 +343,18 @@ return [
                 'notifications' => [
                     'max_attempts' => (int) env('NOTIFICATIONS_API_RATE_LIMIT', 120),
                     'decay_seconds' => (int) env('NOTIFICATIONS_API_RATE_LIMIT_DECAY_SECONDS', 60),
+                ],
+                'public_forms' => [
+                    'max_attempts' => (int) env('TENANT_API_RATE_LIMIT_PUBLIC_FORMS', 5),
+                    'decay_seconds' => (int) env('TENANT_API_RATE_LIMIT_PUBLIC_FORMS_DECAY_SECONDS', 60),
+                ],
+                'public_captcha' => [
+                    'max_attempts' => (int) env('TENANT_API_RATE_LIMIT_PUBLIC_CAPTCHA', 20),
+                    'decay_seconds' => (int) env('TENANT_API_RATE_LIMIT_PUBLIC_CAPTCHA_DECAY_SECONDS', 60),
+                ],
+                'public_catalog' => [
+                    'max_attempts' => (int) env('TENANT_API_RATE_LIMIT_PUBLIC_CATALOG', 60),
+                    'decay_seconds' => (int) env('TENANT_API_RATE_LIMIT_PUBLIC_CATALOG_DECAY_SECONDS', 60),
                 ],
             ],
         ],

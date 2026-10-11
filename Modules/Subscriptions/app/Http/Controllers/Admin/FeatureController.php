@@ -10,6 +10,7 @@ use Modules\Subscriptions\Http\Requests\Admin\UpdateFeatureRequest;
 use Modules\Subscriptions\Models\Feature;
 use Modules\Subscriptions\Services\FeatureCatalogService;
 use Modules\Subscriptions\Services\SubscriptionPresenter;
+use Modules\Subscriptions\Support\SubscriptionFeatureCapabilityCatalog;
 
 class FeatureController extends Controller
 {
@@ -23,6 +24,7 @@ class FeatureController extends Controller
         return response()->json([
             'success' => true,
             'data' => Feature::query()->with('dependencies')->ordered()->get()->map(fn (Feature $f) => $this->presenter->feature($f))->values(),
+            'implemented_entitlement_codes' => SubscriptionFeatureCapabilityCatalog::implementedEntitlementCodes(),
         ]);
     }
 

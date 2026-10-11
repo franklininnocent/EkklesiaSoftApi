@@ -1,13 +1,13 @@
 # Tenants Module
 
 **Version**: 1.0.0  
-**Purpose**: Multi-tenant management for EkklesiaSoft SaaS application
+**Purpose**: Multi-tenant management for EkklesiaNexus SaaS application
 
 ---
 
 ## 📋 Module Overview
 
-The Tenants module provides complete tenant (organization) management for the EkklesiaSoft platform. It handles tenant creation, subscription management, branding, and isolation following nWidart module architecture.
+The Tenants module provides complete tenant (organization) management for the EkklesiaNexus platform. It handles tenant creation, subscription management, branding, and isolation following nWidart module architecture.
 
 ---
 

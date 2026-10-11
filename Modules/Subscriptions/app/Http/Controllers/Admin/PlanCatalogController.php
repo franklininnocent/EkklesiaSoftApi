@@ -16,6 +16,8 @@ use Modules\Subscriptions\Models\PlanVersion;
 use Modules\Subscriptions\Models\TenantSubscription;
 use Modules\Subscriptions\Services\PlanService;
 use Modules\Subscriptions\Services\SubscriptionPresenter;
+use Modules\Subscriptions\Support\SubscriptionFeatureCapabilityCatalog;
+use Modules\Subscriptions\Support\SubscriptionRbacCapabilityCatalog;
 use Modules\Tenants\Services\SubscriptionService;
 
 class PlanCatalogController extends Controller
@@ -176,6 +178,7 @@ class PlanCatalogController extends Controller
             'id' => $f->id,
             'code' => $f->code,
             'name' => $f->name,
+            'description' => $f->description,
             'category' => $f->category,
             'feature_type' => $f->feature_type,
             'unit' => $f->unit,
@@ -183,7 +186,15 @@ class PlanCatalogController extends Controller
             'is_active' => (bool) $f->is_active,
         ])->values();
 
-        return response()->json(['success' => true, 'data' => ['features' => $features, 'plans' => $columns]]);
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'features' => $features,
+                'plans' => $columns,
+                'rbac_capability_comparison' => SubscriptionRbacCapabilityCatalog::rows(),
+                'feature_capability_sections' => SubscriptionFeatureCapabilityCatalog::sections(),
+            ],
+        ]);
     }
 
     private function find(int $id): Plan

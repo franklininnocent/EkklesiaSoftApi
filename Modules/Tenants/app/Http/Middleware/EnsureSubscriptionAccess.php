@@ -55,7 +55,7 @@ class EnsureSubscriptionAccess
             $message = match ($result['reason']) {
                 'account_inactive' => 'This church account is inactive.',
                 'feature_not_entitled' => 'This feature is not included in your subscription plan.',
-                default => 'Your subscription has ended or is suspended. Contact EkklesiaSoft or your administrator to restore access.',
+                default => 'Your subscription has ended or is suspended. Contact EkklesiaNexus or your administrator to restore access.',
             };
 
             return response()->json([

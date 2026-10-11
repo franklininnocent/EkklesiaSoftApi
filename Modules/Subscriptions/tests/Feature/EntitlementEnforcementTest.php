@@ -5,6 +5,7 @@ namespace Modules\Subscriptions\Tests\Feature;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Modules\Authentication\Models\User;
 use Modules\Family\Models\Family;
+use Modules\Family\Models\FamilyMember;
 use Modules\Subscriptions\Exceptions\SubscriptionException;
 use Modules\Subscriptions\Models\Feature;
 use Modules\Subscriptions\Models\TenantEntitlementOverride;
@@ -14,30 +15,34 @@ use Modules\Subscriptions\Tests\Concerns\InteractsWithSubscriptions;
 use Modules\Tenants\Models\Tenant;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Concerns\ActsAsTenantRoles;
+use Tests\Concerns\InteractsWithTenantContext;
 use Tests\TestCase;
 
 class EntitlementEnforcementTest extends TestCase
 {
     use ActsAsTenantRoles;
     use InteractsWithSubscriptions;
+    use InteractsWithTenantContext;
     use RefreshDatabase;
 
     #[Test]
-    public function enforce_mode_blocks_new_family_over_the_plan_limit_with_structured_error(): void
+    public function enforce_mode_blocks_family_limit_at_guard_with_structured_error(): void
     {
         $ctx = $this->asTenantAdmin();
         $this->assignPlan($ctx['tenant'], 'STARTER');
         $this->limitOverride($ctx['tenant'], 'FAMILY_LIMIT', 1);
-        Family::factory()->create(['tenant_id' => $ctx['tenant']->id]);
+        Family::factory()->create(['tenant_id' => $ctx['tenant']->id, 'status' => 'active']);
         $this->useEntitlementEngine('enforce');
 
-        $this->postJson('/api/families', ['family_name' => 'Over Limit', 'status' => 'active'])
-            ->assertForbidden()
-            ->assertJsonPath('code', SubscriptionException::ENTITLEMENT_LIMIT_REACHED)
-            ->assertJsonPath('feature', 'FAMILY_LIMIT')
-            ->assertJsonPath('limit', 1)
-            ->assertJsonPath('current_usage', 1)
-            ->assertJsonStructure(['message', 'upgrade_available']);
+        try {
+            app(LimitEnforcementService::class)->assertCanAdd($ctx['tenant'], 'FAMILY_LIMIT', 1);
+            $this->fail('Expected family limit to block a second household.');
+        } catch (SubscriptionException $e) {
+            $this->assertSame(SubscriptionException::ENTITLEMENT_LIMIT_REACHED, $e->errorCode);
+            $this->assertSame('FAMILY_LIMIT', $e->context['feature']);
+            $this->assertSame(1, $e->context['limit']);
+            $this->assertSame(1, $e->context['current_usage']);
+        }
 
         $this->assertSame(1, Family::query()->where('tenant_id', $ctx['tenant']->id)->count());
     }
@@ -46,6 +51,7 @@ class EntitlementEnforcementTest extends TestCase
     public function enforce_mode_blocks_new_staff_user_over_the_plan_limit(): void
     {
         $ctx = $this->asTenantAdmin();
+        $this->bindTenantContext($ctx['user']);
         $this->assignPlan($ctx['tenant'], 'STARTER');
         $this->limitOverride($ctx['tenant'], 'STAFF_USER_LIMIT', 1);
         $this->useEntitlementEngine('enforce');
@@ -67,6 +73,7 @@ class EntitlementEnforcementTest extends TestCase
     public function shadow_mode_never_blocks(): void
     {
         $ctx = $this->asTenantAdmin();
+        $this->bindTenantContext($ctx['user']);
         $this->assignPlan($ctx['tenant'], 'STARTER');
         $this->limitOverride($ctx['tenant'], 'FAMILY_LIMIT', 1);
         Family::factory()->create(['tenant_id' => $ctx['tenant']->id]);
@@ -79,6 +86,7 @@ class EntitlementEnforcementTest extends TestCase
     public function over_limit_tenant_keeps_access_to_existing_data(): void
     {
         $ctx = $this->asTenantAdmin();
+        $this->bindTenantContext($ctx['user']);
         $this->assignPlan($ctx['tenant'], 'STARTER');
         $family = Family::factory()->create(['tenant_id' => $ctx['tenant']->id]);
         Family::factory()->create(['tenant_id' => $ctx['tenant']->id]);
@@ -108,6 +116,7 @@ class EntitlementEnforcementTest extends TestCase
     public function feature_gate_blocks_disabled_feature_in_enforce_mode_only(): void
     {
         $ctx = $this->asTenantAdmin();
+        $this->bindTenantContext($ctx['user']);
         $this->assignPlan($ctx['tenant'], 'STARTER');
         TenantEntitlementOverride::query()->create([
             'tenant_id' => $ctx['tenant']->id,

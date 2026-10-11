@@ -59,52 +59,52 @@ final class SubscriptionCatalogDefinition
             $f('STORAGE_MB', 'Storage', 'limits', 'media', 'Maximum file storage for photos and documents.', ['feature_type' => 'QUOTA', 'unit' => 'MB']),
 
             // Finance.
-            $f('CONTRIBUTIONS', 'Contributions', 'finance', 'donations', 'Record family contributions and issue receipts.', ['legacy_key' => 'donations']),
-            $f('CONTRIBUTION_PLANS', 'Contribution Plans', 'finance', 'donations', 'Recurring contribution plans and dues for families.', ['legacy_default' => true]),
-            $f('FINANCIAL_DASHBOARD', 'Financial Dashboard', 'finance', 'donations', 'Collections, outstanding amounts and trends at a glance.', ['legacy_default' => true]),
-            $f('ADVANCED_FINANCIAL_REPORTING', 'Advanced Financial Reporting', 'finance', 'donations', 'Detailed financial statements and reconciliation reports.', ['legacy_default' => true]),
+            $f('CONTRIBUTIONS', 'Contributions', 'finance', 'donations', SubscriptionFinanceCapabilityCatalog::featureDescriptions()['CONTRIBUTIONS'], ['legacy_key' => 'donations']),
+            $f('CONTRIBUTION_PLANS', 'Contribution Plans', 'finance', 'donations', SubscriptionGovernanceCapabilityCatalog::featureDescriptions()['CONTRIBUTION_PLANS'], ['legacy_default' => true]),
+            $f('FINANCIAL_DASHBOARD', 'Financial Dashboard', 'finance', 'donations', SubscriptionFinanceCapabilityCatalog::featureDescriptions()['FINANCIAL_DASHBOARD'], ['legacy_default' => true]),
+            $f('ADVANCED_FINANCIAL_REPORTING', 'Advanced Financial Reporting', 'finance', 'donations', SubscriptionFinanceCapabilityCatalog::featureDescriptions()['ADVANCED_FINANCIAL_REPORTING'], ['legacy_default' => true]),
 
             // Reporting.
-            $f('BASIC_REPORTS', 'Basic Reports', 'reporting', 'reports', 'Standard family, member and sacrament reports.', ['legacy_default' => true]),
-            $f('ADVANCED_REPORTS', 'Advanced Reports', 'reporting', 'reports', 'Filtered, grouped and exportable reports.', ['legacy_default' => true]),
-            $f('ADVANCED_DASHBOARDS', 'Advanced Dashboards', 'reporting', 'dashboard', 'Additional dashboard widgets and insights.', ['legacy_default' => true]),
-            $f('ADVANCED_ANALYTICS', 'Advanced Analytics', 'reporting', 'dashboard', 'Trends and analytics across parish activity.', ['legacy_default' => true]),
-            $f('CUSTOM_REPORTING', 'Custom Reporting', 'reporting', 'reports', 'Custom report building for diocesan needs.'),
+            $f('BASIC_REPORTS', 'Basic Reports', 'reporting', 'reports', SubscriptionReportingCapabilityCatalog::featureDescriptions()['BASIC_REPORTS'], ['legacy_default' => true]),
+            $f('ADVANCED_REPORTS', 'Advanced Reports', 'reporting', 'reports', SubscriptionReportingCapabilityCatalog::featureDescriptions()['ADVANCED_REPORTS'], ['legacy_default' => true]),
+            $f('ADVANCED_DASHBOARDS', 'Advanced Dashboards', 'reporting', 'dashboard', 'Additional dashboard widgets and insights.', ['legacy_default' => true, 'is_public' => false]),
+            $f('ADVANCED_ANALYTICS', 'Advanced Analytics', 'reporting', 'dashboard', 'Trends and analytics across parish activity.', ['legacy_default' => true, 'is_public' => false]),
+            $f('CUSTOM_REPORTING', 'Custom Reporting', 'reporting', 'reports', 'Custom report building for diocesan needs.', ['is_public' => false]),
 
             // Ministries.
-            $f('MINISTRIES', 'Ministries & Associations', 'ministries', 'ministries', 'Ministries, associations and their members.', ['legacy_key' => 'ministries_associations']),
-            $f('ADVANCED_MINISTRY_MANAGEMENT', 'Advanced Ministry Management', 'ministries', 'ministries', 'Lifecycle, terms and advanced ministry administration.', ['legacy_default' => true]),
-            $f('MASS_INTENTIONS', 'Mass Intentions', 'pastoral', 'mass_intentions', 'Record Mass intentions, schedule celebrations, and track fulfilment.', ['legacy_key' => 'mass_intentions']),
+            $f('MINISTRIES', 'Ministries & Associations', 'ministries', 'ministries', SubscriptionMinistriesCapabilityCatalog::featureDescriptions()['MINISTRIES'], ['legacy_key' => 'ministries_associations']),
+            $f('ADVANCED_MINISTRY_MANAGEMENT', 'Advanced Ministry Management', 'ministries', 'ministries', SubscriptionMinistriesCapabilityCatalog::featureDescriptions()['ADVANCED_MINISTRY_MANAGEMENT'], ['legacy_default' => true]),
+            $f('MASS_INTENTIONS', 'Mass Intentions', 'pastoral', 'mass_intentions', SubscriptionPastoralCapabilityCatalog::featureDescriptions()['MASS_INTENTIONS'], ['legacy_key' => 'mass_intentions']),
 
             // Governance.
-            $f('CHURCH_LEADERSHIP', 'Church Leadership', 'governance', 'church_profile', 'Parish priests, council and leadership records.', ['legacy_default' => true]),
-            $f('DIOCESE_BISHOPS', 'Diocese & Bishops', 'governance', 'ecclesiastical', 'Diocese, bishop and hierarchy information.', ['legacy_default' => true]),
+            $f('CHURCH_LEADERSHIP', 'Church Leadership', 'governance', 'church_profile', SubscriptionGovernanceCapabilityCatalog::featureDescriptions()['CHURCH_LEADERSHIP'], ['legacy_default' => true]),
+            $f('DIOCESE_BISHOPS', 'Diocese & Bishops', 'governance', 'ecclesiastical', SubscriptionGovernanceCapabilityCatalog::featureDescriptions()['DIOCESE_BISHOPS'], ['legacy_default' => true]),
 
             // Administration.
-            $f('RBAC_BASIC', 'Roles & Permissions', 'administration', 'rbac', 'Standard staff roles and permissions.', ['legacy_default' => true]),
-            $f('RBAC_ADVANCED', 'Advanced Roles & Permissions', 'administration', 'rbac', 'Custom roles with fine-grained permissions.', ['legacy_default' => true]),
-            $f('AUDIT_LOG', 'Audit Log', 'administration', 'audit', 'Who changed what and when.', ['legacy_default' => true]),
-            $f('IMPORT_EXPORT', 'Import & Export', 'administration', 'data', 'Bulk import and export of parish data.', ['legacy_default' => true]),
-            $f('MULTIPLE_WORKFLOWS', 'Multiple Workflows', 'administration', 'workflows', 'Multiple approval and processing workflows.', ['legacy_default' => true]),
-            $f('AUTOMATION', 'Automation', 'administration', 'automation', 'Scheduled reminders and automated tasks.', ['legacy_default' => true]),
+            $f('RBAC_BASIC', 'Roles & Permissions', 'administration', 'rbac', SubscriptionRbacCapabilityCatalog::featureDescriptions()['RBAC_BASIC'], ['legacy_default' => true]),
+            $f('RBAC_ADVANCED', 'Advanced Roles & Permissions', 'administration', 'rbac', SubscriptionRbacCapabilityCatalog::featureDescriptions()['RBAC_ADVANCED'], ['legacy_default' => true]),
+            $f('AUDIT_LOG', 'Audit Log', 'administration', 'audit', SubscriptionGovernanceCapabilityCatalog::featureDescriptions()['AUDIT_LOG'], ['legacy_default' => true]),
+            $f('IMPORT_EXPORT', 'Church Data Export', 'administration', 'data', SubscriptionDataCapabilityCatalog::featureDescriptions()['IMPORT_EXPORT'], ['legacy_default' => true]),
+            $f('MULTIPLE_WORKFLOWS', 'Multiple Workflows', 'administration', 'workflows', 'Multiple approval and processing workflows.', ['legacy_default' => true, 'is_public' => false]),
+            $f('AUTOMATION', 'Automation', 'administration', 'automation', 'Scheduled reminders and automated tasks.', ['legacy_default' => true, 'is_public' => false]),
 
             // Communication.
-            $f('ADVANCED_COMMUNICATION', 'Advanced Communication', 'communication', 'notifications', 'Targeted announcements and communication tools.', ['legacy_default' => true]),
+            $f('ADVANCED_COMMUNICATION', 'Advanced Communication', 'communication', 'notifications', 'Targeted announcements and communication tools.', ['legacy_default' => true, 'is_public' => false]),
             $f('MESSAGING', 'Messaging', 'communication', 'messaging', 'Direct messaging with families and members.', ['legacy_key' => 'messaging', 'is_public' => false]),
 
             // Support.
-            $f('PRIORITY_SUPPORT', 'Priority Support', 'support', 'support', 'Faster response from the Ekklesia support team.'),
-            $f('DEDICATED_SUPPORT', 'Dedicated Support', 'support', 'support', 'A named support contact for your organisation.', ['legacy_key' => 'dedicated_support']),
-            $f('DEDICATED_ONBOARDING', 'Dedicated Onboarding', 'support', 'support', 'Guided onboarding and data migration.'),
+            $f('PRIORITY_SUPPORT', 'Priority Support', 'support', 'support', 'Faster response from the Ekklesia support team.', ['is_public' => false]),
+            $f('DEDICATED_SUPPORT', 'Dedicated Support', 'support', 'support', 'A named support contact for your organisation.', ['legacy_key' => 'dedicated_support', 'is_public' => false]),
+            $f('DEDICATED_ONBOARDING', 'Dedicated Onboarding', 'support', 'support', 'Guided onboarding and data migration.', ['is_public' => false]),
 
             // Enterprise.
-            $f('MULTI_CAMPUS', 'Multiple Campuses', 'enterprise', 'tenants', 'Manage multiple campuses or branches.', ['legacy_key' => 'multi_location']),
-            $f('DIOCESAN_DEPLOYMENT', 'Diocesan Deployment', 'enterprise', 'tenants', 'Diocese-wide deployment across parishes.'),
-            $f('CHURCH_NETWORKS', 'Church Networks', 'enterprise', 'tenants', 'Connected networks of churches.'),
-            $f('SSO', 'Single Sign-On', 'enterprise', 'authentication', 'Sign in with your organisation account.'),
-            $f('ENTERPRISE_INTEGRATIONS', 'Enterprise Integrations', 'enterprise', 'integrations', 'Integrations with external systems.'),
-            $f('API_ACCESS', 'API Access', 'enterprise', 'integrations', 'Programmatic access to parish data.', ['legacy_key' => 'api_access']),
-            $f('CUSTOM_BRANDING', 'Custom Branding', 'enterprise', 'branding', 'Your logo and colours throughout the application.', ['legacy_key' => 'custom_branding']),
+            $f('MULTI_CAMPUS', 'Multiple Campuses', 'enterprise', 'tenants', 'Manage multiple campuses or branches.', ['legacy_key' => 'multi_location', 'is_public' => false]),
+            $f('DIOCESAN_DEPLOYMENT', 'Diocesan Deployment', 'enterprise', 'tenants', 'Diocese-wide deployment across parishes.', ['is_public' => false]),
+            $f('CHURCH_NETWORKS', 'Church Networks', 'enterprise', 'tenants', 'Connected networks of churches.', ['is_public' => false]),
+            $f('SSO', 'Single Sign-On', 'enterprise', 'authentication', 'Sign in with your organisation account.', ['is_public' => false]),
+            $f('ENTERPRISE_INTEGRATIONS', 'Enterprise Integrations', 'enterprise', 'integrations', 'Integrations with external systems.', ['is_public' => false]),
+            $f('API_ACCESS', 'API Access', 'enterprise', 'integrations', 'Programmatic access to parish data.', ['legacy_key' => 'api_access', 'is_public' => false]),
+            $f('CUSTOM_BRANDING', 'Custom Branding', 'enterprise', 'branding', 'Your logo and colours throughout the application.', ['legacy_key' => 'custom_branding', 'is_public' => false]),
 
             // Legacy modules kept for grandfathered plans.
             $f('EVENTS', 'Events', 'legacy', 'events', 'Parish events.', ['legacy_key' => 'events', 'is_public' => false]),
@@ -143,16 +143,12 @@ final class SubscriptionCatalogDefinition
         $starter = ['BASIC_REPORTS', 'CONTRIBUTIONS', 'RBAC_BASIC'];
         $standard = array_merge($starter, [
             'CONTRIBUTION_PLANS', 'FINANCIAL_DASHBOARD', 'MINISTRIES', 'RBAC_ADVANCED', 'ADVANCED_REPORTS',
-            'CHURCH_LEADERSHIP', 'DIOCESE_BISHOPS', 'AUDIT_LOG', 'IMPORT_EXPORT', 'ADVANCED_DASHBOARDS',
+            'CHURCH_LEADERSHIP', 'DIOCESE_BISHOPS', 'AUDIT_LOG', 'IMPORT_EXPORT',
         ]);
         $professional = array_merge($standard, [
-            'ADVANCED_FINANCIAL_REPORTING', 'ADVANCED_MINISTRY_MANAGEMENT', 'ADVANCED_ANALYTICS', 'AUTOMATION',
-            'ADVANCED_COMMUNICATION', 'MULTIPLE_WORKFLOWS', 'PRIORITY_SUPPORT',
+            'ADVANCED_FINANCIAL_REPORTING', 'ADVANCED_MINISTRY_MANAGEMENT', 'MASS_INTENTIONS',
         ]);
-        $enterprise = array_merge($professional, [
-            'MULTI_CAMPUS', 'DIOCESAN_DEPLOYMENT', 'CHURCH_NETWORKS', 'DEDICATED_ONBOARDING', 'DEDICATED_SUPPORT',
-            'CUSTOM_REPORTING', 'SSO', 'ENTERPRISE_INTEGRATIONS', 'API_ACCESS', 'CUSTOM_BRANDING',
-        ]);
+        $enterprise = $professional;
 
         return [
             [
@@ -195,7 +191,7 @@ final class SubscriptionCatalogDefinition
                 'code' => 'PROFESSIONAL',
                 'key' => 'professional',
                 'name' => 'Professional',
-                'short_description' => 'Advanced finance, analytics and automation for large parishes.',
+                'short_description' => 'Advanced finance, ministries, Mass intentions, and executive reporting for large parishes.',
                 'pricing_type' => 'FIXED',
                 'is_featured' => false,
                 'badge_label' => null,
@@ -270,6 +266,38 @@ final class SubscriptionCatalogDefinition
             'currency_code' => 'INR',
             'upgrade_requests' => [
                 'enabled' => true,
+            ],
+        ];
+    }
+
+    /**
+     * Country-specific billed list prices. Currency on each row is the billed currency
+     * (from countries master at seed time). Not converted from INR.
+     *
+     * @return list<array{country_code: string, currency_code: string, plans: array<string, array{monthly_price: string|null, annual_price: string|null}>}>
+     */
+    public static function regionalPrices(): array
+    {
+        return [
+            [
+                'country_code' => 'US',
+                'currency_code' => 'USD',
+                'plans' => [
+                    'STARTER' => ['monthly_price' => '39.00', 'annual_price' => null],
+                    'STANDARD' => ['monthly_price' => '59.00', 'annual_price' => null],
+                    'PROFESSIONAL' => ['monthly_price' => '89.00', 'annual_price' => null],
+                    'ENTERPRISE' => ['monthly_price' => null, 'annual_price' => null],
+                ],
+            ],
+            [
+                'country_code' => 'BR',
+                'currency_code' => 'BRL',
+                'plans' => [
+                    'STARTER' => ['monthly_price' => '99.00', 'annual_price' => null],
+                    'STANDARD' => ['monthly_price' => '199.00', 'annual_price' => null],
+                    'PROFESSIONAL' => ['monthly_price' => '399.00', 'annual_price' => null],
+                    'ENTERPRISE' => ['monthly_price' => null, 'annual_price' => null],
+                ],
             ],
         ];
     }

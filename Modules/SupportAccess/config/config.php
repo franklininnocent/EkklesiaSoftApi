@@ -14,7 +14,7 @@ return [
     */
     'notify_to' => env('SUPPORT_NOTIFY_TO'),
 
-    'notify_from_name' => env('SUPPORT_NOTIFY_FROM_NAME', 'EkklesiaSoft Support Access'),
+    'notify_from_name' => env('SUPPORT_NOTIFY_FROM_NAME', 'EkklesiaNexus Support Access'),
 
     /*
     |--------------------------------------------------------------------------

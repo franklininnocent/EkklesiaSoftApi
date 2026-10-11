@@ -3,7 +3,7 @@
 # Super Admin Setup Script
 # Run this script to set up the role hierarchy and Super Admin user
 
-echo "🚀 EkklesiaSoft - Super Admin Setup"
+echo "🚀 EkklesiaNexus - Super Admin Setup"
 echo "===================================="
 echo ""
 

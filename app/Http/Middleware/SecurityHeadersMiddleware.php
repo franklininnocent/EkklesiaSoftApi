@@ -25,11 +25,11 @@ class SecurityHeadersMiddleware
         // Prevents XSS attacks by controlling what resources can be loaded
         $cspDirectives = [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Allow inline scripts for Angular
-            "style-src 'self' 'unsafe-inline'", // Allow inline styles
-            "img-src 'self' data: https: blob:", // Allow images from various sources
+            "script-src 'self' 'unsafe-inline'",
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' data: https: blob:",
             "font-src 'self' data:",
-            "connect-src 'self' http://localhost:* http://127.0.0.1:*", // API connections
+            "connect-src 'self' https://api.ekklesianexus.com https://app.ekklesianexus.com https://ekklesianexus.com",
             "media-src 'self'",
             "object-src 'none'",
             "frame-ancestors 'none'",
@@ -86,6 +86,9 @@ class SecurityHeadersMiddleware
             $response->headers->set('Expires', '0');
         }
         
+        // The API host is not a public website. Keep api.ekklesianexus.com out of search indexes.
+        $response->headers->set('X-Robots-Tag', 'noindex, nofollow, noarchive');
+
         // Remove potentially sensitive headers
         $response->headers->remove('X-Powered-By');
         $response->headers->remove('Server');

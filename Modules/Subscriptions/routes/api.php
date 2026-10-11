@@ -24,6 +24,7 @@ use Modules\Subscriptions\Http\Controllers\Tenant\TenantUpgradeRequestController
  */
 
 Route::get('/public/subscription-plans', [PublicPlanController::class, 'index'])
+    ->middleware('api.throttle:public_catalog')
     ->name('subscriptions.public.plans');
 
 Route::middleware('auth:api')->group(function () {
@@ -31,6 +32,7 @@ Route::middleware('auth:api')->group(function () {
         Route::get('/entitlements', [TenantEntitlementController::class, 'entitlements'])->name('entitlements');
         Route::get('/subscription/overview', [TenantEntitlementController::class, 'subscription'])->name('overview');
         Route::get('/subscription/comparison', [TenantEntitlementController::class, 'comparison'])->name('comparison');
+        Route::post('/subscription/preview-plan-change', [TenantEntitlementController::class, 'previewPlanChange'])->name('preview-plan-change');
         Route::get('/subscription/usage', [TenantEntitlementController::class, 'usage'])->name('usage');
         Route::get('/subscription/upgrade-requests', [TenantUpgradeRequestController::class, 'index'])->name('upgrade-requests.index');
         Route::post('/subscription/upgrade-requests', [TenantUpgradeRequestController::class, 'store'])
