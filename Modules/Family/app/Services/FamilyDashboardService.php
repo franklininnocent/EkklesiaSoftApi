@@ -33,11 +33,13 @@ class FamilyDashboardService
     public function summary(int $tenantId, array $filters, bool $includeContributions, bool $includePastoral): array
     {
         $resolved = $this->resolveFilters($filters);
+        $scope = ($filters['scope'] ?? 'full') === 'ui' ? 'ui' : 'full';
         $hash = md5((json_encode($resolved) ?: '').':occupation-categories-v2');
         $key = FamilyDashboardCache::payloadKey(
             $tenantId,
             FamilyDashboardCache::version($tenantId),
             $hash,
+            $scope,
             $includeContributions,
             $includePastoral,
         );
@@ -51,7 +53,7 @@ class FamilyDashboardService
             }
         }
 
-        $payload = $this->build($tenantId, $resolved, $includeContributions, $includePastoral);
+        $payload = $this->build($tenantId, $resolved, $scope, $includeContributions, $includePastoral);
         cache()->put($key, $payload, FamilyDashboardCache::TTL_SECONDS);
 
         return $payload;
@@ -61,27 +63,35 @@ class FamilyDashboardService
      * @param  array{bcc_id: ?string, status: ?string, period: string, from: string, to: string}  $filters
      * @return array<string, mixed>
      */
-    private function build(int $tenantId, array $filters, bool $includeContributions, bool $includePastoral): array
-    {
+    private function build(
+        int $tenantId,
+        array $filters,
+        string $scope,
+        bool $includeContributions,
+        bool $includePastoral,
+    ): array {
+        $uiScope = $scope === 'ui';
         $familyBase = $this->familyBase($tenantId, $filters['bcc_id'], $filters['status']);
         $memberBase = $this->ageDemographicsService->memberBaseQuery($tenantId, $filters['bcc_id'], $filters['status']);
 
-        $totalFamilies = (clone $familyBase)->count();
         $familyStatusCounts = (clone $familyBase)
             ->select('status', DB::raw('COUNT(*) as aggregate'))
             ->groupBy('status')
             ->pluck('aggregate', 'status');
 
+        $totalFamilies = (int) $familyStatusCounts->sum();
         $activeFamilies = (int) ($familyStatusCounts['active'] ?? 0);
         $inactiveFamilies = (int) ($familyStatusCounts['inactive'] ?? 0);
         $migratedFamilies = (int) ($familyStatusCounts['migrated'] ?? 0);
+
+        $demographics = $this->ageDemographicsService->forFamilyDashboard($tenantId, $filters['bcc_id'], $filters['status']);
+        $totalPeople = (int) $demographics['total'];
 
         $memberStatusCounts = (clone $memberBase)
             ->select('family_members.status', DB::raw('COUNT(*) as aggregate'))
             ->groupBy('family_members.status')
             ->pluck('aggregate', 'family_members.status');
 
-        $totalPeople = (clone $memberBase)->count();
         $activePeople = (int) ($memberStatusCounts['active'] ?? 0);
 
         $newFamilies = (clone $familyBase)
@@ -89,15 +99,23 @@ class FamilyDashboardService
             ->count();
 
         $size = $this->familySize($tenantId, $filters['bcc_id'], $filters['status'], $totalFamilies, $totalPeople);
-        $demographics = $this->ageDemographicsService->forFamilyDashboard($tenantId, $filters['bcc_id'], $filters['status']);
         $household = $this->household($tenantId, $filters['bcc_id'], $filters['status']);
-        $attention = $this->attention($tenantId, $filters['bcc_id'], $filters['status'], $demographics);
-        $profileIncomplete = $this->profileIncompleteCount($tenantId, $filters['bcc_id'], $filters['status']);
-        $dataQuality = $this->dataQuality($totalFamilies, $attention, $totalPeople, $profileIncomplete);
-        $growth = $this->growth($tenantId, $filters);
-        $bcc = $this->bccRows($tenantId, $filters['status']);
-        $locations = $this->locations($tenantId, $filters['bcc_id'], $filters['status'], $totalFamilies);
         $background = $this->background($memberBase, $totalPeople);
+
+        if ($uiScope) {
+            $attention = $this->emptyAttention();
+            $dataQuality = $this->emptyDataQuality($totalFamilies, $totalPeople);
+            $growth = $this->emptyGrowth();
+            $bcc = [];
+            $locations = [];
+        } else {
+            $attention = $this->attention($tenantId, $filters['bcc_id'], $filters['status'], $demographics);
+            $profileIncomplete = $this->profileIncompleteCount($tenantId, $filters['bcc_id'], $filters['status']);
+            $dataQuality = $this->dataQuality($totalFamilies, $attention, $totalPeople, $profileIncomplete);
+            $growth = $this->growth($tenantId, $filters);
+            $bcc = $this->bccRows($tenantId, $filters['status']);
+            $locations = $this->locations($tenantId, $filters['bcc_id'], $filters['status'], $totalFamilies);
+        }
 
         $payload = [
             'filters' => $filters,
@@ -875,6 +893,59 @@ class FamilyDashboardService
                 'baptized_without_confirmation' => null,
             ];
         }
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    /**
+     * @return array<string, int>
+     */
+    private function emptyAttention(): array
+    {
+        return [
+            'no_active_head' => 0,
+            'no_contact' => 0,
+            'no_address' => 0,
+            'no_members' => 0,
+            'missing_dob' => 0,
+            'missing_gender' => 0,
+            'missing_relationship' => 0,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function emptyDataQuality(int $totalFamilies, int $totalPeople): array
+    {
+        return [
+            'family_profile' => [
+                'complete_count' => 0,
+                'incomplete_count' => 0,
+                'percent' => 0.0,
+                'definition' => 'Families with an active head, address, and member contact number.',
+            ],
+            'members' => [
+                'missing_dob' => 0,
+                'missing_gender' => 0,
+                'missing_relationship' => 0,
+                'total' => $totalPeople,
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function emptyGrowth(): array
+    {
+        return [
+            'families' => [],
+            'members' => [],
+            'recent_families' => [],
+            'caption' => 'Newly created records',
+        ];
     }
 
     /**

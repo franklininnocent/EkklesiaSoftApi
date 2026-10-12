@@ -374,6 +374,52 @@ class FamilyDashboardApiTest extends FamilyCertificationTestCase
     }
 
     #[Test]
+    public function ui_scope_matches_kpis_and_uses_fewer_queries_than_full(): void
+    {
+        $ctx = $this->authenticateAsStaff();
+        $this->grantFamilyPermissions($ctx['user'], ['donations.view', 'sacraments.view']);
+        for ($i = 0; $i < 25; $i++) {
+            $this->seedHousehold($ctx['tenant'], ['family_name' => 'Scope '.$i]);
+        }
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $full = $this->getJson('/api/families/dashboard?scope=full')->assertOk();
+        $fullQueries = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $ui = $this->getJson('/api/families/dashboard?scope=ui')->assertOk();
+        $uiQueries = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        $this->assertSame($full->json('data.kpis.total_families'), $ui->json('data.kpis.total_families'));
+        $this->assertSame($full->json('data.kpis.total_people'), $ui->json('data.kpis.total_people'));
+        $this->assertSame(
+            $full->json('data.demographics.age_groups'),
+            $ui->json('data.demographics.age_groups')
+        );
+        $this->assertArrayNotHasKey('contributions', $ui->json('data'));
+        $this->assertArrayNotHasKey('pastoral', $ui->json('data'));
+        $this->assertLessThan($fullQueries, $uiQueries);
+        $this->assertLessThan(strlen((string) $full->getContent()), strlen((string) $ui->getContent()));
+
+        if (getenv('FAMILY_DASHBOARD_BENCH') === '1') {
+            fwrite(
+                STDERR,
+                sprintf(
+                    "family_dashboard_bench full_queries=%d ui_queries=%d full_bytes=%d ui_bytes=%d\n",
+                    $fullQueries,
+                    $uiQueries,
+                    strlen((string) $full->getContent()),
+                    strlen((string) $ui->getContent())
+                )
+            );
+        }
+    }
+
+    #[Test]
     public function it_charts_qualification_level_and_drills_down_with_the_same_rules(): void
     {
         $ctx = $this->authenticateAsStaff();

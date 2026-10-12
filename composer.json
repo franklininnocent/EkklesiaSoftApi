@@ -10,7 +10,7 @@
         "dompdf/dompdf": "^3.0",
         "endroid/qr-code": "^6.1",
         "ezyang/htmlpurifier": "^4.19",
-        "firebase/php-jwt": "*",
+        "firebase/php-jwt": "^7.0",
         "giggsey/libphonenumber-for-php": "^9.0",
         "laravel/framework": "^13.0",
         "laravel/passport": "^13.0",
