@@ -14,7 +14,8 @@ class DeleteDuplicateFamilyMembers extends Command
      *
      * @var string
      */
-    protected $signature = 'family:delete-duplicates 
+    protected $signature = 'family:delete-duplicates
+                            {--tenant-id= : Required parish tenant id (isolates deletes to one tenant)}
                             {--dry-run : Show what would be deleted without actually deleting}
                             {--force : Force deletion without confirmation}
                             {--family-id= : Only process duplicates for a specific family ID}';
@@ -36,6 +37,13 @@ class DeleteDuplicateFamilyMembers extends Command
         $dryRun = $this->option('dry-run');
         $force = $this->option('force');
         $familyId = $this->option('family-id');
+        $tenantId = (int) $this->option('tenant-id');
+
+        if ($tenantId <= 0) {
+            $this->error('Provide --tenant-id so duplicate deletion cannot cross parish boundaries.');
+
+            return Command::FAILURE;
+        }
 
         $this->info('🔍 Searching for duplicate family members...');
         
@@ -44,7 +52,7 @@ class DeleteDuplicateFamilyMembers extends Command
         }
 
         // Find duplicates based on family_id, first_name, last_name, and date_of_birth
-        $duplicates = $this->findDuplicates($familyId);
+        $duplicates = $this->findDuplicates($tenantId, $familyId);
 
         if (empty($duplicates)) {
             $this->info('✅ No duplicate family members found.');
@@ -88,7 +96,10 @@ class DeleteDuplicateFamilyMembers extends Command
                         $this->line("  [DRY RUN] Would delete: {$duplicate['id']} - {$duplicate['first_name']} {$duplicate['last_name']} (Family: {$duplicate['family_id']})");
                         $deleted++;
                     } else {
-                        $member = FamilyMember::find($duplicate['id']);
+                        $member = FamilyMember::query()
+                            ->where('tenant_id', $tenantId)
+                            ->whereKey($duplicate['id'])
+                            ->first();
                         if ($member) {
                             // Log before deletion
                             Log::info('Deleting duplicate family member', [
@@ -139,10 +150,9 @@ class DeleteDuplicateFamilyMembers extends Command
     /**
      * Find duplicate family members
      *
-     * @param string|null $familyId
      * @return array
      */
-    private function findDuplicates(?string $familyId): array
+    private function findDuplicates(int $tenantId, ?string $familyId): array
     {
         $duplicateGroups = [];
         
@@ -156,6 +166,7 @@ class DeleteDuplicateFamilyMembers extends Command
                 DB::raw('COUNT(*) as count'),
                 DB::raw('MIN(created_at) as first_created')
             )
+            ->where('tenant_id', $tenantId)
             ->whereNull('deleted_at')
             ->when($familyId, function ($q) use ($familyId) {
                 return $q->where('family_id', $familyId);
@@ -170,7 +181,8 @@ class DeleteDuplicateFamilyMembers extends Command
 
         foreach ($duplicateGroupsRaw as $group) {
             // Get all members matching this group
-            $membersQuery = FamilyMember::where('family_id', $group->family_id)
+            $membersQuery = FamilyMember::where('tenant_id', $tenantId)
+                ->where('family_id', $group->family_id)
                 ->where('first_name', $group->first_name)
                 ->where('last_name', $group->last_name)
                 ->whereNull('deleted_at')

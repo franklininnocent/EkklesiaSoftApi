@@ -21,6 +21,7 @@ use Modules\Tenants\Console\Commands\PromotePublicImagesToPrivate;
 use Modules\Tenants\Console\Commands\RunLoadTestBenchmark;
 use Modules\Tenants\Console\Commands\SeedLoadTestData;
 use Modules\Tenants\Console\Commands\SeedTenantDemoDataCommand;
+use Modules\Tenants\Console\Commands\ValidateTenantDemoDataCommand;
 use Modules\Tenants\Console\Commands\SyncChurchCurrencyCommand;
 use Modules\Tenants\Console\Commands\SyncCountryFiscalYearCatalogCommand;
 use Modules\Tenants\Contracts\SupportSessionResolver;
@@ -186,6 +187,7 @@ class TenantsServiceProvider extends ServiceProvider
             SyncChurchCurrencyCommand::class,
             SyncCountryFiscalYearCatalogCommand::class,
             SeedTenantDemoDataCommand::class,
+            ValidateTenantDemoDataCommand::class,
         ]);
     }
 

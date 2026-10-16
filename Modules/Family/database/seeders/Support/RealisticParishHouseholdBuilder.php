@@ -5,6 +5,7 @@ namespace Modules\Family\Database\Seeders\Support;
 use Carbon\Carbon;
 use Faker\Factory as FakerFactory;
 use Faker\Generator;
+use Modules\Tenants\Database\Seeders\Support\CompactDemoMarkers;
 
 /**
  * Builds tenant-scoped family + member payloads with coherent demographics and sacraments.
@@ -20,6 +21,9 @@ class RealisticParishHouseholdBuilder
 
     /** @var array<int, string> */
     private array $usedEmails = [];
+
+    /** @var array<string, true> */
+    private array $usedIdentityKeys = [];
 
     public function __construct(
         private readonly string $parishName,
@@ -39,6 +43,15 @@ class RealisticParishHouseholdBuilder
         $this->usedEmails[strtolower($email)] = true;
     }
 
+    public function registerExistingIdentity(string $firstName, string $lastName, ?string $dateOfBirth): void
+    {
+        if ($dateOfBirth === null || $dateOfBirth === '') {
+            return;
+        }
+
+        $this->usedIdentityKeys[$this->identityKey($firstName, $lastName, $dateOfBirth)] = true;
+    }
+
     /**
      * @return array{family: array<string, mixed>, members: list<array<string, mixed>>}
      */
@@ -49,12 +62,18 @@ class RealisticParishHouseholdBuilder
         ?int $countryId,
         ?int $stateId,
         string $defaultCity,
+        ?int $memberCountOverride = null,
+        bool $compactMarker = false,
     ): array {
         $this->faker->seed(crc32($bccId) ^ ($familyIndex * 9973));
 
         $surname = $this->pickSurname();
         $archetype = $familyIndex % 6;
-        $memberCount = 4 + ($familyIndex % 3); // 4–6
+        if ($compactMarker) {
+            $memberCount = $memberCountOverride ?? CompactDemoMarkers::HOUSEHOLD_SIZES[$familyIndex % count(CompactDemoMarkers::HOUSEHOLD_SIZES)];
+        } else {
+            $memberCount = $memberCountOverride ?? (4 + ($familyIndex % 3)); // 4–6 legacy demo
+        }
 
         $streetNo = 10 + ($familyIndex % 180);
         $addressLine1 = sprintf('%d %s', $streetNo, $this->faker->randomElement([
@@ -126,7 +145,9 @@ class RealisticParishHouseholdBuilder
             'postal_code' => $postal,
             'bcc_id' => $bccId,
             'status' => 'active',
-            'notes' => self::MARKER.' | BCC '.$bccSlug.' household #'.($familyIndex + 1),
+            'notes' => $compactMarker
+                ? self::MARKER.' | '.CompactDemoMarkers::MARKER.' | BCC '.$bccSlug.' household #'.($familyIndex + 1)
+                : self::MARKER.' | BCC '.$bccSlug.' household #'.($familyIndex + 1),
             'allow_duplicate' => true,
         ];
 
@@ -164,6 +185,7 @@ class RealisticParishHouseholdBuilder
         ];
 
         $this->applyLifecycleSacraments($member, $age, false);
+        $this->ensureUniqueIdentity($member);
 
         return $member;
     }
@@ -199,8 +221,46 @@ class RealisticParishHouseholdBuilder
         ];
 
         $this->applyLifecycleSacraments($member, $age, ($member['marital_status'] ?? '') === 'married');
+        $this->ensureUniqueIdentity($member);
 
         return $member;
+    }
+
+    /**
+     * @param  array<string, mixed>  $member
+     */
+    private function ensureUniqueIdentity(array &$member): void
+    {
+        $attempts = 0;
+        while ($attempts < 12) {
+            $key = $this->identityKey(
+                (string) ($member['first_name'] ?? ''),
+                (string) ($member['last_name'] ?? ''),
+                (string) ($member['date_of_birth'] ?? ''),
+            );
+            if ($key !== '' && ! isset($this->usedIdentityKeys[$key])) {
+                $this->usedIdentityKeys[$key] = true;
+
+                return;
+            }
+
+            $attempts++;
+            $member['middle_name'] = $this->pickMaleName();
+            if (! empty($member['date_of_birth'])) {
+                $member['date_of_birth'] = Carbon::parse((string) $member['date_of_birth'])
+                    ->subDays($attempts)
+                    ->format('Y-m-d');
+            }
+        }
+    }
+
+    private function identityKey(string $first, string $last, string $dob): string
+    {
+        if ($dob === '') {
+            return '';
+        }
+
+        return strtolower(trim($first)).'|'.strtolower(trim($last)).'|'.$dob;
     }
 
     /**

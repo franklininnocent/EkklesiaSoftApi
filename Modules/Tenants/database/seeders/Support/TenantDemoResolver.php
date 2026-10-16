@@ -4,51 +4,16 @@ namespace Modules\Tenants\Database\Seeders\Support;
 
 use Illuminate\Support\Facades\Auth;
 use Modules\Authentication\Models\User;
+use Modules\Tenants\Database\Seeders\Support\CompactDemoMarkers;
+use Modules\Tenants\Database\Seeders\Support\SacramentsDemoMarkers;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Support\TenantContext;
 
 final class TenantDemoResolver
 {
-    /**
-     * @var list<string>
-     */
-    private const PREFERRED_TENANT_NAMES = [
-        'Sacred Heart Church',
-        'Sacred Heart Parish',
-    ];
-
     public static function resolveTenant(?int $explicitId = null): ?Tenant
     {
-        if ($explicitId !== null) {
-            return Tenant::query()->find($explicitId);
-        }
-
-        $fromEnv = self::readEnvTenantId();
-        if ($fromEnv !== null) {
-            $tenant = Tenant::query()->find($fromEnv);
-            if ($tenant) {
-                return $tenant;
-            }
-        }
-
-        foreach (self::PREFERRED_TENANT_NAMES as $name) {
-            $tenant = Tenant::query()->where('name', $name)->first();
-            if ($tenant) {
-                return $tenant;
-            }
-        }
-
-        $sacred = Tenant::query()
-            ->where('name', 'ILIKE', '%Sacred Heart%')
-            ->orderBy('id')
-            ->first();
-
-        if ($sacred) {
-            return $sacred;
-        }
-
-        return Tenant::query()->where('active', 1)->orderBy('id')->first()
-            ?? Tenant::query()->orderBy('id')->first();
+        return DemoSeedGuard::resolveTenant($explicitId);
     }
 
     public static function resolveActor(int $tenantId): ?User
@@ -91,11 +56,48 @@ final class TenantDemoResolver
         putenv('STEWARDSHIP_DEMO_TENANT_ID='.$id);
         $_ENV['STEWARDSHIP_DEMO_TENANT_ID'] = $id;
         $_SERVER['STEWARDSHIP_DEMO_TENANT_ID'] = $id;
+
+        putenv('BCC_DUMMY_FAMILIES_MIN=5');
+        $_ENV['BCC_DUMMY_FAMILIES_MIN'] = '5';
+        $_SERVER['BCC_DUMMY_FAMILIES_MIN'] = '5';
+
+        putenv('BCC_DUMMY_FAMILIES_MAX=5');
+        $_ENV['BCC_DUMMY_FAMILIES_MAX'] = '5';
+        $_SERVER['BCC_DUMMY_FAMILIES_MAX'] = '5';
+
+        putenv(CompactDemoMarkers::ENV_ONLY_DEMO_BCCS.'=1');
+        $_ENV[CompactDemoMarkers::ENV_ONLY_DEMO_BCCS] = '1';
+        $_SERVER[CompactDemoMarkers::ENV_ONLY_DEMO_BCCS] = '1';
+
+        putenv(CompactDemoMarkers::ENV_COMPACT.'=1');
+        $_ENV[CompactDemoMarkers::ENV_COMPACT] = '1';
+        $_SERVER[CompactDemoMarkers::ENV_COMPACT] = '1';
+
+        putenv(SacramentsDemoMarkers::ENV_TARGET.'='.CompactDemoMarkers::SACRAMENT_REGISTER_TARGET);
+        $_ENV[SacramentsDemoMarkers::ENV_TARGET] = (string) CompactDemoMarkers::SACRAMENT_REGISTER_TARGET;
+        $_SERVER[SacramentsDemoMarkers::ENV_TARGET] = (string) CompactDemoMarkers::SACRAMENT_REGISTER_TARGET;
     }
 
     public static function flagIsTrue(string $envKey): bool
     {
-        return filter_var(env($envKey, false), FILTER_VALIDATE_BOOL);
+        $raw = env($envKey);
+        if ($raw === null || $raw === '') {
+            $raw = $_ENV[$envKey] ?? $_SERVER[$envKey] ?? getenv($envKey);
+        }
+
+        if ($raw === false || $raw === null || $raw === '') {
+            return false;
+        }
+
+        if ($raw === true || $raw === 1 || $raw === '1') {
+            return true;
+        }
+
+        if ($raw === false || $raw === 0 || $raw === '0') {
+            return false;
+        }
+
+        return filter_var($raw, FILTER_VALIDATE_BOOL);
     }
 
     /**

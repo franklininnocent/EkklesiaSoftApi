@@ -9,6 +9,7 @@ use Modules\Notifications\Models\UserNotification;
 use Modules\Notifications\Services\NotificationPublisher;
 use Modules\Notifications\Support\InboxScope;
 use Modules\Notifications\Support\NotificationIntent;
+use Modules\Tenants\Database\Seeders\Support\DemoSeedGuard;
 use Modules\Tenants\Database\Seeders\Support\TenantDemoMarkers;
 use Modules\Tenants\Database\Seeders\Support\TenantDemoResolver;
 
@@ -19,6 +20,10 @@ class TenantNotificationsDemoSeeder extends Seeder
 {
     public function run(): void
     {
+        if (! DemoSeedGuard::assertEnvironmentAllowed($this->command)) {
+            return;
+        }
+
         $tenant = TenantDemoResolver::resolveTenant();
         if (! $tenant) {
             $this->command?->error('Tenant not found for notifications demo.');

@@ -4,6 +4,7 @@ namespace Modules\Tenants\Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
+use Modules\Tenants\Database\Seeders\Support\DemoSeedGuard;
 use Modules\Tenants\Database\Seeders\Support\TenantDemoMarkers;
 use Modules\Tenants\Database\Seeders\Support\TenantDemoResolver;
 use Modules\Tenants\Models\Archdiocese;
@@ -20,6 +21,10 @@ class TenantChurchPresenceDemoSeeder extends Seeder
 {
     public function run(): void
     {
+        if (! DemoSeedGuard::assertEnvironmentAllowed($this->command)) {
+            return;
+        }
+
         $tenant = TenantDemoResolver::resolveTenant();
         if (! $tenant) {
             $this->command?->error('Tenant not found for church presence demo.');

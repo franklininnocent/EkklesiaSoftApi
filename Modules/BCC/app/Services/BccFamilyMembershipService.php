@@ -97,7 +97,7 @@ class BccFamilyMembershipService
                     }
 
                     if (! $transfer) {
-                        $other = BCC::query()->find($currentBccId);
+                        $other = BCC::query()->forTenant((string) $tenantId)->find($currentBccId);
                         throw BccDomainException::conflict(
                             'This family already belongs to another BCC.',
                             [

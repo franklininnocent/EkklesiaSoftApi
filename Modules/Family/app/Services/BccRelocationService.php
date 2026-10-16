@@ -47,7 +47,9 @@ class BccRelocationService
             'family_name' => $family->family_name,
             'member_count' => $family->members()->where('status', 'active')->count(),
             'current_bcc_id' => $currentBccId,
-            'current_bcc_name' => $currentBccId ? BCC::query()->find($currentBccId)?->name : null,
+            'current_bcc_name' => $currentBccId
+                ? BCC::query()->forTenant((string) $tenantId)->find($currentBccId)?->name
+                : null,
             'target_bcc_id' => $targetBcc->id,
             'target_bcc_name' => $targetBcc->name,
             'transfer_mode' => $currentBccId ? BCCMembershipTransitionService::REASON_RELOCATION : BCCMembershipTransitionService::REASON_ASSIGN,

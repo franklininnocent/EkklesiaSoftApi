@@ -71,4 +71,31 @@ class FamilyRepositoryTenantIsolationTest extends TestCase
 
         $this->assertSame('Updated Head', $family->fresh()->head_of_family);
     }
+
+    #[Test]
+    public function sync_head_of_family_does_not_update_when_tenant_context_is_unbound(): void
+    {
+        TenantContextBinder::clear();
+
+        $tenantB = Tenant::factory()->active()->create();
+        $foreign = Family::factory()->create([
+            'tenant_id' => $tenantB->id,
+            'family_name' => 'Victim Family',
+            'head_of_family' => 'Original Head',
+            'status' => 'active',
+        ]);
+
+        FamilyMember::factory()->create([
+            'tenant_id' => $tenantB->id,
+            'family_id' => $foreign->id,
+            'first_name' => 'Updated',
+            'last_name' => 'Head',
+            'relationship_to_head' => 'head',
+            'status' => 'active',
+        ]);
+
+        app(FamilyRepository::class)->syncHeadOfFamily($foreign->id);
+
+        $this->assertSame('Original Head', $foreign->fresh()->head_of_family);
+    }
 }

@@ -162,6 +162,7 @@ class BccLeadershipService
         $this->membershipService->findBcc($tenantId, $bccId);
 
         $leader = BCCLeader::query()
+            ->where('tenant_id', $tenantId)
             ->where('bcc_id', $bccId)
             ->where('is_active', true)
             ->whereKey($leaderId)
@@ -212,6 +213,7 @@ class BccLeadershipService
         return DB::transaction(function () use ($tenantId, $bccId, $payload) {
             $incomingMemberId = $payload['incoming_family_member_id'];
             $outgoingPreview = BCCLeader::query()
+                ->where('tenant_id', $tenantId)
                 ->where('bcc_id', $bccId)
                 ->where('is_active', true)
                 ->whereKey($payload['outgoing_leader_id'])

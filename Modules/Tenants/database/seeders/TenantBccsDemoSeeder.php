@@ -3,19 +3,24 @@
 namespace Modules\Tenants\Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use Modules\BCC\Database\Seeders\SacredHeartChurchBccsSeeder;
 use Modules\BCC\Models\BCC;
+use Modules\Tenants\Database\Seeders\Support\CompactDemoMarkers;
+use Modules\Tenants\Database\Seeders\Support\DemoSeedGuard;
 use Modules\Tenants\Database\Seeders\Support\TenantDemoMarkers;
 use Modules\Tenants\Database\Seeders\Support\TenantDemoResolver;
 use Modules\Tenants\Models\Tenant;
 
 /**
- * Idempotent BCC catalog for demo parishes (Sacred Heart catalog or generic communities).
+ * Idempotent compact BCC catalog for demo parishes (exactly five communities).
  */
 class TenantBccsDemoSeeder extends Seeder
 {
     public function run(): void
     {
+        if (! DemoSeedGuard::assertEnvironmentAllowed($this->command)) {
+            return;
+        }
+
         $tenant = TenantDemoResolver::resolveTenant();
         if (! $tenant) {
             $this->command?->error('Tenant not found for BCC demo seeding.');
@@ -23,19 +28,13 @@ class TenantBccsDemoSeeder extends Seeder
             return;
         }
 
-        if ($this->isSacredHeartTenant($tenant)) {
-            $this->call(SacredHeartChurchBccsSeeder::class);
-
-            return;
-        }
-
         $created = 0;
         $skipped = 0;
 
-        foreach ($this->genericCommunities() as $row) {
+        foreach ($this->compactCommunities() as $row) {
             $exists = BCC::query()
                 ->where('tenant_id', $tenant->id)
-                ->where('name', $row['name'])
+                ->where('bcc_code', $row['bcc_code'])
                 ->exists();
 
             if ($exists) {
@@ -46,31 +45,24 @@ class TenantBccsDemoSeeder extends Seeder
 
             BCC::query()->create(array_merge($row, [
                 'tenant_id' => $tenant->id,
-                'notes' => TenantDemoMarkers::MARKER,
+                'notes' => TenantDemoMarkers::MARKER.' '.CompactDemoMarkers::MARKER,
                 'status' => 'active',
             ]));
             $created++;
         }
 
         $this->command?->info(sprintf(
-            'Generic BCC demo: %d created, %d skipped (tenant #%d).',
+            'Compact BCC demo: %d created, %d skipped (tenant #%d).',
             $created,
             $skipped,
             $tenant->id
         ));
     }
 
-    private function isSacredHeartTenant(Tenant $tenant): bool
-    {
-        $name = strtolower($tenant->name);
-
-        return str_contains($name, 'sacred heart');
-    }
-
     /**
      * @return list<array<string, mixed>>
      */
-    private function genericCommunities(): array
+    private function compactCommunities(): array
     {
         return [
             [
@@ -112,14 +104,6 @@ class TenantBccsDemoSeeder extends Seeder
                 'meeting_time' => '19:30',
                 'meeting_frequency' => 'Monthly',
                 'description' => TenantDemoMarkers::MARKER.' central zone',
-            ],
-            [
-                'name' => 'Demo Community — Outreach',
-                'bcc_code' => 'DEMO-O',
-                'meeting_day' => 'tuesday',
-                'meeting_time' => '20:00',
-                'meeting_frequency' => 'Weekly',
-                'description' => TenantDemoMarkers::MARKER.' outreach',
             ],
         ];
     }

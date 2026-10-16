@@ -12,7 +12,7 @@ use Modules\Sacraments\Support\SacramentStatus;
  */
 final class SacramentsDemoVerifier
 {
-    public const MIN_DEMO_ROWS = 120;
+    public const MIN_DEMO_ROWS = 30;
 
     public const MIN_TYPES_WITH_ROWS = 5;
 

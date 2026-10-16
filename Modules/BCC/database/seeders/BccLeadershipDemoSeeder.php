@@ -13,6 +13,7 @@ use Modules\BCC\Models\BCCLeader;
 use Modules\BCC\Services\BccAuditService;
 use Modules\BCC\Services\BccLeadershipService;
 use Modules\Family\Models\FamilyMember;
+use Modules\Tenants\Database\Seeders\Support\DemoSeedGuard;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Support\TenantContext;
 
@@ -59,6 +60,10 @@ class BccLeadershipDemoSeeder extends Seeder
 
     public function run(): void
     {
+        if (! DemoSeedGuard::assertEnvironmentAllowed($this->command)) {
+            return;
+        }
+
         $tenant = $this->resolveTenant();
         if (! $tenant) {
             $this->command?->error('Tenant not found. Set BCC_LEADERSHIP_DEMO_TENANT_ID.');
@@ -66,7 +71,7 @@ class BccLeadershipDemoSeeder extends Seeder
             return;
         }
 
-        $actor = $this->resolveActor((int) $tenant->id);
+        $actor = DemoSeedGuard::resolveActorForTenant((int) $tenant->id);
         if (! $actor) {
             $this->command?->error('No user found to attribute leadership assignments.');
 
@@ -206,11 +211,7 @@ class BccLeadershipDemoSeeder extends Seeder
 
     private function resolveActor(int $tenantId): ?User
     {
-        return User::query()
-            ->where('tenant_id', $tenantId)
-            ->orderBy('id')
-            ->first()
-            ?? User::query()->orderBy('id')->first();
+        return DemoSeedGuard::resolveActorForTenant($tenantId);
     }
 
     /**

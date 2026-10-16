@@ -124,4 +124,31 @@ class BccTenantIsolationTest extends BccCertificationTestCase
 
         $this->assertDatabaseHas('bcc_family_memberships', $snapshot);
     }
+
+    #[Test]
+    public function assign_conflict_does_not_leak_another_tenants_bcc_name(): void
+    {
+        $tenantA = Tenant::factory()->active()->create();
+        $tenantB = Tenant::factory()->active()->create();
+        $bccA = BCC::factory()->active()->create(['tenant_id' => $tenantA->id, 'name' => 'Parish A BCC']);
+        $bccB = BCC::factory()->active()->create(['tenant_id' => $tenantB->id, 'name' => 'Secret Foreign BCC']);
+        $familyA = Family::factory()->create([
+            'tenant_id' => $tenantA->id,
+            'status' => 'active',
+            'bcc_id' => $bccB->id,
+        ]);
+
+        try {
+            app(BccFamilyMembershipService::class)->assignFamilies(
+                (int) $tenantA->id,
+                $bccA->id,
+                [$familyA->id],
+                false
+            );
+            $this->fail('Expected conflict when family pointer references another BCC.');
+        } catch (\Modules\BCC\Exceptions\BccDomainException $e) {
+            $this->assertStringNotContainsString('Secret Foreign BCC', $e->getMessage());
+            $this->assertNotSame('Secret Foreign BCC', $e->errors['conflict']['existing_bcc_name'] ?? null);
+        }
+    }
 }

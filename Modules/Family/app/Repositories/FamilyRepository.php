@@ -193,6 +193,8 @@ class FamilyRepository
      */
     public function update(Family $family, array $data): bool
     {
+        unset($data['tenant_id']);
+
         return $family->update($data);
     }
 
@@ -390,13 +392,7 @@ class FamilyRepository
      */
     public function syncHeadOfFamily(string $familyId): void
     {
-        $query = Family::query()->whereKey($familyId);
-        $tenantId = TenantQueryGuard::effectiveTenantId();
-        if ($tenantId !== null) {
-            $query->where('tenant_id', $tenantId);
-        }
-
-        $family = $query->first();
+        $family = TenantQueryGuard::apply(Family::query()->whereKey($familyId))->first();
         if (! $family) {
             return;
         }

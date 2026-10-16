@@ -22,6 +22,9 @@ use Modules\Donations\Support\ContributionBalance;
 use Modules\Donations\Support\DonationBusinessDate;
 use Modules\Donations\Support\MoneyMath;
 use Modules\Family\Models\Family;
+use Modules\Tenants\Database\Seeders\Support\CompactDemoMarkers;
+use Modules\Tenants\Database\Seeders\Support\DemoSeedGuard;
+use Modules\Tenants\Database\Seeders\Support\TenantDemoResolver;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Support\TenantContext;
 
@@ -38,6 +41,10 @@ class StewardshipDemoSeeder extends Seeder
 
     public function run(): void
     {
+        if (! DemoSeedGuard::assertEnvironmentAllowed($this->command)) {
+            return;
+        }
+
         $tenant = $this->resolveTenant();
         if (! $tenant) {
             $this->command?->error('Tenant not found. Set STEWARDSHIP_DEMO_TENANT_ID.');
@@ -46,7 +53,7 @@ class StewardshipDemoSeeder extends Seeder
         }
 
         $tenantId = (int) $tenant->id;
-        $actor = $this->resolveActor($tenantId);
+        $actor = DemoSeedGuard::resolveActorForTenant($tenantId);
         if (! $actor) {
             $this->command?->error('No user found for stewardship demo seeding.');
 
@@ -73,11 +80,12 @@ class StewardshipDemoSeeder extends Seeder
             ->where('tenant_id', $tenantId)
             ->where('status', 'active')
             ->whereNotNull('bcc_id')
+            ->where('notes', 'like', '%'.CompactDemoMarkers::MARKER.'%')
             ->orderBy('family_code')
             ->get(['id', 'family_name', 'head_of_family', 'bcc_id', 'family_code']);
 
         if ($families->isEmpty()) {
-            $this->command?->error('No active BCC-assigned families found.');
+            $this->command?->warn('No compact demo families found; skipping stewardship demo.');
 
             return;
         }
@@ -184,20 +192,7 @@ class StewardshipDemoSeeder extends Seeder
             return Tenant::query()->find($tenantId);
         }
 
-        foreach (['Sacred Heart Church', 'Sacred Heart Parish'] as $name) {
-            $tenant = Tenant::query()->where('name', $name)->first();
-            if ($tenant) {
-                return $tenant;
-            }
-        }
-
-        return Tenant::query()->orderBy('id')->first();
-    }
-
-    private function resolveActor(int $tenantId): ?User
-    {
-        return User::query()->where('tenant_id', $tenantId)->orderBy('id')->first()
-            ?? User::query()->orderBy('id')->first();
+        return DemoSeedGuard::resolveTenant(TenantDemoResolver::readEnvTenantId());
     }
 
     private function ensureFund(int $tenantId, int $userId): Fund

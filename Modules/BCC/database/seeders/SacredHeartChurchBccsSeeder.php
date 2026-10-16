@@ -4,6 +4,7 @@ namespace Modules\BCC\Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use Modules\BCC\Models\BCC;
+use Modules\Tenants\Database\Seeders\Support\DemoSeedGuard;
 use Modules\Tenants\Models\Tenant;
 
 /**
@@ -19,6 +20,10 @@ class SacredHeartChurchBccsSeeder extends Seeder
 
     public function run(): void
     {
+        if (! DemoSeedGuard::assertEnvironmentAllowed($this->command)) {
+            return;
+        }
+
         $tenant = $this->resolveTenant();
 
         if (! $tenant) {

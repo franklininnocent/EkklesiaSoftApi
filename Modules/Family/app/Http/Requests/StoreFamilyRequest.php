@@ -41,6 +41,7 @@ class StoreFamilyRequest extends FormRequest
             ],
             'status' => ['nullable', 'in:active,inactive,migrated'],
             'notes' => ['nullable', 'string'],
+            'tenant_id' => ['prohibited'],
             'allow_duplicate' => ['nullable', 'boolean'],
 
             // members (optional)
