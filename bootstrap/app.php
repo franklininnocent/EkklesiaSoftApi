@@ -142,9 +142,30 @@ return Application::configure(basePath: dirname(__DIR__))
 
             if ($response->getStatusCode() >= 500 && (config('app.env') === 'production' || ! config('app.debug'))) {
                 $status = $response->getStatusCode();
+                // #region agent log
+                try {
+                    $logFile = dirname(__DIR__).'/../.cursor/debug-108c6b.log';
+                    @file_put_contents($logFile, json_encode([
+                        'sessionId' => '108c6b',
+                        'hypothesisId' => 'H1',
+                        'location' => 'bootstrap/app.php:exception',
+                        'message' => 'api 500',
+                        'data' => [
+                            'type' => $exception::class,
+                            'file' => basename($exception->getFile()),
+                            'line' => $exception->getLine(),
+                            'path' => $request->path(),
+                            'status' => $status,
+                        ],
+                        'timestamp' => (int) round(microtime(true) * 1000),
+                    ])."\n", FILE_APPEND);
+                } catch (\Throwable) {
+                }
+                // #endregion
                 $response = response()->json([
                     'success' => false,
                     'message' => 'An unexpected error occurred.',
+                    'error_type' => $exception::class,
                 ], $status);
             }
 

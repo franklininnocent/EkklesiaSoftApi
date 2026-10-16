@@ -4,6 +4,7 @@ namespace Modules\Tenants\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Modules\Tenants\Support\TenantContext;
 use Symfony\Component\HttpFoundation\Response;
@@ -34,20 +35,37 @@ class ThrottleTenantApiRequests
         $decaySeconds = max(1, (int) ($limits['decay_seconds'] ?? 60));
         $key = $this->resolveKey($request, $bucket);
 
-        if (RateLimiter::tooManyAttempts($key, $maxAttempts)) {
-            $retryAfter = RateLimiter::availableIn($key);
+        try {
+            if (RateLimiter::tooManyAttempts($key, $maxAttempts)) {
+                $retryAfter = RateLimiter::availableIn($key);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Too many requests. Please slow down and try again.',
-                'retry_after_seconds' => $retryAfter,
-            ], 429)->withHeaders($this->rateLimitHeaders($maxAttempts, 0, $retryAfter));
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Too many requests. Please slow down and try again.',
+                    'retry_after_seconds' => $retryAfter,
+                ], 429)->withHeaders($this->rateLimitHeaders($maxAttempts, 0, $retryAfter));
+            }
+
+            RateLimiter::hit($key, $decaySeconds);
+        } catch (\Throwable $exception) {
+            Log::warning('API rate limiter unavailable', [
+                'exception' => $exception::class,
+            ]);
+
+            return $next($request);
         }
 
-        RateLimiter::hit($key, $decaySeconds);
-
         $response = $next($request);
-        $remaining = max(0, $maxAttempts - RateLimiter::attempts($key));
+
+        try {
+            $remaining = max(0, $maxAttempts - RateLimiter::attempts($key));
+        } catch (\Throwable $exception) {
+            Log::warning('API rate limiter unavailable', [
+                'exception' => $exception::class,
+            ]);
+
+            return $response;
+        }
 
         return $this->attachRateLimitHeaders($response, $this->rateLimitHeaders($maxAttempts, $remaining));
     }

@@ -3,6 +3,7 @@
 namespace Modules\ApplicationAccess\Support;
 
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Modules\ApplicationAccess\Models\ApplicationIpBlockRule;
 use Symfony\Component\HttpFoundation\IpUtils;
 
@@ -42,16 +43,37 @@ final class ApplicationIpBlockMatcher
      */
     private function activeRules(): array
     {
-        return Cache::remember('application_access:active_ip_blocks', 30, function () {
-            return ApplicationIpBlockRule::query()
-                ->whereNull('revoked_at')
-                ->where(function ($query): void {
-                    $query->whereNull('expires_at')
-                        ->orWhere('expires_at', '>', now());
-                })
-                ->get()
-                ->all();
-        });
+        try {
+            return Cache::remember('application_access:active_ip_blocks', 30, function () {
+                return ApplicationIpBlockRule::query()
+                    ->whereNull('revoked_at')
+                    ->where(function ($query): void {
+                        $query->whereNull('expires_at')
+                            ->orWhere('expires_at', '>', now());
+                    })
+                    ->get()
+                    ->all();
+            });
+        } catch (\Throwable $exception) {
+            // #region agent log
+            try {
+                @file_put_contents(dirname(__DIR__, 5).'/.cursor/debug-108c6b.log', json_encode([
+                    'sessionId' => '108c6b',
+                    'hypothesisId' => 'H2',
+                    'location' => 'ApplicationIpBlockMatcher.php:activeRules',
+                    'message' => 'ip block list unavailable',
+                    'data' => ['type' => $exception::class],
+                    'timestamp' => (int) round(microtime(true) * 1000),
+                ])."\n", FILE_APPEND);
+            } catch (\Throwable) {
+            }
+            // #endregion
+            Log::warning('Application IP block list unavailable', [
+                'exception' => $exception::class,
+            ]);
+
+            return [];
+        }
     }
 
     private function matchesRule(string $ip, ApplicationIpBlockRule $rule): bool
