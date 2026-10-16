@@ -55,19 +55,6 @@ final class ApplicationIpBlockMatcher
                     ->all();
             });
         } catch (\Throwable $exception) {
-            // #region agent log
-            try {
-                @file_put_contents(dirname(__DIR__, 5).'/.cursor/debug-108c6b.log', json_encode([
-                    'sessionId' => '108c6b',
-                    'hypothesisId' => 'H2',
-                    'location' => 'ApplicationIpBlockMatcher.php:activeRules',
-                    'message' => 'ip block list unavailable',
-                    'data' => ['type' => $exception::class],
-                    'timestamp' => (int) round(microtime(true) * 1000),
-                ])."\n", FILE_APPEND);
-            } catch (\Throwable) {
-            }
-            // #endregion
             Log::warning('Application IP block list unavailable', [
                 'exception' => $exception::class,
             ]);
