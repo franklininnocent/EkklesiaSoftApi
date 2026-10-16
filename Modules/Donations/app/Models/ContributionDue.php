@@ -1,0 +1,53 @@
+<?php
+
+namespace Modules\Donations\Models;
+
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Modules\Donations\Models\Concerns\BelongsToTenant;
+use Modules\Family\Models\Family;
+
+class ContributionDue extends Model
+{
+    use BelongsToTenant, HasUuids, SoftDeletes;
+
+    protected $table = 'contribution_dues';
+
+    protected $fillable = [
+        'tenant_id',
+        'family_id',
+        'plan_id',
+        'period_label',
+        'period_start',
+        'period_end',
+        'due_date',
+        'amount_due',
+        'amount_paid',
+        'status',
+        'status_changed_at',
+        'notes',
+        'created_by',
+        'updated_by',
+    ];
+
+    protected $casts = [
+        'period_start' => 'date:Y-m-d',
+        'period_end' => 'date:Y-m-d',
+        'due_date' => 'date:Y-m-d',
+        'status_changed_at' => 'datetime',
+        'amount_due' => 'decimal:2',
+        'amount_paid' => 'decimal:2',
+    ];
+
+    public function family(): BelongsTo
+    {
+        return $this->belongsTo(Family::class, 'family_id');
+    }
+
+    public function plan(): BelongsTo
+    {
+        return $this->belongsTo(ContributionPlan::class, 'plan_id');
+    }
+}

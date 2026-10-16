@@ -1,0 +1,22 @@
+{
+    "name": "nwidart/pastoralcare",
+    "description": "Staff-only pastoral visit requests",
+    "extra": {
+        "laravel": {
+            "providers": [],
+            "aliases": {}
+        }
+    },
+    "autoload": {
+        "psr-4": {
+            "Modules\\PastoralCare\\": "app/",
+            "Modules\\PastoralCare\\Database\\Factories\\": "database/factories/",
+            "Modules\\PastoralCare\\Database\\Seeders\\": "database/seeders/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Modules\\PastoralCare\\Tests\\": "tests/"
+        }
+    }
+}

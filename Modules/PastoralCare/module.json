@@ -1,0 +1,11 @@
+{
+    "name": "PastoralCare",
+    "alias": "pastoralcare",
+    "description": "Staff-only pastoral visit requests and assignment",
+    "keywords": [],
+    "priority": 0,
+    "providers": [
+        "Modules\\PastoralCare\\Providers\\PastoralCareServiceProvider"
+    ],
+    "files": []
+}
