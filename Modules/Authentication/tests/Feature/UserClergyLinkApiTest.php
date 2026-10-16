@@ -80,6 +80,7 @@ class UserClergyLinkApiTest extends TestCase
         return Person::factory()->create([
             'tenant_id' => $this->tenant->id,
             'first_name' => $first,
+            'middle_name' => null,
             'last_name' => $last,
             'email' => strtolower($first).'.'.strtolower($last).'@parish.test',
             'phone' => '9876543210',
@@ -112,7 +113,7 @@ class UserClergyLinkApiTest extends TestCase
         $response->assertOk()
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.0.person_id', $person->id)
-            ->assertJsonPath('data.0.person_name', 'Anna Clergy');
+            ->assertJsonPath('data.0.person_name', $person->full_name_display);
     }
 
     #[Test]

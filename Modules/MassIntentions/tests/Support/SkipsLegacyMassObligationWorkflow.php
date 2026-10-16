@@ -3,7 +3,9 @@
 namespace Modules\MassIntentions\Tests\Support;
 
 use PHPUnit\Framework\Attributes\Before;
+use PHPUnit\Framework\Attributes\Group;
 
+#[Group('legacy-mass-obligation')]
 trait SkipsLegacyMassObligationWorkflow
 {
     #[Before]

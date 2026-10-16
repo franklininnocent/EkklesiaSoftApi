@@ -24,4 +24,20 @@ class MarketingPublicLinkValidationTest extends TestCase
             'payload' => $payload,
         ])->assertStatus(422);
     }
+
+    public function test_publish_allows_footer_link_to_features_hub(): void
+    {
+        $this->asSuperAdmin();
+        $payload = MarketingContentPayload::minimal();
+        $payload['footer'] = [
+            'statement' => 'EkklesiaNexus',
+            'links' => [
+                ['label' => 'Features', 'href' => '/features'],
+            ],
+        ];
+
+        $this->postJson('/api/admin/marketing/content/publish', [
+            'payload' => $payload,
+        ])->assertCreated();
+    }
 }

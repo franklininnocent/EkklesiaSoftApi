@@ -140,6 +140,7 @@ class SacramentMatrimonyCanonicalRegisterTest extends TestCase
                     'ecclesial_affiliation_code' => 'roman_catholic',
                     'father_name' => 'Thomas Joseph',
                     'mother_name' => 'Anna Joseph',
+                    'external_address' => 'Kadayal',
                     'affiliation_type' => 'home_parish',
                 ],
                 [
@@ -153,6 +154,7 @@ class SacramentMatrimonyCanonicalRegisterTest extends TestCase
                     'ecclesial_affiliation_code' => 'roman_catholic',
                     'father_name' => 'Francis Xavier',
                     'mother_name' => 'Mary Xavier',
+                    'external_address' => 'Kadayal',
                     'affiliation_type' => 'home_parish',
                 ],
                 [

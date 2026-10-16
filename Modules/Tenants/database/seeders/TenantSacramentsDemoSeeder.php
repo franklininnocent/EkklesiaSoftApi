@@ -3,6 +3,7 @@
 namespace Modules\Tenants\Database\Seeders;
 
 use Illuminate\Database\Seeder;
+use Modules\Tenants\Database\Seeders\Support\DemoSeedGuard;
 use Modules\Tenants\Database\Seeders\Support\SacramentsDemoMarkers;
 use Modules\Tenants\Database\Seeders\Support\SacramentsDemoRegisterPurge;
 use Modules\Tenants\Database\Seeders\Support\SacramentsDemoSeederEngine;
@@ -43,6 +44,10 @@ class TenantSacramentsDemoSeeder extends Seeder
         TenantDemoResolver::bindTenantContext($actor, $tenantId);
 
         if (TenantDemoResolver::flagIsTrue(SacramentsDemoMarkers::ENV_RESET)) {
+            if (! DemoSeedGuard::assertEnvironmentAllowed($this->command)) {
+                return;
+            }
+
             $purged = SacramentsDemoRegisterPurge::purgeTenant($tenantId, true);
             $this->command?->warn(sprintf(
                 'Sacraments reset: removed %d register row(s) (%d demo, %d incomplete).',

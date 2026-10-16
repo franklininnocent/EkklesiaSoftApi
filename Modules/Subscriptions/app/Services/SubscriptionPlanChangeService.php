@@ -388,7 +388,14 @@ class SubscriptionPlanChangeService implements TenantPlanAssigner
 
     public function assignablePlanKeys(): array
     {
-        return Plan::query()->assignable()->orderBy('display_order')->pluck('key')->map(static fn ($k) => (string) $k)->all();
+        return Plan::query()
+            ->assignable()
+            ->where('is_legacy', false)
+            ->whereHas('activeVersion')
+            ->orderBy('display_order')
+            ->pluck('key')
+            ->map(static fn ($k) => (string) $k)
+            ->all();
     }
 
     // ── Internals ─────────────────────────────────────────────────────────────

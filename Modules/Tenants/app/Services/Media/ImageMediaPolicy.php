@@ -20,6 +20,8 @@ final class ImageMediaPolicy
 
     public const CATEGORY_POPE = 'pope';
 
+    public const CATEGORY_BILLING_EVIDENCE = 'billing_evidence';
+
     /** @var list<string> */
     public const PLATFORM_CATEGORIES = [
         self::CATEGORY_POPE,

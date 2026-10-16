@@ -3,6 +3,7 @@
 namespace Modules\Tenants\Console\Commands;
 
 use Illuminate\Console\Command;
+use Modules\Tenants\Database\Seeders\Support\DemoSeedGuard;
 use Modules\Tenants\Database\Seeders\Support\SacramentsDemoMarkers;
 use Modules\Tenants\Database\Seeders\Support\TenantDemoMarkers;
 use Modules\Tenants\Database\Seeders\TenantDemoDataOrchestratorSeeder;
@@ -11,17 +12,20 @@ class SeedTenantDemoDataCommand extends Command
 {
     protected $signature = 'tenants:seed-demo-data
         {--tenant= : Parish tenant id}
-        {--skip-families : Skip BccDummyFamiliesSeeder (large)}
+        {--skip-families : Skip BccDummyFamiliesSeeder}
         {--skip-stewardship : Skip StewardshipDemoSeeder}
         {--skip-bcc-leadership : Skip BccLeadershipDemoSeeder}
         {--skip-sacraments : Skip TenantSacramentsDemoSeeder}
         {--reset-sacraments : Purge demo/incomplete sacrament rows before re-seeding}
-        {--dry-run : Print plan without writing}';
+        {--dry-run : Print plan without writing}
+        {--force : Required with APP_ALLOW_DEMO_SEED in production}';
 
-    protected $description = 'Idempotent demo data for one parish tenant (BCC, families, stewardship, church profile, pastoral care, ministries, notifications).';
+    protected $description = 'Idempotent compact demo data for one parish tenant (5 BCCs, 25 families, stewardship, modules).';
 
     public function handle(): int
     {
+        DemoSeedGuard::setCliForceFromCommand($this);
+
         if ($this->option('tenant')) {
             $this->putEnv(TenantDemoMarkers::ENV_TENANT_ID, (string) $this->option('tenant'));
         }
@@ -50,10 +54,16 @@ class SeedTenantDemoDataCommand extends Command
             $this->putEnv(TenantDemoMarkers::ENV_DRY_RUN, '1');
         }
 
-        $this->call('db:seed', [
-            '--class' => TenantDemoDataOrchestratorSeeder::class,
-            '--force' => true,
-        ]);
+        try {
+            $this->call('db:seed', [
+                '--class' => TenantDemoDataOrchestratorSeeder::class,
+                '--force' => true,
+            ]);
+        } catch (\RuntimeException $exception) {
+            $this->error($exception->getMessage());
+
+            return self::FAILURE;
+        }
 
         return self::SUCCESS;
     }

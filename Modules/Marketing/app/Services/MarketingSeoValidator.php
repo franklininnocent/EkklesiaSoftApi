@@ -6,11 +6,22 @@ class MarketingSeoValidator
 {
     public const PRODUCTION_CANONICAL_ORIGIN = 'https://ekklesianexus.com';
 
-    /** @var array<string, string> page id => path */
+    /** Meta description max (homepage product copy is 325 characters). */
+    public const SEO_DESCRIPTION_MAX_LENGTH = 400;
+
+    /** @var array<string, string> page id => path (required when seo is present) */
     public const PAGE_REGISTRY = [
         'home' => '/',
         'privacy' => '/privacy',
         'terms' => '/terms',
+    ];
+
+    /** @var array<string, string> optional CMS overrides for static marketing routes */
+    public const OPTIONAL_PAGE_REGISTRY = [
+        'features' => '/features',
+        'about' => '/about',
+        'contact' => '/contact',
+        'solutionsCatholicParishes' => '/solutions/catholic-parishes',
     ];
 
     /** @var list<string> page ids that must never be indexed in Wave 1 */
@@ -68,6 +79,20 @@ class MarketingSeoValidator
         $defaultOg = $this->validateOgImagePath($seo['defaultOgImage'] ?? '/images/og/og-preview.png');
         $seo['defaultOgImage'] = $defaultOg;
 
+        if (array_key_exists('organizationName', $seo) && $seo['organizationName'] !== null) {
+            $seo['organizationName'] = $this->validatePlainTextField((string) $seo['organizationName'], 'organizationName', 120);
+            $this->scanProhibitedSeoText($seo['organizationName'], 'seo.organizationName');
+        }
+
+        if (array_key_exists('organizationDescription', $seo) && $seo['organizationDescription'] !== null) {
+            $seo['organizationDescription'] = $this->validatePlainTextField(
+                (string) $seo['organizationDescription'],
+                'organizationDescription',
+                500
+            );
+            $this->scanProhibitedSeoText($seo['organizationDescription'], 'seo.organizationDescription');
+        }
+
         if (isset($seo['verification']) && $seo['verification'] !== null) {
             if (! is_array($seo['verification'])) {
                 throw new \InvalidArgumentException('seo.verification must be an object.');
@@ -111,15 +136,17 @@ class MarketingSeoValidator
             }
         }
 
+        $allowedPageIds = self::PAGE_REGISTRY + self::OPTIONAL_PAGE_REGISTRY;
+
         $seenPaths = [];
         foreach ($seo['pages'] as $pageId => $page) {
-            if (! is_string($pageId) || ! array_key_exists($pageId, self::PAGE_REGISTRY)) {
+            if (! is_string($pageId) || ! array_key_exists($pageId, $allowedPageIds)) {
                 throw new \InvalidArgumentException("Unknown or unsupported SEO page id: {$pageId}");
             }
             if (! is_array($page)) {
                 throw new \InvalidArgumentException("seo.pages.{$pageId} must be an object.");
             }
-            $expectedPath = self::PAGE_REGISTRY[$pageId];
+            $expectedPath = $allowedPageIds[$pageId];
             $this->rejectUnknownKeys($page, [
                 'id',
                 'name',
@@ -144,7 +171,11 @@ class MarketingSeoValidator
 
             $page['id'] = $pageId;
             $title = $this->validatePlainTextField((string) ($page['seoTitle'] ?? ''), 'seoTitle', 70);
-            $description = $this->validatePlainTextField((string) ($page['seoDescription'] ?? ''), 'seoDescription', 180);
+            $description = $this->validatePlainTextField(
+                (string) ($page['seoDescription'] ?? ''),
+                'seoDescription',
+                self::SEO_DESCRIPTION_MAX_LENGTH,
+            );
             if ($title === '' || $description === '') {
                 throw new \InvalidArgumentException("seo.pages.{$pageId} requires non-empty seoTitle and seoDescription.");
             }
@@ -177,6 +208,7 @@ class MarketingSeoValidator
         }
 
         if ($isPublish) {
+            $this->assertUniqueSeoTitles($seo['pages']);
             $seo['publishedAt'] = now()->toIso8601String();
         }
 
@@ -285,6 +317,29 @@ class MarketingSeoValidator
             if (preg_match($pattern, $text)) {
                 throw new \InvalidArgumentException("Prohibited marketing pattern in {$label}.");
             }
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $pages
+     */
+    private function assertUniqueSeoTitles(array $pages): void
+    {
+        $seen = [];
+        foreach ($pages as $pageId => $page) {
+            if (! is_array($page)) {
+                continue;
+            }
+            $title = mb_strtolower(trim((string) ($page['seoTitle'] ?? '')));
+            if ($title === '') {
+                continue;
+            }
+            if (isset($seen[$title])) {
+                throw new \InvalidArgumentException(
+                    "Duplicate seoTitle on pages {$seen[$title]} and {$pageId}. Each public page needs a unique title."
+                );
+            }
+            $seen[$title] = $pageId;
         }
     }
 

@@ -13,15 +13,16 @@ use Modules\Family\app\Services\FamilyService;
 use Modules\Family\Database\Seeders\Support\RealisticParishHouseholdBuilder;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
-use Modules\Subscriptions\Models\Feature;
-use Modules\Subscriptions\Models\TenantEntitlementOverride;
-use Modules\Subscriptions\Services\Entitlements\EntitlementResolver;
-use Modules\Tenants\Contracts\TenantLimitGuard;
+use Modules\Tenants\Database\Seeders\Support\CompactDemoMarkers;
+use Modules\Tenants\Database\Seeders\Support\DemoSeedGuard;
+use Modules\Tenants\Database\Seeders\Support\TenantDemoMarkers;
+use Modules\Tenants\Database\Seeders\Support\TenantDemoResolver;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Support\TenantContext;
 
 /**
- * Seeds 40–50 realistic households per BCC using FamilyService (Person + sacraments + BCC membership).
+ * Seeds realistic households per BCC using FamilyService (Person + sacraments + BCC membership).
+ * Compact demo (orchestrator): 5 families per compact BCC, 2–5 members each.
  *
  * Run:
  * BCC_DUMMY_TENANT_ID=<id> php artisan db:seed --class=Modules\\Family\\Database\\Seeders\\BccDummyFamiliesSeeder
@@ -35,14 +36,18 @@ class BccDummyFamiliesSeeder extends Seeder
 {
     public function run(): void
     {
+        if (! DemoSeedGuard::assertEnvironmentAllowed($this->command)) {
+            return;
+        }
+
         $tenant = $this->resolveTenant();
         if (! $tenant) {
-            $this->command?->error('Tenant not found. Set BCC_DUMMY_TENANT_ID or ensure a Sacred Heart tenant exists.');
+            $this->command?->error('Tenant not found. Set BCC_DUMMY_TENANT_ID or TENANT_DEMO_TENANT_ID.');
 
             return;
         }
 
-        $actor = $this->resolveActor((int) $tenant->id);
+        $actor = DemoSeedGuard::resolveActorForTenant((int) $tenant->id);
         if (! $actor) {
             $this->command?->error('No user found for tenant #'.$tenant->id.'. Create a parish admin user first.');
 
@@ -60,15 +65,12 @@ class BccDummyFamiliesSeeder extends Seeder
             null,
         ));
 
-        $minPerBcc = max(1, (int) env('BCC_DUMMY_FAMILIES_MIN', 40));
-        $maxPerBcc = max($minPerBcc, (int) env('BCC_DUMMY_FAMILIES_MAX', 50));
+        $compact = $this->isCompactMode();
+        $minPerBcc = max(1, (int) env('BCC_DUMMY_FAMILIES_MIN', $compact ? 5 : 40));
+        $maxPerBcc = max($minPerBcc, (int) env('BCC_DUMMY_FAMILIES_MAX', $compact ? 5 : 50));
         $dryRun = filter_var(env('BCC_DUMMY_DRY_RUN', false), FILTER_VALIDATE_BOOL);
 
-        $bccs = BCC::query()
-            ->where('tenant_id', $tenant->id)
-            ->whereNull('deleted_at')
-            ->orderBy('name')
-            ->get();
+        $bccs = $this->resolveBccs((int) $tenant->id, $compact);
 
         if ($bccs->isEmpty()) {
             $this->command?->error('No BCCs found for tenant '.$tenant->name);
@@ -82,25 +84,26 @@ class BccDummyFamiliesSeeder extends Seeder
         $stateId = $official?->state_id;
         $defaultCity = (string) ($official?->city ?? 'Kochi');
 
-        $familyService = app(FamilyService::class);
-        $builder = new RealisticParishHouseholdBuilder($parishName, (int) $tenant->id);
-        $this->loadExistingContacts($builder, (int) $tenant->id);
-
         $plannedFamilies = 0;
         $plannedMembers = 0;
         foreach ($bccs as $bcc) {
-            $target = $this->targetCountForBcc((string) $bcc->id, $minPerBcc, $maxPerBcc);
-            $existing = $this->countDummyFamiliesForBcc((int) $tenant->id, (string) $bcc->id);
-            $toCreate = max(0, $target - $existing);
+            $toCreate = $this->familiesToCreateForBcc((int) $tenant->id, $bcc, $compact, $minPerBcc, $maxPerBcc);
             $plannedFamilies += $toCreate;
-            $plannedMembers += $toCreate * 5; // average estimate for limit headroom
+            $plannedMembers += $toCreate * ($compact ? 4 : 5);
         }
 
         if ($plannedFamilies === 0) {
             $this->command?->info('All BCCs already have dummy families at target counts. Running verification.');
-            $this->reportVerification((int) $tenant->id, $bccs);
+            $this->reportVerification((int) $tenant->id, $bccs, $compact);
 
             return;
+        }
+
+        $familyService = app(FamilyService::class);
+        $builder = new RealisticParishHouseholdBuilder($parishName, (int) $tenant->id);
+        $this->loadExistingContacts($builder, (int) $tenant->id);
+        if ($compact) {
+            $this->loadExistingIdentities($builder, (int) $tenant->id);
         }
 
         $this->command?->info(sprintf(
@@ -118,89 +121,203 @@ class BccDummyFamiliesSeeder extends Seeder
             return;
         }
 
-        $this->ensurePeopleLimit((int) $tenant->id, $actor, $plannedMembers);
-
         $createdFamilies = 0;
         $createdMembers = 0;
 
         foreach ($bccs as $bcc) {
-            $target = $this->targetCountForBcc((string) $bcc->id, $minPerBcc, $maxPerBcc);
-            $existing = $this->countDummyFamiliesForBcc((int) $tenant->id, (string) $bcc->id);
-            $toCreate = max(0, $target - $existing);
+            $compactCount = $this->countCompactFamiliesForBcc((int) $tenant->id, (string) $bcc->id);
+            $totalDummy = $this->countDummyFamiliesForBcc((int) $tenant->id, (string) $bcc->id);
+            $toCreate = $this->familiesToCreateForBcc((int) $tenant->id, $bcc, $compact, $minPerBcc, $maxPerBcc);
             $slug = $this->bccSlug((string) $bcc->name);
+            $target = $compact
+                ? CompactDemoMarkers::FAMILIES_PER_BCC
+                : $this->targetCountForBcc((string) $bcc->id, $minPerBcc, $maxPerBcc);
 
-            $this->command?->info(sprintf('BCC "%s": %d existing, creating %d (target %d).', $bcc->name, $existing, $toCreate, $target));
+            $this->command?->info(sprintf(
+                'BCC "%s": %d compact / %d dummy total, creating %d (target %d).',
+                $bcc->name,
+                $compactCount,
+                $totalDummy,
+                $toCreate,
+                $target
+            ));
 
-            for ($i = $existing; $i < $existing + $toCreate; $i++) {
-                $blueprint = $builder->build(
-                    (string) $bcc->id,
+            for ($slot = $compactCount; $slot < $compactCount + $toCreate; $slot++) {
+                $memberOverride = $compact
+                    ? CompactDemoMarkers::HOUSEHOLD_SIZES[$slot % count(CompactDemoMarkers::HOUSEHOLD_SIZES)]
+                    : null;
+
+                DB::transaction(function () use (
+                    $builder,
+                    $bcc,
                     $slug,
-                    $i,
-                    $countryId ? (int) $countryId : null,
-                    $stateId ? (int) $stateId : null,
+                    $slot,
+                    $countryId,
+                    $stateId,
                     $defaultCity,
-                );
+                    $memberOverride,
+                    $compact,
+                    $familyService,
+                    $tenant,
+                    $actor,
+                    &$createdFamilies,
+                    &$createdMembers,
+                ): void {
+                    $blueprint = $builder->build(
+                        (string) $bcc->id,
+                        $slug,
+                        $slot,
+                        $countryId ? (int) $countryId : null,
+                        $stateId ? (int) $stateId : null,
+                        $defaultCity,
+                        $memberOverride,
+                        $compact,
+                    );
 
-                $family = $familyService->createFamily(
-                    $blueprint['family'],
-                    (string) $tenant->id,
-                    (string) $actor->id,
-                );
+                    $family = $familyService->createFamily(
+                        $blueprint['family'],
+                        (string) $tenant->id,
+                        (string) $actor->id,
+                    );
 
-                $createdFamilies++;
+                    $createdFamilies++;
 
-                $pendingChildren = [];
+                    $pendingChildren = [];
 
-                foreach ($blueprint['members'] as $memberPayload) {
-                    $rel = (string) ($memberPayload['relationship_to_head'] ?? '');
-                    if (in_array($rel, ['son', 'daughter', 'brother', 'sister'], true)) {
-                        $pendingChildren[] = $memberPayload;
+                    foreach ($blueprint['members'] as $memberPayload) {
+                        $rel = (string) ($memberPayload['relationship_to_head'] ?? '');
+                        if (in_array($rel, ['son', 'daughter', 'brother', 'sister'], true)) {
+                            $pendingChildren[] = $memberPayload;
 
-                        continue;
+                            continue;
+                        }
+
+                        $familyService->addMember(
+                            (string) $family->id,
+                            $memberPayload,
+                            (string) $tenant->id,
+                            (string) $actor->id,
+                        );
+                        $createdMembers++;
                     }
 
-                    $familyService->addMember(
-                        (string) $family->id,
-                        $memberPayload,
-                        (string) $tenant->id,
-                        (string) $actor->id,
+                    $family = $familyService->getFamilyById((string) $family->id, (string) $tenant->id) ?? $family;
+                    $headMember = $family->members->firstWhere('relationship_to_head', 'self');
+                    $spouseMember = $family->members->firstWhere('relationship_to_head', 'spouse');
+
+                    $children = $this->linkChildrenToParents(
+                        $pendingChildren,
+                        $headMember,
+                        $spouseMember,
                     );
-                    $createdMembers++;
-                }
 
-                $family = $familyService->getFamilyById((string) $family->id, (string) $tenant->id) ?? $family;
-                $headMember = $family->members->firstWhere('relationship_to_head', 'self');
-                $spouseMember = $family->members->firstWhere('relationship_to_head', 'spouse');
-
-                $children = $this->linkChildrenToParents(
-                    $pendingChildren,
-                    $headMember,
-                    $spouseMember,
-                );
-
-                foreach ($children as $childPayload) {
-                    $familyService->addMember(
-                        (string) $family->id,
-                        $childPayload,
-                        (string) $tenant->id,
-                        (string) $actor->id,
-                    );
-                    $createdMembers++;
-                }
+                    foreach ($children as $childPayload) {
+                        $familyService->addMember(
+                            (string) $family->id,
+                            $childPayload,
+                            (string) $tenant->id,
+                            (string) $actor->id,
+                        );
+                        $createdMembers++;
+                    }
+                });
             }
         }
 
         $this->command?->info(sprintf('Created %d families and %d members.', $createdFamilies, $createdMembers));
 
-        $this->reportVerification((int) $tenant->id, $bccs);
+        $this->reportVerification((int) $tenant->id, $bccs, $compact);
+    }
+
+    private function isCompactMode(): bool
+    {
+        if (TenantDemoResolver::flagIsTrue(CompactDemoMarkers::ENV_COMPACT)) {
+            return true;
+        }
+
+        $min = (int) env('BCC_DUMMY_FAMILIES_MIN', 40);
+        $max = (int) env('BCC_DUMMY_FAMILIES_MAX', 50);
+
+        return $min === 5
+            && $max === 5
+            && TenantDemoResolver::flagIsTrue(CompactDemoMarkers::ENV_ONLY_DEMO_BCCS);
+    }
+
+    /**
+     * @return Collection<int, BCC>
+     */
+    private function resolveBccs(int $tenantId, bool $compact): Collection
+    {
+        $query = BCC::query()
+            ->where('tenant_id', $tenantId)
+            ->whereNull('deleted_at')
+            ->orderBy('bcc_code');
+
+        if ($compact || filter_var(env(CompactDemoMarkers::ENV_ONLY_DEMO_BCCS, false), FILTER_VALIDATE_BOOL)) {
+            $query->whereIn('bcc_code', CompactDemoMarkers::BCC_CODES)
+                ->where('notes', 'like', '%'.TenantDemoMarkers::MARKER.'%');
+        }
+
+        return $query->get();
+    }
+
+    private function familiesToCreateForBcc(
+        int $tenantId,
+        BCC $bcc,
+        bool $compact,
+        int $minPerBcc,
+        int $maxPerBcc,
+    ): int {
+        $totalDummy = $this->countDummyFamiliesForBcc($tenantId, (string) $bcc->id);
+        $compactCount = $this->countCompactFamiliesForBcc($tenantId, (string) $bcc->id);
+
+        if ($compact) {
+            if ($totalDummy > CompactDemoMarkers::FAMILIES_PER_BCC && $compactCount < CompactDemoMarkers::FAMILIES_PER_BCC) {
+                return 0;
+            }
+
+            return max(0, CompactDemoMarkers::FAMILIES_PER_BCC - $compactCount);
+        }
+
+        $target = $this->targetCountForBcc((string) $bcc->id, $minPerBcc, $maxPerBcc);
+        $existing = $totalDummy;
+
+        return max(0, $target - $existing);
+    }
+
+    private function countCompactFamiliesForBcc(int $tenantId, string $bccId): int
+    {
+        return Family::query()
+            ->where('tenant_id', $tenantId)
+            ->where('bcc_id', $bccId)
+            ->whereNull('deleted_at')
+            ->where('notes', 'like', '%'.CompactDemoMarkers::MARKER.'%')
+            ->count();
+    }
+
+    private function loadExistingIdentities(RealisticParishHouseholdBuilder $builder, int $tenantId): void
+    {
+        FamilyMember::query()
+            ->where('tenant_id', $tenantId)
+            ->whereNull('deleted_at')
+            ->select(['first_name', 'last_name', 'date_of_birth'])
+            ->chunk(500, function ($rows) use ($builder): void {
+                foreach ($rows as $row) {
+                    $builder->registerExistingIdentity(
+                        (string) $row->first_name,
+                        (string) $row->last_name,
+                        $row->date_of_birth ? (string) $row->date_of_birth : null,
+                    );
+                }
+            });
     }
 
     /**
      * @param  Collection<int, BCC>  $bccs
      */
-    private function reportVerification(int $tenantId, $bccs): void
+    private function reportVerification(int $tenantId, $bccs, bool $compact = false): void
     {
-        $errors = $this->verify($tenantId, $bccs);
+        $errors = $this->verify($tenantId, $bccs, $compact);
         if ($errors === []) {
             $this->command?->info('Verification passed.');
         } else {
@@ -228,24 +345,7 @@ class BccDummyFamiliesSeeder extends Seeder
             return Tenant::query()->find($tenantId);
         }
 
-        foreach (['Sacred Heart Church', 'Sacred Heart Parish'] as $name) {
-            $tenant = Tenant::query()->where('name', $name)->first();
-            if ($tenant) {
-                return $tenant;
-            }
-        }
-
-        return Tenant::query()->where('name', 'ILIKE', '%Sacred Heart%')->orderBy('id')->first()
-            ?? Tenant::query()->orderBy('id')->first();
-    }
-
-    private function resolveActor(int $tenantId): ?User
-    {
-        return User::query()
-            ->where('tenant_id', $tenantId)
-            ->orderBy('id')
-            ->first()
-            ?? User::query()->orderBy('id')->first();
+        return DemoSeedGuard::resolveTenant(TenantDemoResolver::readEnvTenantId());
     }
 
     private function targetCountForBcc(string $bccId, int $min, int $max): int
@@ -331,61 +431,35 @@ class BccDummyFamiliesSeeder extends Seeder
         return $children;
     }
 
-    private function ensurePeopleLimit(int $tenantId, User $actor, int $addingPeople): void
-    {
-        if (! app()->bound(TenantLimitGuard::class)) {
-            return;
-        }
-
-        $resolver = app(EntitlementResolver::class);
-        $currentPeople = FamilyMember::query()->where('tenant_id', $tenantId)->whereNull('deleted_at')->count();
-        $needed = $currentPeople + $addingPeople + 500;
-        $limit = $resolver->resolve(Tenant::query()->findOrFail($tenantId))->limit('PEOPLE_LIMIT');
-
-        if ($limit !== null && $needed <= $limit) {
-            return;
-        }
-
-        $featureId = Feature::query()->where('code', 'PEOPLE_LIMIT')->value('id');
-        if (! $featureId) {
-            return;
-        }
-
-        TenantEntitlementOverride::query()
-            ->where('tenant_id', $tenantId)
-            ->where('feature_id', $featureId)
-            ->open()
-            ->update([
-                'revoked_at' => now(),
-                'revoked_by' => $actor->id,
-                'revoke_reason' => 'Replaced for BCC dummy family seeding',
-            ]);
-
-        TenantEntitlementOverride::query()->create([
-            'tenant_id' => $tenantId,
-            'feature_id' => $featureId,
-            'mode' => TenantEntitlementOverride::MODE_SET_LIMIT,
-            'numeric_value' => $needed,
-            'reason' => 'Temporary headroom for BCC dummy family seeding',
-            'created_by' => $actor->id,
-        ]);
-
-        $resolver->forget($tenantId);
-
-        $this->command?->warn(sprintf('Raised PEOPLE_LIMIT override to %d for seeding.', $needed));
-    }
-
     /**
      * @param  Collection<int, BCC>  $bccs
      * @return list<string>
      */
-    private function verify(int $tenantId, $bccs): array
+    private function verify(int $tenantId, $bccs, bool $compact = false): array
     {
         $errors = [];
-        $minPerBcc = max(1, (int) env('BCC_DUMMY_FAMILIES_MIN', 40));
-        $maxPerBcc = max($minPerBcc, (int) env('BCC_DUMMY_FAMILIES_MAX', 50));
+        $minPerBcc = max(1, (int) env('BCC_DUMMY_FAMILIES_MIN', $compact ? 5 : 40));
+        $maxPerBcc = max($minPerBcc, (int) env('BCC_DUMMY_FAMILIES_MAX', $compact ? 5 : 50));
 
         foreach ($bccs as $bcc) {
+            if ($compact) {
+                $compactCount = $this->countCompactFamiliesForBcc($tenantId, (string) $bcc->id);
+                $totalDummy = $this->countDummyFamiliesForBcc($tenantId, (string) $bcc->id);
+                if ($totalDummy > CompactDemoMarkers::FAMILIES_PER_BCC && $compactCount < CompactDemoMarkers::FAMILIES_PER_BCC) {
+                    continue;
+                }
+                if ($compactCount < CompactDemoMarkers::FAMILIES_PER_BCC) {
+                    $errors[] = sprintf(
+                        'BCC "%s" has %d compact families; expected %d.',
+                        $bcc->name,
+                        $compactCount,
+                        CompactDemoMarkers::FAMILIES_PER_BCC
+                    );
+                }
+
+                continue;
+            }
+
             $count = $this->countDummyFamiliesForBcc($tenantId, (string) $bcc->id);
             $target = $this->targetCountForBcc((string) $bcc->id, $minPerBcc, $maxPerBcc);
             if ($count < $target) {
@@ -393,15 +467,28 @@ class BccDummyFamiliesSeeder extends Seeder
             }
         }
 
+        $familyNotesFilter = $compact
+            ? '%'.CompactDemoMarkers::MARKER.'%'
+            : '%'.RealisticParishHouseholdBuilder::MARKER.'%';
+
         $families = Family::query()
             ->where('tenant_id', $tenantId)
-            ->where('notes', 'like', '%'.RealisticParishHouseholdBuilder::MARKER.'%')
+            ->where('notes', 'like', $familyNotesFilter)
             ->withCount('members')
             ->get();
 
+        $minMembers = $compact ? 2 : 4;
+        $maxMembers = $compact ? 5 : 6;
+
         foreach ($families as $family) {
-            if ($family->members_count < 4 || $family->members_count > 6) {
-                $errors[] = sprintf('Family %s has %d members (expected 4–6).', $family->family_code, $family->members_count);
+            if ($family->members_count < $minMembers || $family->members_count > $maxMembers) {
+                $errors[] = sprintf(
+                    'Family %s has %d members (expected %d–%d).',
+                    $family->family_code,
+                    $family->members_count,
+                    $minMembers,
+                    $maxMembers
+                );
             }
             if (empty($family->bcc_id)) {
                 $errors[] = sprintf('Family %s missing bcc_id.', $family->family_code);

@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Sacraments\Certificates\CertificateTemplateRegistry;
 use Modules\Sacraments\Certificates\CertificateViewAssembler;
+use Modules\Sacraments\Definitions\SacramentDefinitionRegistry;
 use Modules\Sacraments\Exceptions\SacramentBusinessRuleException;
 use Modules\Sacraments\Models\Sacrament;
 use Modules\Sacraments\Models\SacramentAuditLog;
@@ -30,7 +31,8 @@ class SacramentCertificateService
         protected CertificateStorage $storage,
         protected CertificateQrEncoder $qr,
         protected CertificateViewAssembler $views,
-        protected SacramentAuditService $audit
+        protected SacramentAuditService $audit,
+        protected SacramentDefinitionRegistry $definitions,
     ) {}
 
     /**
@@ -54,6 +56,16 @@ class SacramentCertificateService
     public function getCertificateViewDetails(int $sacramentId, int $tenantId): array
     {
         $sacrament = $this->findSacrament($sacramentId, $tenantId);
+        $sacrament->loadMissing('sacramentType');
+        try {
+            $this->assertCertificateSupportedForSacrament($sacrament);
+        } catch (SacramentBusinessRuleException) {
+            return [
+                'latest_certificate' => null,
+                'live_projection' => null,
+                'download_history' => [],
+            ];
+        }
         $latest = $this->findLatestIssued($sacramentId, $tenantId);
         $liveProjection = null;
 
@@ -91,11 +103,22 @@ class SacramentCertificateService
     {
         $this->findSacrament($sacramentId, $tenantId);
 
+        $certificateIds = SacramentCertificate::query()
+            ->where('tenant_id', $tenantId)
+            ->where('sacrament_id', $sacramentId)
+            ->pluck('id')
+            ->map(static fn ($id): string => (string) $id)
+            ->all();
+
+        if ($certificateIds === []) {
+            return [];
+        }
+
         return SacramentAuditLog::query()
             ->where('tenant_id', $tenantId)
             ->where('event', 'certificate_download')
             ->where('target_type', 'sacrament_certificate')
-            ->where('metadata->sacrament_id', $sacramentId)
+            ->whereIn('target_id', $certificateIds)
             ->with(['actor.role'])
             ->orderByDesc('created_at')
             ->get()
@@ -276,6 +299,9 @@ class SacramentCertificateService
     public function printHtml(int $certificateId, int $tenantId): string
     {
         $cert = $this->findCertificate($certificateId, $tenantId);
+        $sacrament = $this->findSacrament((int) $cert->sacrament_id, $tenantId);
+        $sacrament->loadMissing('sacramentType');
+        $this->assertCertificateSupportedForSacrament($sacrament);
         if (is_string($cert->html_storage_key) && $cert->html_storage_key !== '') {
             try {
                 return $this->storage->get($cert->html_storage_key);
@@ -315,6 +341,21 @@ class SacramentCertificateService
         $cert = SacramentCertificate::query()
             ->where('verification_token', $token)
             ->first();
+
+        if ($cert) {
+            $sacrament = $this->findSacrament((int) $cert->sacrament_id, (int) $cert->tenant_id);
+            $sacrament->loadMissing('sacramentType');
+            try {
+                $this->assertCertificateSupportedForSacrament($sacrament);
+            } catch (SacramentBusinessRuleException) {
+                throw new SacramentBusinessRuleException(
+                    'certificate_not_found',
+                    'This certificate could not be verified.',
+                    [],
+                    404
+                );
+            }
+        }
 
         if (! $cert) {
             throw new SacramentBusinessRuleException(
@@ -365,6 +406,9 @@ class SacramentCertificateService
         ?string $userAgent = null
     ): array {
         $cert = $this->findCertificate($certificateId, $tenantId);
+        $sacrament = $this->findSacrament((int) $cert->sacrament_id, $tenantId);
+        $sacrament->loadMissing('sacramentType');
+        $this->assertCertificateSupportedForSacrament($sacrament);
 
         if ($cert->status === SacramentCertificateStatus::DRAFT_PREVIEW) {
             throw new SacramentBusinessRuleException(
@@ -472,7 +516,21 @@ class SacramentCertificateService
             );
         }
 
+        $this->assertCertificateSupportedForSacrament($sacrament);
+
         return $sacrament;
+    }
+
+    private function assertCertificateSupportedForSacrament(Sacrament $sacrament): void
+    {
+        $code = $sacrament->sacramentType?->code;
+        $definition = $this->definitions->forTypeCode($code !== null ? (string) $code : null);
+        if ($definition === null || empty($definition['certificate_supported'])) {
+            throw new SacramentBusinessRuleException(
+                'certificate_not_supported',
+                'Certificates are not supported for this sacrament type.'
+            );
+        }
     }
 
     private function findSacrament(int $sacramentId, int $tenantId): Sacrament

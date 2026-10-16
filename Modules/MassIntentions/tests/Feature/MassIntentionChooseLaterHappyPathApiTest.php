@@ -7,10 +7,12 @@ use Modules\Authentication\Models\User;
 use Modules\MassIntentions\Database\Seeders\MassIntentionsPermissionSeeder;
 use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Tenants\Models\Tenant;
+use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
 use Modules\MassIntentions\Tests\Support\SkipsLegacyMassObligationWorkflow;
 use Tests\TestCase;
 
+#[Group('legacy-mass-obligation')]
 class MassIntentionChooseLaterHappyPathApiTest extends TestCase
 {
     use SkipsLegacyMassObligationWorkflow;

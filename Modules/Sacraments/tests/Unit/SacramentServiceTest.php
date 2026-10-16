@@ -9,9 +9,12 @@ use Modules\Sacraments\Definitions\SacramentDefinitionRegistry;
 use Modules\Sacraments\Models\Sacrament;
 use Modules\Sacraments\Repositories\SacramentRepository;
 use Modules\Sacraments\Services\Certificates\SacramentCertificateService;
+use Modules\Sacraments\Services\MarriageCanonicalClassifier;
 use Modules\Sacraments\Services\SacramentAuditService;
+use Modules\Sacraments\Services\SacramentBaptismMembershipService;
 use Modules\Sacraments\Services\SacramentDuplicateDetector;
 use Modules\Sacraments\Services\SacramentIdempotencyService;
+use Modules\Sacraments\Services\SacramentLeadershipContextBuilder;
 use Modules\Sacraments\Services\SacramentLegacyDenormMapper;
 use Modules\Sacraments\Services\SacramentParticipantValidator;
 use Modules\Sacraments\Services\SacramentRecipientResolver;
@@ -47,6 +50,9 @@ class SacramentServiceTest extends TestCase
             Mockery::mock(SacramentTypedAttributesValidator::class),
             $privacy,
             Mockery::mock(SacramentRecipientResolver::class),
+            $this->app->make(SacramentBaptismMembershipService::class),
+            new MarriageCanonicalClassifier(),
+            $this->app->make(SacramentLeadershipContextBuilder::class),
         );
     }
 

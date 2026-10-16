@@ -11,10 +11,12 @@ use Modules\MassIntentions\Support\MassIntentionStatus;
 use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Services\TenantHierarchyService;
+use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
 use Modules\MassIntentions\Tests\Support\SkipsLegacyMassObligationWorkflow;
 use Tests\TestCase;
 
+#[Group('legacy-mass-obligation')]
 class MassIntentionTransferApiTest extends TestCase
 {
     use SkipsLegacyMassObligationWorkflow;

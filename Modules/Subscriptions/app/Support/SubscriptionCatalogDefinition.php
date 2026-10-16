@@ -267,6 +267,18 @@ final class SubscriptionCatalogDefinition
             'upgrade_requests' => [
                 'enabled' => true,
             ],
+            'billing' => [
+                'policy_version' => 1,
+                'customer_payment_actions' => 'disabled',
+                'online_checkout' => 'disabled',
+                'offline_claims' => 'disabled',
+                'maintenance_message' => null,
+                'maintenance_until' => null,
+                'maintenance_revert_to' => 'enabled',
+                'order_ttl_minutes' => 60,
+                'offline_dual_approval_threshold' => '50000.00',
+                'refund_approval_threshold' => '10000.00',
+            ],
         ];
     }
 

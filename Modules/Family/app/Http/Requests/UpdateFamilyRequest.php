@@ -41,6 +41,7 @@ class UpdateFamilyRequest extends FormRequest
             ],
             'status' => ['nullable', 'in:active,inactive,migrated'],
             'notes' => ['nullable', 'string'],
+            'tenant_id' => ['prohibited'],
             'sync_person_addresses' => ['nullable', 'boolean'],
 
             // members (optional)

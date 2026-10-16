@@ -630,6 +630,8 @@ class SacramentApiTest extends TestCase
             'marriage_bride_church_type' => 'other',
             'marriage_bride_church_name' => 'Other Church',
             'marriage_bride_church_address' => 'Other Address',
+            'recipient_birth_date' => '1990-03-12',
+            'recipient_gender' => 'male',
             'witnesses' => 'Witness 1, Witness 2',
             'certificate_number' => 'MAR-2025-001',
             'book_number' => 'BOOK-5',
@@ -659,8 +661,7 @@ class SacramentApiTest extends TestCase
             'sacrament_type_id' => $this->sacramentType->id,
             'recipient_name' => 'John Doe',
             'date_administered' => '2025-01-15',
-            'place_administered' => '',
-            'minister_name' => '',
+            'minister_title' => '',
             'notes' => '',
         ]);
 
@@ -671,8 +672,8 @@ class SacramentApiTest extends TestCase
         $response->assertStatus(201);
 
         $sacrament = Sacrament::where('recipient_name', 'John Doe')->first();
-        $this->assertNull($sacrament->place_administered);
-        $this->assertNull($sacrament->minister_name);
+        $this->assertSame('St. Mary Church', $sacrament->place_administered);
+        $this->assertNull($sacrament->minister_title);
         $this->assertNull($sacrament->notes);
     }
 
@@ -1071,7 +1072,7 @@ class SacramentApiTest extends TestCase
         $response->assertStatus(403)
             ->assertJson([
                 'success' => false,
-                'message' => 'Unauthorized. Only tenant users can manage sacrament records.',
+                'message' => 'Tenant context required.',
             ]);
     }
 
@@ -1176,8 +1177,9 @@ class SacramentApiTest extends TestCase
         $response = $this->getJson('/api/sacraments?search=O\'Brien');
 
         // Assert
-        $response->assertStatus(200);
-        // Should not crash, may or may not find results depending on DB
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true);
+        $this->assertGreaterThanOrEqual(1, $response->json('data.total'));
     }
 
     /** @test */
@@ -1198,8 +1200,8 @@ class SacramentApiTest extends TestCase
         $response->assertStatus(201);
 
         $sacrament = Sacrament::where('recipient_name', 'Minimal Sacrament')->first();
-        $this->assertNull($sacrament->place_administered);
-        $this->assertNull($sacrament->minister_name);
+        $this->assertSame('St. Mary Church', $sacrament->place_administered);
+        $this->assertSame('Fr. Joseph', $sacrament->minister_name);
         $this->assertNull($sacrament->family_id);
         $this->assertNull($sacrament->bcc_id);
     }

@@ -8,6 +8,7 @@ use Modules\Authentication\Models\User;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
 use Modules\Family\Models\Person;
+use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Tenants\Models\Tenant;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -28,7 +29,31 @@ class PersonParentRelationshipTest extends TestCase
         $this->user = User::factory()->create([
             'tenant_id' => $this->tenant->id,
         ]);
+        $this->grantFamilyMemberPermissions($this->user);
         Passport::actingAs($this->user);
+    }
+
+    private function grantFamilyMemberPermissions(User $user): void
+    {
+        $ids = [];
+        foreach (['families.view', 'families.edit'] as $name) {
+            $permission = Permission::query()->firstOrCreate(
+                ['name' => $name],
+                [
+                    'display_name' => $name,
+                    'module' => 'Families',
+                    'category' => 'families',
+                    'scope' => Permission::SCOPE_TENANT,
+                    'active' => 1,
+                    'tenant_id' => null,
+                    'is_custom' => false,
+                ]
+            );
+            $ids[] = $permission->id;
+        }
+        $user->permissions()->syncWithoutDetaching($ids);
+        $user->clearPermissionsCache();
+        $user->clearRequestPermissionCache();
     }
 
     #[Test]
@@ -37,6 +62,7 @@ class PersonParentRelationshipTest extends TestCase
         $fatherPerson = Person::factory()->create([
             'tenant_id' => $this->tenant->id,
             'first_name' => 'Joseph',
+            'middle_name' => null,
             'last_name' => 'Peter',
             'gender' => 'male',
             'created_by' => $this->user->id,
@@ -102,6 +128,7 @@ class PersonParentRelationshipTest extends TestCase
         $fatherPerson = Person::factory()->create([
             'tenant_id' => $this->tenant->id,
             'first_name' => 'Joseph',
+            'middle_name' => null,
             'last_name' => 'Peter',
             'gender' => 'male',
             'created_by' => $this->user->id,

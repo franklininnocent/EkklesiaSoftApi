@@ -4,6 +4,7 @@
 .env.backup
 .env.production
 .env.*
+!.env.example
 .phpactor.json
 .phpunit.result.cache
 Homestead.json
@@ -52,3 +53,9 @@ Thumbs.db
 
 # Local file inventory (not source)
 /allfileshas.txt
+
+# Local databases and dumps. Parish data must not be committed.
+*.sql
+*.sql.gz
+*.dump
+/coverage/

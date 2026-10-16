@@ -676,8 +676,11 @@ class FamilyController extends Controller
                 return $response;
             }
 
-            $includeContributions = (bool) ($user && $user->hasPermission('donations.view'));
-            $includePastoral = (bool) ($user && $user->hasPermission('sacraments.view'));
+            $scope = $request->dashboardScope();
+            $includeContributions = $scope === 'full'
+                && (bool) ($user && $user->hasPermission('donations.view'));
+            $includePastoral = $scope === 'full'
+                && (bool) ($user && $user->hasPermission('sacraments.view'));
 
             $data = $this->familyDashboardService->summary(
                 (int) $tenantId,
@@ -688,6 +691,7 @@ class FamilyController extends Controller
                     'from' => $request->input('from'),
                     'to' => $request->input('to'),
                     'refresh' => $request->boolean('refresh'),
+                    'scope' => $scope,
                 ],
                 $includeContributions,
                 $includePastoral,

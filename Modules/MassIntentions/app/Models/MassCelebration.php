@@ -2,6 +2,7 @@
 
 namespace Modules\MassIntentions\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 
@@ -50,5 +51,10 @@ class MassCelebration extends Model
     public function isScheduledOccurrence(): bool
     {
         return $this->slot_id !== null;
+    }
+
+    public function scopeForTenant(Builder $query, int $tenantId): Builder
+    {
+        return $query->where($this->qualifyColumn('tenant_id'), $tenantId);
     }
 }

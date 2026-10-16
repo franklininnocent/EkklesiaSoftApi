@@ -18,6 +18,7 @@ use Modules\MinistriesAssociations\Models\OrganizationCategory;
 use Modules\MinistriesAssociations\Models\OrganizationMembership;
 use Modules\MinistriesAssociations\Models\OrganizationType;
 use Modules\MinistriesAssociations\Models\Position;
+use Modules\Tenants\Database\Seeders\Support\DemoSeedGuard;
 use Modules\Tenants\Database\Seeders\Support\MinistriesDemoCatalog;
 use Modules\Tenants\Database\Seeders\Support\TenantDemoMarkers;
 use Modules\Tenants\Database\Seeders\Support\TenantDemoResolver;
@@ -32,6 +33,10 @@ class TenantMinistriesDemoSeeder extends Seeder
 {
     public function run(): void
     {
+        if (! DemoSeedGuard::assertEnvironmentAllowed($this->command)) {
+            return;
+        }
+
         $tenant = TenantDemoResolver::resolveTenant();
         if (! $tenant) {
             $requested = TenantDemoResolver::readEnvTenantId();

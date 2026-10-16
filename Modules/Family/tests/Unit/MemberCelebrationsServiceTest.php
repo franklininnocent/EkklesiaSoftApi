@@ -29,6 +29,6 @@ class MemberCelebrationsServiceTest extends TestCase
         $start = Carbon::parse('2026-12-29');
         $end = Carbon::parse('2027-01-04');
 
-        $this->assertSame('Dec 29 – Jan 4', ParishCalendar::weekRangeLabel($start, $end));
+        $this->assertSame('29 Dec – 4 Jan', ParishCalendar::weekRangeLabel($start, $end));
     }
 }

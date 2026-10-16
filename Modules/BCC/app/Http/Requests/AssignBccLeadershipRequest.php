@@ -4,13 +4,16 @@ namespace Modules\BCC\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Modules\BCC\Models\BCCLeader;
 use Modules\BCC\Services\BccLeadershipService;
 
 class AssignBccLeadershipRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        $user = $this->user();
+
+        return $user !== null && $user->can('assign', BCCLeader::class);
     }
 
     public function rules(): array

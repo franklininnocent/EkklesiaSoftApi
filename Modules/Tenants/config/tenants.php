@@ -108,6 +108,7 @@ return [
         'gated_modules' => [
             'donations',
             'ministries_associations',
+            'mass_intentions',
             'groups',
             'messaging',
             'events',
@@ -132,6 +133,7 @@ return [
             'api/tenant/export/bulk',
             'api/tenant/export/bulk/*/download',
             'api/donations/webhooks/*',
+            'api/billing/webhooks/*',
             'api/persons/matches',
             'api/tenant/donations/reports/export',
             'api/sacraments/*/certificates/preview',
@@ -149,6 +151,7 @@ return [
             'GET:api/tenant/my-subscription',
             'api/tenant/subscription/upgrade-requests',
             'api/donations/webhooks/*',
+            'api/billing/webhooks/*',
             // Parish support tickets (renewal / locked recovery — narrow, not all tenant/support-access ops)
             'GET:api/tenant/support/dashboard',
             'GET:api/tenant/support/lookups',
@@ -274,6 +277,7 @@ return [
             'patron' => ['max_bytes' => 3 * 1024 * 1024],
             'leadership' => ['max_bytes' => 3 * 1024 * 1024],
             'pope' => ['max_bytes' => 3 * 1024 * 1024],
+            'billing_evidence' => ['max_bytes' => 5 * 1024 * 1024],
         ],
         'dual_read_public_fallback' => (bool) env('TENANT_MEDIA_DUAL_READ_PUBLIC', true),
     ],
@@ -358,6 +362,21 @@ return [
                 ],
             ],
         ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Local demo parish primary admin (non-production)
+    |--------------------------------------------------------------------------
+    |
+    | Used when running tenants:seed-demo-data and local Sacred Heart recovery.
+    | Override via DEMO_TENANT_ADMIN_* env vars. Never use production defaults.
+    |
+    */
+    'demo' => [
+        'default_admin_email' => env('DEMO_TENANT_ADMIN_EMAIL', 'shadmin@gmail.com'),
+        'default_admin_password' => env('DEMO_TENANT_ADMIN_PASSWORD', 'TempPassword123!'),
+        'default_admin_name' => env('DEMO_TENANT_ADMIN_NAME', 'Sacred Heart Admin'),
     ],
 
     /*

@@ -4,6 +4,7 @@ namespace Modules\Tenants\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
+use Modules\Tenants\Database\Seeders\Support\DemoSeedGuard;
 use Modules\Tenants\LoadTesting\LoadTestFixtureBuilder;
 
 class SeedLoadTestData extends Command
@@ -22,6 +23,11 @@ class SeedLoadTestData extends Command
 
     public function handle(LoadTestFixtureBuilder $builder): int
     {
+        DemoSeedGuard::setCliForceFromCommand($this);
+        if (! DemoSeedGuard::assertEnvironmentAllowed($this)) {
+            return self::FAILURE;
+        }
+
         $tenantCount = (int) ($this->option('tenants') ?: config('tenants.load_test.default_tenants', 100));
         $memberCount = (int) ($this->option('members') ?: config('tenants.load_test.default_members', 500000));
         $membersPerFamily = (int) ($this->option('members-per-family') ?: config('tenants.load_test.members_per_family', 5));

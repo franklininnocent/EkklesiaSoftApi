@@ -185,7 +185,7 @@ class TenantSacramentSettingsApiTest extends TestCase
     #[Test]
     public function it_blocks_new_records_for_inactive_types_and_preserves_existing_ones(): void
     {
-        $existing = Sacrament::factory()->create([
+        $existing = Sacrament::factory()->registered()->create([
             'tenant_id' => $this->tenant->id,
             'sacrament_type_id' => $this->marriageType->id,
             'recipient_name' => 'Existing Marriage',

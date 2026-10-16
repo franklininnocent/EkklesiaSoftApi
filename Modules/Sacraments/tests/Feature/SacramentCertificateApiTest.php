@@ -531,4 +531,26 @@ class SacramentCertificateApiTest extends TestCase
             ->assertStatus(404)
             ->assertJsonPath('code', 'certificate_not_found');
     }
+
+    #[Test]
+    public function it_rejects_reconciliation_certificate_preview(): void
+    {
+        $reconType = SacramentType::factory()->create([
+            'name' => 'Reconciliation',
+            'code' => 'RECONCILIATION',
+            'active' => true,
+            'requires_minister' => true,
+        ]);
+        $sacrament = Sacrament::factory()->registered()->create([
+            'tenant_id' => $this->tenant->id,
+            'sacrament_type_id' => $reconType->id,
+            'recipient_name' => 'Penitent Person',
+            'created_by' => $this->user->id,
+            'updated_by' => $this->user->id,
+        ]);
+
+        $this->postJson("/api/sacraments/{$sacrament->id}/certificates/preview")
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'certificate_not_supported');
+    }
 }

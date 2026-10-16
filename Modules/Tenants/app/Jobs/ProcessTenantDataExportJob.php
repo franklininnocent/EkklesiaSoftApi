@@ -30,6 +30,29 @@ class ProcessTenantDataExportJob extends TenantAwareJob
             ->allowsExportForTenantId($this->tenantId);
     }
 
+    protected function handleDeniedTenantMutations(): void
+    {
+        $export = TenantDataExport::find($this->exportId);
+        if (! $export || ! in_array($export->status, [
+            TenantDataExport::STATUS_QUEUED,
+            TenantDataExport::STATUS_PROCESSING,
+        ], true)) {
+            return;
+        }
+
+        $tenant = \Modules\Tenants\Models\Tenant::query()->find($this->tenantId);
+        $inactive = $tenant === null
+            || (int) $tenant->active !== 1
+            || (method_exists($tenant, 'trashed') && $tenant->trashed());
+
+        $export->update([
+            'status' => TenantDataExport::STATUS_FAILED,
+            'error_message' => $inactive
+                ? 'This parish is inactive or unavailable. Export cannot continue.'
+                : 'Export is not allowed for this parish right now.',
+        ]);
+    }
+
     protected function handleWithTenantContext(): void
     {
         if (! app(\Modules\Tenants\Support\SubscriptionJobWriteGuard::class)->allowsExportForTenantId($this->tenantId)) {

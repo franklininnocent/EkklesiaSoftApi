@@ -432,6 +432,18 @@ class Tenant extends Model
             return in_array('donations', $features, true);
         }
 
+        // Mass Intentions is opt-in on the tenant allow-list. An explicit empty
+        // `features` array must not inherit it from the catalog plan (enterprise
+        // launch plans now mirror MASS_INTENTIONS onto subscription_plans.features).
+        if ($feature === 'mass_intentions') {
+            $features = $this->features;
+            if (is_array($features)) {
+                return in_array('mass_intentions', $features, true);
+            }
+
+            return in_array('mass_intentions', $this->effectiveFeatures(), true);
+        }
+
         return in_array($feature, $this->effectiveFeatures(), true);
     }
 

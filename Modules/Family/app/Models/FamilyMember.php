@@ -2,6 +2,7 @@
 
 namespace Modules\Family\Models;
 
+use App\Casts\DateOnly;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -101,12 +102,12 @@ class FamilyMember extends Model
      * @var array<string, string>
      */
     protected $casts = [
-        'date_of_birth' => 'date',
-        'baptism_date' => 'date',
-        'first_communion_date' => 'date',
-        'confirmation_date' => 'date',
-        'marriage_date' => 'date',
-        'deceased_date' => 'date',
+        'date_of_birth' => DateOnly::class,
+        'baptism_date' => DateOnly::class,
+        'first_communion_date' => DateOnly::class,
+        'confirmation_date' => DateOnly::class,
+        'marriage_date' => DateOnly::class,
+        'deceased_date' => DateOnly::class,
         'is_primary_contact' => 'boolean',
         'baptism_priest_is_home' => 'boolean',
         'created_at' => 'datetime',

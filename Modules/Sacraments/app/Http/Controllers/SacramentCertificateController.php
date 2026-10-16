@@ -12,7 +12,6 @@ use Modules\Sacraments\Http\Requests\PreviewSacramentCertificateRequest;
 use Modules\Sacraments\Http\Resources\SacramentCertificateDownloadHistoryResource;
 use Modules\Sacraments\Http\Resources\SacramentCertificateResource;
 use Modules\Sacraments\Services\Certificates\SacramentCertificateService;
-use Modules\Tenants\Support\AuditLogViewerAuthorization;
 use Modules\Tenants\Support\TenantContext;
 
 class SacramentCertificateController extends Controller
@@ -43,10 +42,6 @@ class SacramentCertificateController extends Controller
             $details = $this->certificates->getCertificateViewDetails($sacramentId, $tenantId);
             $request->merge(['include_projection' => true]);
 
-            $downloadHistory = AuditLogViewerAuthorization::canViewTenantAudit($request->user())
-                ? $details['download_history']
-                : [];
-
             return response()->json([
                 'success' => true,
                 'data' => [
@@ -55,7 +50,7 @@ class SacramentCertificateController extends Controller
                         : null,
                     'live_projection' => $details['live_projection'] ?? null,
                     'download_history' => SacramentCertificateDownloadHistoryResource::collection(
-                        collect($downloadHistory)
+                        collect($details['download_history'])
                     ),
                 ],
             ]);

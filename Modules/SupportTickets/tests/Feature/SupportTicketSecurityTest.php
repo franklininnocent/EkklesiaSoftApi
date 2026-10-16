@@ -3,6 +3,7 @@
 namespace Modules\SupportTickets\Tests\Feature;
 
 use Laravel\Passport\Passport;
+use Modules\Authentication\Models\Role;
 use Modules\Authentication\Models\User;
 use Modules\RolesAndPermissions\Models\Permission;
 use Modules\SupportTickets\Database\Seeders\SupportTicketsDatabaseSeeder;
@@ -266,8 +267,7 @@ class SupportTicketSecurityTest extends TestCase
     #[Test]
     public function tenant_can_confirm_resolution_from_resolved(): void
     {
-        $opsUser = User::factory()->create(['tenant_id' => null, 'active' => 1]);
-        $this->grantPermissions($opsUser, ['support.ops.tickets.view', 'support.ops.tickets.resolve']);
+        $opsUser = $this->makeSupportOpsUser(['support.ops.tickets.view', 'support.ops.tickets.resolve']);
 
         $ticket = SupportTicket::factory()->create([
             'tenant_id' => $this->tenantA->id,
@@ -344,8 +344,7 @@ class SupportTicketSecurityTest extends TestCase
     #[Test]
     public function ops_assign_moves_new_ticket_to_in_progress(): void
     {
-        $opsUser = User::factory()->create(['tenant_id' => null, 'active' => 1]);
-        $this->grantPermissions($opsUser, [
+        $opsUser = $this->makeSupportOpsUser([
             'support.ops.tickets.view',
             'support.ops.tickets.assign',
             'support.ops.tickets.change_status',
@@ -389,6 +388,59 @@ class SupportTicketSecurityTest extends TestCase
             'trial_ends_at' => null,
             'subscription_suspended_at' => null,
         ]);
+    }
+
+    /**
+     * @param  list<string>  $permissionNames
+     */
+    private function makeSupportOpsUser(array $permissionNames): User
+    {
+        $role = Role::query()->firstOrCreate(
+            [
+                'name' => Role::SUPPORT_ADMIN,
+                'tenant_id' => null,
+            ],
+            [
+                'description' => 'Support operator',
+                'level' => Role::LEVEL_SUPPORT_ADMIN,
+                'active' => 1,
+                'is_custom' => false,
+                'role_type' => Role::ROLE_TYPE_SUPPORT,
+            ]
+        );
+
+        $permissionIds = [];
+        foreach ($permissionNames as $name) {
+            $permission = Permission::query()->firstOrCreate(
+                ['name' => $name],
+                [
+                    'display_name' => $name,
+                    'module' => 'SupportTickets',
+                    'category' => 'support',
+                    'scope' => Permission::SCOPE_PLATFORM,
+                    'active' => 1,
+                    'tenant_id' => null,
+                    'is_custom' => false,
+                ]
+            );
+            $permissionIds[] = $permission->id;
+        }
+        $role->permissions()->syncWithoutDetaching($permissionIds);
+
+        $user = User::factory()->create([
+            'tenant_id' => null,
+            'role_id' => $role->id,
+            'active' => 1,
+        ]);
+        $user->syncRoles([$role->id]);
+        if (method_exists($user, 'clearPermissionsCache')) {
+            $user->clearPermissionsCache();
+        }
+        if (method_exists($user, 'clearRequestPermissionCache')) {
+            $user->clearRequestPermissionCache();
+        }
+
+        return $user->fresh();
     }
 
     /**

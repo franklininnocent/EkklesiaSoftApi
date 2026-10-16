@@ -66,9 +66,9 @@ return [
     |
     */
     'super_admin' => [
-        'name' => 'Franklin Innocent F',
-        'email' => 'franklininnocent.fs@gmail.com',
-        'password' => 'Secrete*999', // This will be hashed during seeding
+        'name' => env('SUPER_ADMIN_NAME'),
+        'email' => env('SUPER_ADMIN_EMAIL'),
+        'password' => env('SUPER_ADMIN_PASSWORD'),
     ],
 
     /*

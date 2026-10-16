@@ -21,13 +21,23 @@ use Modules\Tenants\Services\AddressService;
 use Modules\Tenants\Services\ChurchCurrencyResolver;
 use Modules\Tenants\Services\ChurchFinancialPeriodResolver;
 
+const PARISH_NAME = 'Sacred Heart Church';
+
 require __DIR__.'/../vendor/autoload.php';
 $app = require_once __DIR__.'/../bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-const PARISH_NAME = 'Sacred Heart Church';
-const ADMIN_EMAIL = 'shadmin@gmail.com';
-const ADMIN_PASSWORD = 'TempPassword123!';
+$adminEmail = (string) config('tenants.demo.default_admin_email', 'shadmin@gmail.com');
+$adminPassword = getenv('RECOVERY_ADMIN_PASSWORD');
+if (! is_string($adminPassword) || $adminPassword === '') {
+    if (app()->environment('production')) {
+        fwrite(STDERR, "Set RECOVERY_ADMIN_PASSWORD in the environment before running this recovery script in production.\n");
+        exit(1);
+    }
+    $adminPassword = (string) config('tenants.demo.default_admin_password', 'TempPassword123!');
+}
+
+define('ADMIN_EMAIL', $adminEmail);
 
 $existing = User::withTrashed()->where('email', ADMIN_EMAIL)->first();
 if ($existing) {
@@ -35,7 +45,7 @@ if ($existing) {
         $existing->restore();
     }
     $existing->forceFill([
-        'password' => Hash::make(ADMIN_PASSWORD),
+        'password' => Hash::make($adminPassword),
         'active' => 1,
         'force_password_change' => false,
         'deleted_at' => null,
@@ -56,7 +66,7 @@ if (! $stateId) {
 $superAdmin = User::where('email', 'franklininnocent.fs@gmail.com')->first();
 $createdBy = $superAdmin?->id;
 
-DB::transaction(function () use ($countryId, $stateId, $createdBy) {
+DB::transaction(function () use ($countryId, $stateId, $createdBy, $adminPassword) {
     $plan = 'enterprise';
     $planModel = SubscriptionPlan::query()->where('key', $plan)->first();
     $features = $planModel?->features
@@ -134,7 +144,7 @@ DB::transaction(function () use ($countryId, $stateId, $createdBy) {
         'user_type' => User::USER_TYPE_PRIMARY_CONTACT,
         'is_primary_admin' => true,
         'role_id' => $adminRole->id,
-        'password' => Hash::make(ADMIN_PASSWORD),
+        'password' => Hash::make($adminPassword),
         'active' => 1,
         'force_password_change' => false,
         'password_changed_at' => now(),
@@ -153,5 +163,5 @@ DB::transaction(function () use ($countryId, $stateId, $createdBy) {
     }
 
     echo "Created tenant #{$tenant->id} (".PARISH_NAME.")\n";
-    echo "Admin user #{$primaryUser->id} email=".ADMIN_EMAIL.' password='.ADMIN_PASSWORD."\n";
+    echo "Admin user #{$primaryUser->id} email=".ADMIN_EMAIL." (password not printed)\n";
 });

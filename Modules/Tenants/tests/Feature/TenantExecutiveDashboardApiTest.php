@@ -276,7 +276,10 @@ class TenantExecutiveDashboardApiTest extends TestCase
     #[Test]
     public function worship_is_forbidden_when_mass_intentions_feature_is_off(): void
     {
-        $tenant = Tenant::factory()->create(['features' => []]);
+        $tenant = Tenant::factory()->create([
+            'plan' => 'starter',
+            'features' => ['donations', 'events', 'groups'],
+        ]);
         $user = User::factory()->create(['tenant_id' => $tenant->id]);
         $this->grantUserPermissions($user, ['families.view', 'mass.intentions.view']);
 

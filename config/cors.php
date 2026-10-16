@@ -19,12 +19,11 @@ return [
 
     'allowed_methods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 
-    'allowed_origins' => array_values(array_unique(array_filter([
-        'http://localhost:4200',
-        'http://127.0.0.1:4200',
-        env('FRONTEND_URL', 'http://localhost:4200'),
+    'allowed_origins' => \App\Support\CorsAllowedOrigins::resolve(
+        env('APP_ENV', 'production'),
+        env('FRONTEND_URL'),
         env('MARKETING_URL'),
-    ]))),
+    ),
 
     'allowed_origins_patterns' => [],
 

@@ -854,6 +854,7 @@ final class SacramentsDemoSeederEngine
         Family::query()
             ->where('tenant_id', $this->tenantId)
             ->where('status', 'active')
+            ->where('notes', 'not like', '%'.CompactDemoMarkers::MARKER.'%')
             ->with(['members' => fn ($q) => $q->whereNull('deleted_at')])
             ->orderBy('id')
             ->limit(3000)

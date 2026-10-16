@@ -31,12 +31,14 @@ final class FamilyDashboardCache
         int $tenantId,
         int $version,
         string $filterHash,
+        string $scope,
         bool $includeContributions,
         bool $includePastoral,
     ): string {
         $flags = ($includeContributions ? 'c1' : 'c0').($includePastoral ? 'p1' : 'p0');
+        $scopeKey = $scope === 'ui' ? 'ui' : 'full';
 
-        return "family_dashboard:{$tenantId}:{$version}:{$flags}:{$filterHash}";
+        return "family_dashboard:{$tenantId}:{$version}:{$scopeKey}:{$flags}:{$filterHash}";
     }
 
     private static function versionKey(int $tenantId): string

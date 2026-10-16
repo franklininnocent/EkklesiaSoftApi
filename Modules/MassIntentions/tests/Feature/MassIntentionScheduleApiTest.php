@@ -12,10 +12,12 @@ use Modules\MassIntentions\Support\MassIntentionStatus;
 use Modules\MassIntentions\Support\MassObligationStatus;
 use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Tenants\Models\Tenant;
+use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
 use Modules\MassIntentions\Tests\Support\SkipsLegacyMassObligationWorkflow;
 use Tests\TestCase;
 
+#[Group('legacy-mass-obligation')]
 class MassIntentionScheduleApiTest extends TestCase
 {
     use SkipsLegacyMassObligationWorkflow;

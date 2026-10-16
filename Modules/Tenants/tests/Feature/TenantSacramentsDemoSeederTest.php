@@ -128,7 +128,7 @@ class TenantSacramentsDemoSeederTest extends TestCase
         }
 
         putenv('TENANT_DEMO_TENANT_ID='.$tenant->id);
-        putenv(SacramentsDemoMarkers::ENV_TARGET.'=130');
+        putenv(SacramentsDemoMarkers::ENV_TARGET.'='.SacramentsDemoMarkers::DEFAULT_TARGET);
 
         $this->seed(TenantSacramentsDemoSeeder::class);
         $firstCount = Sacrament::query()
@@ -136,7 +136,7 @@ class TenantSacramentsDemoSeederTest extends TestCase
             ->where('notes', 'like', '%'.SacramentsDemoMarkers::MARKER.'%')
             ->count();
 
-        $this->assertGreaterThanOrEqual(100, $firstCount);
+        $this->assertGreaterThanOrEqual(SacramentsDemoVerifier::MIN_DEMO_ROWS, $firstCount);
 
         $this->seed(TenantSacramentsDemoSeeder::class);
         $secondCount = Sacrament::query()

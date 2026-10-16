@@ -46,8 +46,8 @@ class StoreFamilyMemberRequest extends FormRequest
             'middle_name' => ['nullable', 'string', 'max:100'],
             'last_name' => [$linkingExistingPerson ? 'nullable' : 'required', 'string', 'max:100'],
 
-            // Demographics — required for new parish members; legacy updates may omit via UpdateFamilyMemberRequest.
-            'date_of_birth' => ['required', 'date', 'before:today'],
+            // Demographics — required for new parish members; linking an existing Person uses Person.date_of_birth (ADR-24).
+            'date_of_birth' => [$linkingExistingPerson ? 'nullable' : 'required', 'date', 'before:today'],
             'gender' => ['nullable', 'in:male,female,other'],
             'relationship_to_head' => ['required', 'in:self,spouse,son,daughter,father,mother,brother,sister,grandfather,grandmother,grandson,granddaughter,uncle,aunt,nephew,niece,cousin,other'],
             'marital_status' => ['nullable', 'in:single,married,widowed,separated,divorced'],

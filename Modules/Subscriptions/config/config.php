@@ -37,4 +37,9 @@ return [
     'public_api' => [
         'cache_seconds' => (int) env('SUBSCRIPTIONS_PUBLIC_PLANS_CACHE', 300),
     ],
+
+    'billing' => [
+        'reconciliation_scheduler_enabled' => (bool) env('BILLING_RECONCILIATION_SCHEDULER_ENABLED', true),
+        'reconciliation_time' => env('BILLING_RECONCILIATION_TIME', '03:15'),
+    ],
 ];

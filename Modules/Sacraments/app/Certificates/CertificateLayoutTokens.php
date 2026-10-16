@@ -4,7 +4,7 @@ namespace Modules\Sacraments\Certificates;
 
 /**
  * Canonical certificate layout + typography tokens (mm).
- * Keep in sync with EkklesiaSoftUi/src/styles/certificate-tokens.scss
+ * Keep in sync with EkklesiaNexusUi/src/styles/certificate-tokens.scss
  */
 final class CertificateLayoutTokens
 {

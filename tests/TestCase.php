@@ -4,6 +4,7 @@ namespace Tests;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
+use Illuminate\Support\Facades\Cache;
 use Laravel\Passport\Passport;
 use Modules\Authentication\Models\User;
 use Modules\Tenants\Models\Tenant;
@@ -19,6 +20,7 @@ abstract class TestCase extends BaseTestCase
     protected function setUp(): void
     {
         parent::setUp();
+        Cache::flush();
         User::flushRequestPermissionCache();
         TenantTimezone::flush();
     }

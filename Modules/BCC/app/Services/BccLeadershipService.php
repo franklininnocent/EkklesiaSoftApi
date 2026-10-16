@@ -157,15 +157,11 @@ class BccLeadershipService
         return $leader->load('member.family');
     }
 
-    public function terminate(int $tenantId, string $bccId, string $leaderId, array $payload): BCCLeader
+    public function terminate(int $tenantId, string $bccId, string $leaderId, array $payload, ?BCCLeader $resolvedLeader = null): BCCLeader
     {
         $this->membershipService->findBcc($tenantId, $bccId);
 
-        $leader = BCCLeader::query()
-            ->where('bcc_id', $bccId)
-            ->where('is_active', true)
-            ->whereKey($leaderId)
-            ->first();
+        $leader = $this->coalesceActiveLeadershipAssignment($tenantId, $bccId, $leaderId, $resolvedLeader);
 
         if ($leader === null) {
             throw BccDomainException::notFound('Leadership assignment not found.');
@@ -211,20 +207,25 @@ class BccLeadershipService
     {
         return DB::transaction(function () use ($tenantId, $bccId, $payload) {
             $incomingMemberId = $payload['incoming_family_member_id'];
-            $outgoingPreview = BCCLeader::query()
+            $outgoing = BCCLeader::query()
+                ->where('tenant_id', $tenantId)
                 ->where('bcc_id', $bccId)
                 ->where('is_active', true)
                 ->whereKey($payload['outgoing_leader_id'])
                 ->first();
 
-            if ($outgoingPreview !== null && $outgoingPreview->family_member_id === $incomingMemberId) {
+            if ($outgoing === null) {
+                throw BccDomainException::notFound('Leadership assignment not found.');
+            }
+
+            if ($outgoing->family_member_id === $incomingMemberId) {
                 throw new BccDomainException('Incoming leader must be a different BCC member.');
             }
 
             $outgoing = $this->terminate($tenantId, $bccId, $payload['outgoing_leader_id'], [
                 'effective_to' => $payload['outgoing_effective_to'],
                 'exit_reason' => $payload['outgoing_exit_reason'],
-            ]);
+            ], $outgoing);
 
             $incoming = $this->assign($tenantId, $bccId, [
                 'family_member_id' => $incomingMemberId,
@@ -254,6 +255,28 @@ class BccLeadershipService
                 'incoming' => $incoming,
             ];
         });
+    }
+
+    private function coalesceActiveLeadershipAssignment(
+        int $tenantId,
+        string $bccId,
+        string $leaderId,
+        ?BCCLeader $resolvedLeader,
+    ): ?BCCLeader {
+        if ($resolvedLeader !== null
+            && (int) $resolvedLeader->tenant_id === $tenantId
+            && $resolvedLeader->bcc_id === $bccId
+            && $resolvedLeader->is_active
+            && (string) $resolvedLeader->getKey() === (string) $leaderId) {
+            return $resolvedLeader;
+        }
+
+        return BCCLeader::query()
+            ->where('tenant_id', $tenantId)
+            ->where('bcc_id', $bccId)
+            ->where('is_active', true)
+            ->whereKey($leaderId)
+            ->first();
     }
 
     private function requireMemberInBcc(int $tenantId, string $bccId, string $familyMemberId): FamilyMember

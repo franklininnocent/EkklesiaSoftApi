@@ -9,7 +9,15 @@ use Modules\Subscriptions\Http\Controllers\Admin\SubscriptionAuditController;
 use Modules\Subscriptions\Http\Controllers\Admin\SubscriptionPolicyController;
 use Modules\Subscriptions\Http\Controllers\Admin\TenantSubscriptionController;
 use Modules\Subscriptions\Http\Controllers\Admin\UpgradeRequestController;
+use Modules\Subscriptions\Http\Controllers\Admin\BillingAdminController;
+use Modules\Subscriptions\Http\Controllers\Admin\BillingOperationsController;
+use Modules\Subscriptions\Http\Controllers\Admin\BillingAuditController;
+use Modules\Subscriptions\Http\Controllers\Admin\BillingInvestigationController;
+use Modules\Subscriptions\Http\Controllers\Admin\BillingTenantAgreementController;
+use Modules\Subscriptions\Http\Controllers\Admin\BillingPromotionController;
+use Modules\Subscriptions\Http\Controllers\BillingWebhookController;
 use Modules\Subscriptions\Http\Controllers\PublicPlanController;
+use Modules\Subscriptions\Http\Controllers\Tenant\TenantBillingController;
 use Modules\Subscriptions\Http\Controllers\Tenant\TenantEntitlementController;
 use Modules\Subscriptions\Http\Controllers\Tenant\TenantUpgradeRequestController;
 
@@ -27,6 +35,10 @@ Route::get('/public/subscription-plans', [PublicPlanController::class, 'index'])
     ->middleware('api.throttle:public_catalog')
     ->name('subscriptions.public.plans');
 
+Route::post('/billing/webhooks/razorpay', [BillingWebhookController::class, 'razorpay'])
+    ->middleware('api.throttle:public_forms')
+    ->name('subscriptions.billing.webhooks.razorpay');
+
 Route::middleware('auth:api')->group(function () {
     Route::prefix('tenant')->name('subscriptions.tenant.')->group(function () {
         Route::get('/entitlements', [TenantEntitlementController::class, 'entitlements'])->name('entitlements');
@@ -37,6 +49,25 @@ Route::middleware('auth:api')->group(function () {
         Route::get('/subscription/upgrade-requests', [TenantUpgradeRequestController::class, 'index'])->name('upgrade-requests.index');
         Route::post('/subscription/upgrade-requests', [TenantUpgradeRequestController::class, 'store'])
             ->middleware('throttle:10,60')->name('upgrade-requests.store');
+
+        Route::prefix('billing')->name('billing.')->group(function () {
+            Route::get('/availability', [TenantBillingController::class, 'availability'])->name('availability');
+            Route::post('/quotes', [TenantBillingController::class, 'quote'])->middleware('throttle:30,1')->name('quotes');
+            Route::post('/orders', [TenantBillingController::class, 'createOrder'])->middleware('throttle:20,1')->name('orders.store');
+            Route::get('/orders/{order}', [TenantBillingController::class, 'showOrder'])->whereNumber('order')->name('orders.show');
+            Route::post('/orders/{order}/verify', [TenantBillingController::class, 'verify'])->whereNumber('order')->middleware('throttle:30,1')->name('orders.verify');
+            Route::get('/invoices', [TenantBillingController::class, 'invoices'])->name('invoices.index');
+            Route::get('/credit-notes', [TenantBillingController::class, 'creditNotes'])->name('credit-notes.index');
+            Route::get('/credit-notes/{creditNote}/download', [TenantBillingController::class, 'downloadCreditNote'])
+                ->whereNumber('creditNote')->name('credit-notes.download');
+            Route::get('/invoices/{invoice}', [TenantBillingController::class, 'showInvoice'])->whereNumber('invoice')->name('invoices.show');
+            Route::get('/invoices/{invoice}/download', [TenantBillingController::class, 'downloadInvoice'])->whereNumber('invoice')->name('invoices.download');
+            Route::post('/offline-claims', [TenantBillingController::class, 'submitOfflineClaim'])->middleware('throttle:10,60')->name('offline-claims.store');
+            Route::post('/offline-claims/{claim}/evidence', [TenantBillingController::class, 'uploadOfflineClaimEvidence'])
+                ->whereNumber('claim')->middleware('throttle:10,60')->name('offline-claims.evidence');
+            Route::post('/payable-orders', [TenantBillingController::class, 'createPayableOrder'])->middleware('throttle:20,1')->name('payable-orders.store');
+            Route::get('/offline-instructions', [TenantBillingController::class, 'offlineInstructions'])->name('offline-instructions');
+        });
     });
 
     Route::prefix('admin/subscriptions')->name('subscriptions.admin.')->group(function () {
@@ -120,5 +151,77 @@ Route::middleware('auth:api')->group(function () {
 
         Route::get('/audits', [SubscriptionAuditController::class, 'catalog'])
             ->middleware('subscriptions.platform.permission:subscriptions.audit.view')->name('audits.catalog');
+
+        $billingView = 'subscriptions.platform.permission:subscriptions.billing.view';
+        $gateway = 'subscriptions.platform.permission:subscriptions.gateway.manage';
+        $payments = 'subscriptions.platform.permission:subscriptions.payments.view';
+        $refunds = 'subscriptions.platform.permission:subscriptions.refunds.approve';
+        $reconciliation = 'subscriptions.platform.permission:subscriptions.reconciliation.run';
+        $adjustments = 'subscriptions.platform.permission:subscriptions.adjustments.manage';
+        Route::prefix('billing')->name('billing.')->group(function () use ($billingView, $gateway, $payments, $refunds, $reconciliation, $adjustments) {
+            Route::get('/controls', [BillingAdminController::class, 'showControls'])->middleware($billingView)->name('controls.show');
+            Route::put('/controls', [BillingAdminController::class, 'updateControls'])->middleware($gateway)->name('controls.update');
+            Route::put('/gateways/{environment}', [BillingAdminController::class, 'updateGateway'])->middleware($gateway)->name('gateways.update');
+            Route::post('/gateways/{environment}/validate', [BillingAdminController::class, 'validateGateway'])->middleware($gateway)->name('gateways.validate');
+            Route::get('/offline-claims', [BillingAdminController::class, 'offlineClaimsIndex'])
+                ->middleware('subscriptions.platform.permission:subscriptions.offline.review')->name('offline-claims.index');
+            Route::get('/offline-claims/{claim}', [BillingAdminController::class, 'showOfflineClaim'])
+                ->middleware('subscriptions.platform.permission:subscriptions.offline.review')->whereNumber('claim')->name('offline-claims.show');
+            Route::get('/offline-methods', [BillingAdminController::class, 'offlineMethodsIndex'])->middleware($billingView)->name('offline-methods.index');
+            Route::patch('/offline-methods/{method}', [BillingAdminController::class, 'updateOfflineMethod'])->middleware($gateway)->whereNumber('method')->name('offline-methods.update');
+            Route::post('/offline-claims/{claim}/approve', [BillingAdminController::class, 'approveOfflineClaim'])
+                ->middleware('subscriptions.platform.permission:subscriptions.offline.review')->whereNumber('claim')->name('offline-claims.approve');
+            Route::post('/offline-claims/{claim}/reject', [BillingAdminController::class, 'rejectOfflineClaim'])
+                ->middleware('subscriptions.platform.permission:subscriptions.offline.review')->whereNumber('claim')->name('offline-claims.reject');
+            Route::post('/offline-claims/{claim}/request-info', [BillingAdminController::class, 'requestOfflineClaimInfo'])
+                ->middleware('subscriptions.platform.permission:subscriptions.offline.review')->whereNumber('claim')->name('offline-claims.request-info');
+            Route::get('/tenant-price-assignments', [BillingAdminController::class, 'tenantPriceAssignmentsIndex'])
+                ->middleware($adjustments)->name('tenant-price-assignments.index');
+            Route::post('/tenant-price-assignments', [BillingAdminController::class, 'assignTenantPrice'])
+                ->middleware($adjustments)->name('tenant-price-assignments.store');
+            Route::post('/tenant-price-assignments/{assignment}/revoke', [BillingAdminController::class, 'revokeTenantPriceAssignment'])
+                ->middleware($adjustments)->whereNumber('assignment')->name('tenant-price-assignments.revoke');
+
+            Route::get('/promotions', [BillingPromotionController::class, 'index'])->middleware($billingView)->name('promotions.index');
+            Route::post('/promotions', [BillingPromotionController::class, 'store'])->middleware($adjustments)->name('promotions.store');
+            Route::get('/promotions/{promotion}', [BillingPromotionController::class, 'show'])->middleware($billingView)->whereNumber('promotion')->name('promotions.show');
+            Route::patch('/promotions/{promotion}', [BillingPromotionController::class, 'update'])->middleware($adjustments)->whereNumber('promotion')->name('promotions.update');
+            Route::post('/promotions/{promotion}/status', [BillingPromotionController::class, 'setStatus'])->middleware($adjustments)->whereNumber('promotion')->name('promotions.status');
+
+            Route::get('/orders', [BillingOperationsController::class, 'ordersIndex'])->middleware($payments)->name('orders.index');
+            Route::get('/orders/{order}', [BillingOperationsController::class, 'orderShow'])->middleware($payments)->whereNumber('order')->name('orders.show');
+            Route::get('/invoices', [BillingOperationsController::class, 'invoicesIndex'])->middleware($payments)->name('invoices.index');
+            Route::get('/invoices/{invoice}', [BillingOperationsController::class, 'invoiceShow'])->middleware($payments)->whereNumber('invoice')->name('invoices.show');
+            Route::get('/invoices/{invoice}/download', [BillingOperationsController::class, 'adminDownloadInvoice'])->middleware($payments)->whereNumber('invoice')->name('invoices.download');
+
+            Route::get('/refunds', [BillingOperationsController::class, 'refundsIndex'])->middleware($refunds)->name('refunds.index');
+            Route::post('/refunds', [BillingOperationsController::class, 'requestRefund'])->middleware($refunds)->name('refunds.store');
+            Route::post('/refunds/{refund}/approve', [BillingOperationsController::class, 'approveRefund'])->middleware($refunds)->whereNumber('refund')->name('refunds.approve');
+            Route::post('/credit-notes', [BillingOperationsController::class, 'issueCreditNote'])->middleware($adjustments)->name('credit-notes.store');
+            Route::get('/credit-notes/{creditNote}/download', [BillingOperationsController::class, 'adminDownloadCreditNote'])
+                ->middleware($payments)->whereNumber('creditNote')->name('credit-notes.download');
+            Route::get('/operations/summary', [BillingOperationsController::class, 'operationsSummary'])
+                ->middleware($billingView)->name('operations.summary');
+
+            Route::get('/tenant-agreements', [BillingTenantAgreementController::class, 'index'])
+                ->middleware($adjustments)->name('tenant-agreements.index');
+            Route::post('/tenant-agreements', [BillingTenantAgreementController::class, 'store'])
+                ->middleware('subscriptions.platform.permission:'.\Modules\Subscriptions\Support\SubscriptionsPermissionCatalog::AGREEMENTS_MANAGE)
+                ->name('tenant-agreements.store');
+            Route::post('/tenant-agreements/{agreement}/revoke', [BillingTenantAgreementController::class, 'revoke'])
+                ->middleware('subscriptions.platform.permission:'.\Modules\Subscriptions\Support\SubscriptionsPermissionCatalog::AGREEMENTS_MANAGE)
+                ->whereNumber('agreement')->name('tenant-agreements.revoke');
+
+            Route::get('/webhooks/health', [BillingOperationsController::class, 'webhookHealth'])->middleware($billingView)->name('webhooks.health');
+            Route::post('/reconciliation/runs', [BillingOperationsController::class, 'runReconciliation'])->middleware($reconciliation)->name('reconciliation.run');
+
+            Route::get('/audit-events', [BillingAuditController::class, 'index'])
+                ->middleware('subscriptions.platform.permission:subscriptions.audit.view')->name('audit-events.index');
+
+            Route::get('/investigations', [BillingInvestigationController::class, 'index'])
+                ->middleware($payments)->name('investigations.index');
+            Route::post('/investigations/{investigation}/resolve', [BillingInvestigationController::class, 'resolve'])
+                ->middleware($payments)->whereNumber('investigation')->name('investigations.resolve');
+        });
     });
 });

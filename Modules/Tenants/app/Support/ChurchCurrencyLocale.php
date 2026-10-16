@@ -3,7 +3,7 @@
 namespace Modules\Tenants\Support;
 
 /**
- * BCP47 locales for money display — keep in sync with EkklesiaSoftUi cf-intl.util.ts CURRENCY_LOCALES.
+ * BCP47 locales for money display — keep in sync with EkklesiaNexusUi cf-intl.util.ts CURRENCY_LOCALES.
  */
 final class ChurchCurrencyLocale
 {

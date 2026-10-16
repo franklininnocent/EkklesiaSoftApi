@@ -25,8 +25,16 @@ class FamilyDashboardRequest extends FormRequest
             'from' => ['nullable', 'date_format:Y-m-d', 'required_if:period,custom'],
             'to' => ['nullable', 'date_format:Y-m-d', 'required_if:period,custom', 'after_or_equal:from'],
             'refresh' => ['nullable', 'boolean'],
+            'scope' => ['nullable', Rule::in(['ui', 'full'])],
             'tenant_id' => ['prohibited'],
         ];
+    }
+
+    public function dashboardScope(): string
+    {
+        $scope = (string) ($this->input('scope') ?? 'full');
+
+        return $scope === 'ui' ? 'ui' : 'full';
     }
 
     public function withValidator(Validator $validator): void

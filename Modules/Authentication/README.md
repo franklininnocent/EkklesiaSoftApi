@@ -111,15 +111,17 @@ php artisan vendor:publish --tag=authentication-config
 
 ---
 
-## 🔐 Default Credentials
+## Super Admin credentials
 
-After seeding, you can login with:
+Set these keys in `EkklesiaNexusApi/.env` before seeding. They are required by `SuperAdminUserSeeder` and the full `php artisan db:seed` pipeline:
 
 ```
-Email: franklininnocent.fs@gmail.com
-Password: Secrete*999
-Role: SuperAdmin
+SUPER_ADMIN_NAME=
+SUPER_ADMIN_EMAIL=
+SUPER_ADMIN_PASSWORD=
 ```
+
+After seeding, sign in with `SUPER_ADMIN_EMAIL` and `SUPER_ADMIN_PASSWORD`. The seeded role is SuperAdmin. Do not commit real values.
 
 ---
 
@@ -165,16 +167,16 @@ POST /api/auth/login
 
 Body:
 {
-  "email": "franklininnocent.fs@gmail.com",
-  "password": "Secrete*999"
+  "email": "your-super-admin@example.com",
+  "password": "your-super-admin-password"
 }
 
 Response (200):
 {
   "user": {
     "id": 1,
-    "name": "Franklin Innocent F",
-    "email": "franklininnocent.fs@gmail.com",
+    "name": "Super Admin",
+    "email": "your-super-admin@example.com",
     "role_id": 1,
     "tenant_id": null,
     "active": 1,
@@ -213,8 +215,8 @@ Authorization: Bearer {access_token}
 Response (200):
 {
   "id": 1,
-  "name": "Franklin Innocent F",
-  "email": "franklininnocent.fs@gmail.com",
+  "name": "Super Admin",
+  "email": "your-super-admin@example.com",
   "role_id": 1,
   "role_name": "SuperAdmin",
   "role_level": 1,
@@ -378,7 +380,7 @@ ALTER TABLE `users`
 # Test login endpoint
 curl -X POST http://127.0.0.1:8000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"franklininnocent.fs@gmail.com","password":"Secrete*999"}'
+  -d '{"email":"<SUPER_ADMIN_EMAIL>","password":"<SUPER_ADMIN_PASSWORD>"}'
 
 # Test with Laravel Tinker
 php artisan tinker

@@ -44,11 +44,14 @@ class PlatformPermissionCacheSupportSessionTest extends TestCase
         ]);
         $role->permissions()->sync([$permission->id]);
 
+        // Platform role is assigned while tenant_id is null; parish home is set afterward
+        // (syncRoles blocks platform roles on parish users — see RoleHierarchyTest).
         $user = User::factory()->create([
-            'tenant_id' => $homeTenant->id,
+            'tenant_id' => null,
             'role_id' => $role->id,
         ]);
         $user->syncRoles([$role->id]);
+        $user->forceFill(['tenant_id' => $homeTenant->id])->save();
 
         app()->instance(TenantContext::class, TenantContext::fromUserAndSession($user, null));
         $user->clearPermissionsCache();

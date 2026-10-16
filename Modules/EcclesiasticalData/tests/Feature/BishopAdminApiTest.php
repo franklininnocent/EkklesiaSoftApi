@@ -184,6 +184,7 @@ class BishopAdminApiTest extends TestCase
     #[Test]
     public function it_uploads_bishop_photo(): void
     {
+        Storage::fake('local');
         Storage::fake('public');
 
         $bishop = app(BishopService::class)->createPerson([
@@ -192,12 +193,14 @@ class BishopAdminApiTest extends TestCase
         ], null, false);
 
         $response = $this->postJson("/api/ecclesiastical/bishops/{$bishop->id}/upload-photo", [
-            'image' => UploadedFile::fake()->image('bishop.jpg', 100, 100),
+            'image' => UploadedFile::fake()->image('bishop.jpg', 200, 200),
         ]);
 
         $response->assertOk()
             ->assertJsonPath('success', true)
-            ->assertJsonStructure(['data' => ['photo_path', 'photo_public_url']]);
+            ->assertJsonPath('data.has_photo', true)
+            ->assertJsonMissingPath('data.photo_path');
+        $this->assertNotEmpty($response->json('data.photo_public_url'));
 
         $this->assertNotNull($bishop->fresh()->photo_path);
     }

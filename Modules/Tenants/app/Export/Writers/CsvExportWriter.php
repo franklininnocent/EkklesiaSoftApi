@@ -40,7 +40,7 @@ class CsvExportWriter implements ExportWriter
     public function writeHeader(array $columns): void
     {
         $this->assertOpen();
-        fputcsv($this->handle, array_values($columns));
+        fputcsv($this->handle, array_values($columns), ',', '"', '\\');
         $this->headerWritten = true;
     }
 
@@ -57,7 +57,7 @@ class CsvExportWriter implements ExportWriter
             $normalized[] = $this->normalizeValue($value);
         }
 
-        fputcsv($this->handle, $normalized);
+        fputcsv($this->handle, $normalized, ',', '"', '\\');
     }
 
     public function finish(): void

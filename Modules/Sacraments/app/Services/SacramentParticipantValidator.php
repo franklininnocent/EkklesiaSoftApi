@@ -118,7 +118,12 @@ class SacramentParticipantValidator
             }
 
             $row['snapshot_json'] = $this->snapshots->build($row, $source);
-            unset($row['_resolved_member'], $row['_resolved_leadership'], $row['_resolved_person']);
+            unset(
+                $row['_resolved_member'],
+                $row['_resolved_leadership'],
+                $row['_resolved_leadership_assignment'],
+                $row['_resolved_person']
+            );
 
             $counts[$role] = ($counts[$role] ?? 0) + 1;
 
@@ -181,6 +186,11 @@ class SacramentParticipantValidator
             'family_member_id' => null,
             'person_id' => null,
             'church_leadership_id' => null,
+            'leadership_assignment_id' => $raw['leadership_assignment_id'] ?? null,
+            'baptismal_status' => $raw['baptismal_status'] ?? null,
+            'ecclesial_affiliation_code' => $raw['ecclesial_affiliation_code'] ?? null,
+            'ecclesial_affiliation_label' => $raw['ecclesial_affiliation_label'] ?? null,
+            'canonical_delegation_status' => $raw['canonical_delegation_status'] ?? null,
             'affiliation_type' => $raw['affiliation_type'] ?? null,
             'affiliation_parish_name' => $raw['affiliation_parish_name'] ?? null,
             'affiliation_parish_address' => $raw['affiliation_parish_address'] ?? null,

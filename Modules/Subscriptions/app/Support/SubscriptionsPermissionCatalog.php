@@ -38,6 +38,26 @@ final class SubscriptionsPermissionCatalog
 
     public const REVENUE_VIEW = 'subscriptions.revenue.view';
 
+    public const BILLING_VIEW = 'subscriptions.billing.view';
+
+    public const GATEWAY_MANAGE = 'subscriptions.gateway.manage';
+
+    public const GATEWAY_ACTIVATE_LIVE = 'subscriptions.gateway.activate_live';
+
+    public const PAYMENTS_VIEW = 'subscriptions.payments.view';
+
+    public const REFUNDS_APPROVE = 'subscriptions.refunds.approve';
+
+    public const RECONCILIATION_RUN = 'subscriptions.reconciliation.run';
+
+    public const ADJUSTMENTS_MANAGE = 'subscriptions.adjustments.manage';
+
+    public const OFFLINE_REVIEW = 'subscriptions.offline.review';
+
+    public const RECEIPTS_RECORD = 'subscriptions.receipts.record';
+
+    public const AGREEMENTS_MANAGE = 'subscriptions.agreements.manage';
+
     /** @var list<string> */
     public const EKKLESIA_ADMIN_DEFAULT = [
         self::PLANS_VIEW,
@@ -66,6 +86,16 @@ final class SubscriptionsPermissionCatalog
             self::POLICIES_MANAGE => ['display_name' => 'Manage subscription policies', 'description' => 'Edit default plan, thresholds, trial and tax policies'],
             self::REQUESTS_REVIEW => ['display_name' => 'Review upgrade requests', 'description' => 'Approve or reject tenant upgrade requests'],
             self::REVENUE_VIEW => ['display_name' => 'View contracted revenue', 'description' => 'View contracted subscription revenue (MRR / ARR)'],
+            self::BILLING_VIEW => ['display_name' => 'View billing operations', 'description' => 'View billing configuration and operational dashboards'],
+            self::GATEWAY_MANAGE => ['display_name' => 'Manage payment gateway', 'description' => 'Configure Razorpay and global billing switches'],
+            self::GATEWAY_ACTIVATE_LIVE => ['display_name' => 'Activate live payments', 'description' => 'Enable live Razorpay checkout'],
+            self::PAYMENTS_VIEW => ['display_name' => 'View payment records', 'description' => 'Search orders, payments, and invoices'],
+            self::REFUNDS_APPROVE => ['display_name' => 'Approve refunds', 'description' => 'Approve and execute refunds'],
+            self::RECONCILIATION_RUN => ['display_name' => 'Run reconciliation', 'description' => 'Run billing reconciliation jobs'],
+            self::ADJUSTMENTS_MANAGE => ['display_name' => 'Manage billing adjustments', 'description' => 'Correct receipts and financial adjustments'],
+            self::OFFLINE_REVIEW => ['display_name' => 'Review offline claims', 'description' => 'Verify offline payment claims'],
+            self::RECEIPTS_RECORD => ['display_name' => 'Record manual receipts', 'description' => 'Record verified offline receipts'],
+            self::AGREEMENTS_MANAGE => ['display_name' => 'Manage tenant billing agreements', 'description' => 'Negotiated prices and installment terms'],
         ];
     }
 

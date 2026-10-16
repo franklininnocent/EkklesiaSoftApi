@@ -149,6 +149,7 @@ class StoreTenantRequest extends FormRequest
             'tenant_logo.max' => 'Logo size must not exceed 5MB',
             'primary_color.regex' => 'Primary color must be a valid hex color code',
             'secondary_color.regex' => 'Secondary color must be a valid hex color code',
+            'plan.in' => 'Selected plan is not available for new churches',
         ];
     }
 
@@ -186,6 +187,7 @@ class StoreTenantRequest extends FormRequest
             'secondary_user_address.state_province' => 'secondary state/province',
             'secondary_user_address.country' => 'secondary country',
             'secondary_user_address.pin_zip_code' => 'secondary PIN/ZIP code',
+            'plan' => 'subscription plan',
         ];
     }
 

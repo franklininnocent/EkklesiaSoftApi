@@ -13,7 +13,7 @@ class MarketingSiteRevalidator
     /**
      * @return array{status: string, error: ?string}
      */
-    public function revalidatePlans(): array
+    public function revalidateMarketingSite(): array
     {
         $secret = (string) config('marketing.plan_catalog.revalidate_secret', '');
         $siteUrl = rtrim((string) config('marketing.plan_catalog.site_url', ''), '/');
@@ -41,5 +41,13 @@ class MarketingSiteRevalidator
 
             return ['status' => 'failed', 'error' => 'Marketing site revalidate request failed.'];
         }
+    }
+
+    /**
+     * @return array{status: string, error: ?string}
+     */
+    public function revalidatePlans(): array
+    {
+        return $this->revalidateMarketingSite();
     }
 }

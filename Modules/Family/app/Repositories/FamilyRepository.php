@@ -15,6 +15,7 @@ use Modules\Family\Support\FamilyQueryFilters;
 use Modules\Family\Support\MemberDirectorySearch;
 use Modules\Family\Support\MemberEducationQualification;
 use Modules\Family\Support\ParishProgressionFilter;
+use Modules\Tenants\Support\TenantQueryGuard;
 
 class FamilyRepository
 {
@@ -192,6 +193,8 @@ class FamilyRepository
      */
     public function update(Family $family, array $data): bool
     {
+        unset($data['tenant_id']);
+
         return $family->update($data);
     }
 
@@ -389,34 +392,25 @@ class FamilyRepository
      */
     public function syncHeadOfFamily(string $familyId): void
     {
-        $family = Family::find($familyId);
+        $family = TenantQueryGuard::apply(Family::query()->whereKey($familyId))->first();
         if (! $family) {
             return;
         }
 
-        // Find active member with relationship='self' or 'head'
-        $headMember = FamilyMember::where('family_id', $familyId)
+        $headMember = FamilyMember::query()
+            ->where('family_id', $familyId)
             ->whereIn('relationship_to_head', ['self', 'head'])
-            ->where('status', 'active')
+            ->orderByRaw("CASE WHEN status = 'active' THEN 0 ELSE 1 END")
+            ->orderBy('created_at')
             ->first();
 
-        if ($headMember) {
-            // Update head_of_family to match the active head member's full name
-            $family->update([
-                'head_of_family' => trim("{$headMember->first_name} {$headMember->last_name}"),
-            ]);
-        } else {
-            // If no active head member, try to find any member with relationship='self' or 'head'
-            $headMember = FamilyMember::where('family_id', $familyId)
-                ->whereIn('relationship_to_head', ['self', 'head'])
-                ->first();
-
-            if ($headMember) {
-                $family->update([
-                    'head_of_family' => trim("{$headMember->first_name} {$headMember->last_name}"),
-                ]);
-            }
+        if ($headMember === null) {
+            return;
         }
+
+        $family->update([
+            'head_of_family' => trim("{$headMember->first_name} {$headMember->last_name}"),
+        ]);
     }
 
     /**
