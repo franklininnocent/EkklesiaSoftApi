@@ -2,6 +2,7 @@
 
 namespace Modules\Tenants\Console\Commands;
 
+use App\Support\CorsAllowedOrigins;
 use Illuminate\Console\Command;
 use Modules\Tenants\Support\TenantRlsManager;
 
@@ -21,11 +22,24 @@ class PlatformProductionCheck extends Command
             $this->check('APP_KEY is set', fn () => (string) config('app.key') !== '', true),
             $this->check('TENANT_ORM_GLOBAL_SCOPE enabled', fn () => (bool) config('tenants.isolation.orm_global_scope', false), true),
             $this->check('TENANT_RLS_ENABLED on PostgreSQL', function (): bool {
-                if (config('database.default') !== 'pgsql') {
-                    return true;
+                return TenantRlsManager::isEnabled();
+            }, TenantRlsManager::driverIsPgsql()),
+            $this->check('PostgreSQL wave-1 RLS policies present', function (): bool {
+                return TenantRlsManager::waveOnePoliciesPresent();
+            }, TenantRlsManager::driverIsPgsql()),
+            $this->check('TENANT_SUBSCRIPTION_VIEW_ONLY_LOCKED_ENFORCEMENT is true', fn () => (bool) config('tenants.subscription.view_only_locked_enforcement', false), true),
+            $this->check('CORS origins exclude localhost', function (): bool {
+                if (! $this->hostsArePublic([env('FRONTEND_URL'), env('MARKETING_URL')])) {
+                    return false;
                 }
 
-                return TenantRlsManager::isEnabled();
+                $origins = CorsAllowedOrigins::resolve(
+                    (string) config('app.env'),
+                    env('FRONTEND_URL'),
+                    env('MARKETING_URL'),
+                );
+
+                return $this->hostsArePublic($origins);
             }, true),
             $this->check('Queue driver is not sync', fn () => config('queue.default') !== 'sync', $strict),
             $this->check('Cache store is redis', fn () => config('cache.default') === 'redis', $strict),
@@ -75,5 +89,24 @@ class PlatformProductionCheck extends Command
         }
 
         return ['label' => $label, 'status' => $strict ? 'FAIL' : 'WARN'];
+    }
+
+    /**
+     * @param  iterable<int, mixed>  $urls
+     */
+    private function hostsArePublic(iterable $urls): bool
+    {
+        foreach ($urls as $url) {
+            if (! is_string($url) || trim($url) === '') {
+                continue;
+            }
+
+            $host = parse_url($url, PHP_URL_HOST);
+            if (in_array($host, ['localhost', '127.0.0.1'], true)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

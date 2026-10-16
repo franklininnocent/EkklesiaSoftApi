@@ -15,6 +15,7 @@ use Modules\Family\Support\FamilyQueryFilters;
 use Modules\Family\Support\MemberDirectorySearch;
 use Modules\Family\Support\MemberEducationQualification;
 use Modules\Family\Support\ParishProgressionFilter;
+use Modules\Tenants\Support\TenantQueryGuard;
 
 class FamilyRepository
 {
@@ -389,7 +390,13 @@ class FamilyRepository
      */
     public function syncHeadOfFamily(string $familyId): void
     {
-        $family = Family::find($familyId);
+        $query = Family::query()->whereKey($familyId);
+        $tenantId = TenantQueryGuard::effectiveTenantId();
+        if ($tenantId !== null) {
+            $query->where('tenant_id', $tenantId);
+        }
+
+        $family = $query->first();
         if (! $family) {
             return;
         }

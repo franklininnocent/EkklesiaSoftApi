@@ -4,10 +4,15 @@ namespace Modules\Tenants\Tests\Feature;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
+use Laravel\Passport\Passport;
+use Modules\Authentication\Models\Role;
+use Modules\Authentication\Models\User;
 use Modules\BCC\Models\BCC;
 use Modules\Donations\Models\DonationPayment;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
+use Modules\MassIntentions\Database\Seeders\MassIntentionsPermissionSeeder;
+use Modules\MassIntentions\Models\MassCelebration;
 use Modules\PastoralCare\Models\PastoralCareRequest;
 use Modules\Sacraments\Models\Sacrament;
 use Modules\Tenants\Models\TenantDataExport;
@@ -156,6 +161,30 @@ class CrossTenantPenetrationSuiteTest extends TestCase
             'name' => 'Victim BCC',
             'deleted_at' => null,
         ]);
+    }
+
+    #[Test]
+    public function mass_intention_celebrations_are_blocked_across_tenants(): void
+    {
+        $this->seed(MassIntentionsPermissionSeeder::class);
+        $role = Role::query()->find($this->attacker->role_id);
+        $this->assertNotNull($role);
+        $this->grantPermissions($role, ['mass.intentions.view']);
+        $this->refreshUserPermissionState($this->attacker);
+        Passport::actingAs($this->attacker->fresh());
+
+        $celebration = MassCelebration::query()->create([
+            'tenant_id' => $this->victimTenant->id,
+            'celebrated_on' => now()->toDateString(),
+            'status' => 'scheduled',
+            'created_by_user_id' => User::factory()->create(['tenant_id' => $this->victimTenant->id])->id,
+        ]);
+
+        $this->assertDeniedCrossTenantAccess(
+            'GET',
+            '/api/tenant/mass-intentions/celebrations/'.$celebration->id.'/workspace',
+            [403, 404],
+        );
     }
 
     #[Test]

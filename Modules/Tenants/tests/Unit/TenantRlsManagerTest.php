@@ -31,6 +31,16 @@ class TenantRlsManagerTest extends TestCase
         $this->assertFalse(TenantRlsManager::isEnabled());
     }
 
+    public function test_wave_one_policy_inventory_is_incomplete_on_non_pgsql(): void
+    {
+        if (DB::getDriverName() === 'pgsql') {
+            $this->markTestSkipped('Non-pgsql inventory assertion only.');
+        }
+
+        $this->assertFalse(TenantRlsManager::waveOnePoliciesPresent());
+        $this->assertSame(TenantRlsManager::WAVE_ONE_TABLES, TenantRlsManager::missingWaveOnePolicyTables());
+    }
+
     public function test_policy_sql_uses_fail_closed_tenant_guc(): void
     {
         $sql = TenantRlsManager::policySql('families');

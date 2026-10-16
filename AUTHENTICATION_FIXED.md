@@ -20,9 +20,8 @@
    - Requires: `Authorization: Bearer {token}` header
 
 4. **SuperAdmin Account** ✅
-   - Email: `franklininnocent.fs@gmail.com`
-   - Password: `Secrete*999`
    - Role: SuperAdmin (Level 1)
+   - Credentials are operator-managed and must not be stored in the repository. Use the environment vault or an approved local `.env` — never commit passwords.
 
 ### Technical Implementation:
 
@@ -55,10 +54,7 @@
 
 ### Testing:
 ```bash
-# Test script available
-./test_superadmin_auth.sh
-
-# Expected result: ✅ Authentication working!
+php artisan test --filter=Authentication
 ```
 
 ### Next Steps for Frontend:

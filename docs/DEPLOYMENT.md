@@ -372,7 +372,16 @@ PLATFORM_HEALTH_TOKEN=<RANDOM_TOKEN>
 
 `APP_ENV=production` and `APP_DEBUG=false` apply to UAT as well as Production so debug pages and verbose errors stay off. UAT still uses its own hostnames, database, mail sink, and payment test credentials.
 
-`FRONTEND_URL` and `MARKETING_URL` are the only CORS origins the application should allow. Do not set `TRUSTED_PROXIES=*`.
+`FRONTEND_URL` and `MARKETING_URL` are the only CORS origins the application should allow. Loopback hosts (`localhost`, `127.0.0.1`) are ignored when `APP_ENV=production`, even if those variables accidentally contain a local URL. Do not set `TRUSTED_PROXIES=*`.
+
+UAT and Production must also set:
+
+```bash
+TENANT_SUBSCRIPTION_VIEW_ONLY_LOCKED_ENFORCEMENT=true
+TENANT_RLS_ENABLED=true
+```
+
+Do not flip those defaults in local or PHPUnit environments. `php artisan platform:production-check` fails in production if either flag is off (RLS check applies when the database driver is PostgreSQL).
 
 Passport private and public keys belong in `shared/storage` (`oauth-private.key`, `oauth-public.key`). Generate them once per environment with `php artisan passport:keys` after the first successful boot. Do not copy keys from another environment and do not commit them. OAuth clients are created per environment with `php artisan passport:client` as an approved setup step, not on every release.
 
@@ -414,6 +423,8 @@ php artisan migrate:status
 `--pretend` prints SQL. Read it before `--force`. Never run `migrate:fresh`, `migrate:refresh`, `db:wipe`, or drop the database.
 
 These migrations include tenant, family, donation, and subscription tables. A failed migration is a stop. Application rollback to the previous release does not undo schema changes. Recovery is restore-from-backup under a separate approval, or a forward fix.
+
+**Demo data:** Production deploy must **not** run `php artisan tenants:seed-demo-data`, `tenants:seed-load-test-data`, or `migrate:fresh`. Parish demo fixtures are for local/staging only (`docs/platform/tenant-demo-data-seeding.md`). Validate with `php artisan tenants:validate-demo-data --tenant=<id> --expect-compact` when a compact demo tenant is intentionally seeded outside production.
 
 ## 13. Switch the current release
 

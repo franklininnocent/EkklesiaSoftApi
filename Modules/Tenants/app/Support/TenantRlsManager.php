@@ -40,6 +40,32 @@ final class TenantRlsManager
         return DB::getDriverName() === 'pgsql';
     }
 
+    public static function driverIsPgsql(): bool
+    {
+        return DB::getDriverName() === 'pgsql';
+    }
+
+    /**
+     * @return list<string>
+     */
+    public static function missingWaveOnePolicyTables(): array
+    {
+        if (! self::driverIsPgsql()) {
+            return self::WAVE_ONE_TABLES;
+        }
+
+        $tables = collect(DB::select(
+            "SELECT tablename FROM pg_policies WHERE policyname LIKE '%_tenant_isolation'"
+        ))->pluck('tablename')->all();
+
+        return array_values(array_diff(self::WAVE_ONE_TABLES, $tables));
+    }
+
+    public static function waveOnePoliciesPresent(): bool
+    {
+        return self::missingWaveOnePolicyTables() === [];
+    }
+
     public static function shouldApplyForHttp(Request $request): bool
     {
         if (! self::isEnabled() || ! $request->is('api/*')) {
