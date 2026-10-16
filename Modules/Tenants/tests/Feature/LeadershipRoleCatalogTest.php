@@ -137,6 +137,11 @@ class LeadershipRoleCatalogTest extends TestCase
             $tenantB,
             Role::TENANT_ADMINISTRATOR,
             $this->parishAdminPermissionNames(),
+            [
+                'is_custom' => false,
+                'level' => 1,
+                'role_classification' => Role::CLASSIFICATION_PROTECTED_SYSTEM,
+            ]
         )['user'];
         Passport::actingAs($userB);
 
@@ -164,6 +169,11 @@ class LeadershipRoleCatalogTest extends TestCase
             $tenantB,
             Role::TENANT_ADMINISTRATOR,
             $this->parishAdminPermissionNames(),
+            [
+                'is_custom' => false,
+                'level' => 1,
+                'role_classification' => Role::CLASSIFICATION_PROTECTED_SYSTEM,
+            ]
         )['user'];
         Passport::actingAs($userB);
 
@@ -349,6 +359,11 @@ class LeadershipRoleCatalogTest extends TestCase
             $tenantB,
             Role::TENANT_ADMINISTRATOR,
             $this->parishAdminPermissionNames(),
+            [
+                'is_custom' => false,
+                'level' => 1,
+                'role_classification' => Role::CLASSIFICATION_PROTECTED_SYSTEM,
+            ]
         )['user'];
         Passport::actingAs($userB);
 

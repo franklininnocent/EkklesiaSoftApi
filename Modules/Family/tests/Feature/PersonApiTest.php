@@ -8,6 +8,7 @@ use Modules\Authentication\Models\User;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
 use Modules\Family\Models\Person;
+use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Tenants\Models\Tenant;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -28,7 +29,27 @@ class PersonApiTest extends TestCase
         $this->user = User::factory()->create([
             'tenant_id' => $this->tenant->id,
         ]);
+        $this->grantPersonSearchPermissions($this->user);
         Passport::actingAs($this->user);
+    }
+
+    private function grantPersonSearchPermissions(User $user): void
+    {
+        $permission = Permission::query()->firstOrCreate(
+            ['name' => 'families.view'],
+            [
+                'display_name' => 'families.view',
+                'module' => 'Families',
+                'category' => 'families',
+                'scope' => Permission::SCOPE_TENANT,
+                'active' => 1,
+                'tenant_id' => null,
+                'is_custom' => false,
+            ]
+        );
+        $user->permissions()->syncWithoutDetaching([$permission->id]);
+        $user->clearPermissionsCache();
+        $user->clearRequestPermissionCache();
     }
 
     #[Test]

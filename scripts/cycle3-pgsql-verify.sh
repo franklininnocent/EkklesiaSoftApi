@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Disposable PostgreSQL 18 for Cycle 3 RLS verification only. Not production.
+# Disposable PostgreSQL 18.6 for Cycle 3 RLS verification only. Not production.
 set -euo pipefail
 
 CONTAINER_NAME="${CYCLE3_PG_CONTAINER:-ekklesia-cycle3-pg}"
-PG_IMAGE="${CYCLE3_PG_IMAGE:-postgres:18}"
+PG_IMAGE="${CYCLE3_PG_IMAGE:-postgres:18.6}"
 HOST_PORT="${CYCLE3_PG_PORT:-55432}"
 PG_USER="${CYCLE3_PG_SUPERUSER:-postgres}"
 PG_PASS="${CYCLE3_PG_SUPERPASS:-cycle3_test_only}"

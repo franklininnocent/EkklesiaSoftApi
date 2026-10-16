@@ -36,11 +36,7 @@ class SacramentFactory extends Factory
             'godparent2_name' => $this->faker->name(),
             'witnesses' => implode(', ', $this->faker->words(3)),
             'notes' => $this->faker->optional()->paragraph(),
-            'status' => $this->faker->randomElement([
-                SacramentStatus::REGISTERED,
-                SacramentStatus::CONDITIONAL,
-                SacramentStatus::VOIDED,
-            ]),
+            'status' => SacramentStatus::REGISTERED,
             'created_by' => User::factory(),
             'updated_by' => User::factory(),
         ];

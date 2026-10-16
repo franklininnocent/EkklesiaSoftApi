@@ -8,10 +8,12 @@ use Modules\MassIntentions\Database\Seeders\MassIntentionsPermissionSeeder;
 use Modules\RolesAndPermissions\Models\Permission;
 use Modules\Tenants\Models\Tenant;
 use Modules\Tenants\Services\TenantHierarchyService;
+use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
 use Modules\MassIntentions\Tests\Support\SkipsLegacyMassObligationWorkflow;
 use Tests\TestCase;
 
+#[Group('legacy-mass-obligation')]
 class MassIntentionTransferTargetsApiTest extends TestCase
 {
     use SkipsLegacyMassObligationWorkflow;

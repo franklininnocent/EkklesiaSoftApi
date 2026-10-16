@@ -2,6 +2,7 @@
 
 namespace Modules\Sacraments\Services;
 
+use Modules\EcclesiasticalData\Exceptions\EcclesiasticalDomainException;
 use Modules\EcclesiasticalData\Services\Leadership\EcclesiasticalLeadershipService;
 use Modules\EcclesiasticalData\Support\LeadershipOfficeCode;
 use Modules\EcclesiasticalData\Support\LeadershipScope;
@@ -33,24 +34,36 @@ class SacramentLeadershipContextBuilder
         ];
 
         if ($profile?->archdiocese_id) {
-            $ordinary = $this->leadershipService->getOnDate(
+            $context['diocesan_ordinary'] = $this->officeHolderOnDate(
                 LeadershipOfficeCode::DiocesanBishop->value,
                 LeadershipScope::diocese((int) $profile->archdiocese_id),
                 $eventDate,
             );
-            $context['diocesan_ordinary'] = $ordinary?->toArray();
         }
 
         if ($profile) {
-            $priest = $this->leadershipService->getOnDate(
+            $context['parish_priest'] = $this->officeHolderOnDate(
                 LeadershipOfficeCode::ParishPriest->value,
                 LeadershipScope::parish((int) $profile->id, $tenantId),
                 $eventDate,
             );
-            $context['parish_priest'] = $priest?->toArray();
         }
 
         return $context;
+    }
+
+    /**
+     * Certificate freeze must not fail registration when office catalog rows are absent.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function officeHolderOnDate(string $officeCode, LeadershipScope $scope, string $eventDate): ?array
+    {
+        try {
+            return $this->leadershipService->getOnDate($officeCode, $scope, $eventDate)?->toArray();
+        } catch (EcclesiasticalDomainException) {
+            return null;
+        }
     }
 
     /**

@@ -238,7 +238,7 @@ class PermissionAuditService
         try {
             // Use a nested transaction so audit insert failures don't poison
             // the parent transaction in PostgreSQL-backed test runs.
-            DB::transaction(function () use ($data) {
+            DB::transaction(function () use ($data, $logData) {
                 $permissionId = $this->normalizeEntityId($data['permission_id'] ?? null);
                 $roleId = $this->normalizeEntityId($data['role_id'] ?? null);
                 $userId = $this->normalizeEntityId($data['user_id'] ?? null);

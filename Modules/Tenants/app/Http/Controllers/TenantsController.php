@@ -2690,32 +2690,25 @@ class TenantsController extends Controller
                     ->where(function ($q) use ($graceDays) {
                         $q->whereNull('subscription_ends_at')
                             ->orWhere('subscription_ends_at', '>', now())
-                            ->orWhereRaw(
-                                'subscription_ends_at + (? * interval \'1 day\') >= ?',
-                                [$graceDays, now()]
-                            );
+                            ->orWhere(function ($grace) use ($graceDays) {
+                                $this->constrainSubscriptionEndPlusDays($grace, '>=', $graceDays, now());
+                            });
                     });
             } elseif ($status === 'grace') {
                 $query->whereNull('subscription_suspended_at')
                     ->whereNotNull('subscription_ends_at')
-                    ->where('subscription_ends_at', '<=', now())
-                    ->whereRaw(
-                        'subscription_ends_at + (? * interval \'1 day\') >= ?',
-                        [$graceDays, now()]
-                    );
+                    ->where('subscription_ends_at', '<=', now());
+                $this->constrainSubscriptionEndPlusDays($query, '>=', $graceDays, now());
             } elseif ($status === 'suspended') {
                 $query->whereNotNull('subscription_suspended_at');
             } elseif ($status === 'expired') {
                 $query->whereNull('subscription_suspended_at')
-                    ->whereNotNull('subscription_ends_at')
-                    ->whereRaw(
-                        'subscription_ends_at + (? * interval \'1 day\') < ?',
-                        [$graceDays, now()]
-                    )
-                    ->where(function ($q) {
-                        $q->whereNull('trial_ends_at')
-                            ->orWhere('trial_ends_at', '<=', now());
-                    });
+                    ->whereNotNull('subscription_ends_at');
+                $this->constrainSubscriptionEndPlusDays($query, '<', $graceDays, now());
+                $query->where(function ($q) {
+                    $q->whereNull('trial_ends_at')
+                        ->orWhere('trial_ends_at', '<=', now());
+                });
             }
         }
 
@@ -2737,6 +2730,24 @@ class TenantsController extends Controller
                     });
             });
         }
+    }
+
+    /**
+     * Compare (subscription_ends_at + grace days) to $now using equivalent
+     * (subscription_ends_at {op} now - grace days) so SQLite and PostgreSQL agree.
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder|\Illuminate\Database\Query\Builder  $query
+     */
+    private function constrainSubscriptionEndPlusDays($query, string $operator, int $days, mixed $now): void
+    {
+        if (! in_array($operator, ['>=', '<=', '>', '<'], true)) {
+            throw new \InvalidArgumentException('Unsupported comparison operator.');
+        }
+
+        $at = $now instanceof \Illuminate\Support\Carbon ? $now->copy() : now();
+        $cutoff = $at->subDays(max(0, $days));
+
+        $query->where('subscription_ends_at', $operator, $cutoff);
     }
 
     /**

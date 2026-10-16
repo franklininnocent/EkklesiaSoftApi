@@ -21,7 +21,10 @@ class MassIntentionModuleAccessApiTest extends TestCase
     #[Test]
     public function home_is_forbidden_when_mass_intentions_feature_disabled(): void
     {
-        $tenant = Tenant::factory()->create(['features' => []]);
+        $tenant = Tenant::factory()->create([
+            'plan' => 'starter',
+            'features' => [],
+        ]);
         $user = User::factory()->create(['tenant_id' => $tenant->id, 'active' => 1]);
         $this->grantPermissions($user, ['mass.intentions.view']);
 

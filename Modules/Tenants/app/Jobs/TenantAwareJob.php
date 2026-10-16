@@ -30,6 +30,8 @@ abstract class TenantAwareJob implements ShouldQueue
         }
 
         if (! $this->allowsTenantMutations()) {
+            $this->handleDeniedTenantMutations();
+
             return;
         }
 
@@ -43,6 +45,10 @@ abstract class TenantAwareJob implements ShouldQueue
     }
 
     abstract protected function handleWithTenantContext(): void;
+
+    protected function handleDeniedTenantMutations(): void
+    {
+    }
 
     protected function allowsTenantMutations(): bool
     {

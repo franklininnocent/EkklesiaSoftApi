@@ -136,7 +136,7 @@ class TenantListSearchFilterTest extends TestCase
             'name' => 'Other Parish',
             'slug' => 'other-parish',
             'trial_ends_at' => null,
-            'subscription_ends_at' => now()->subDay(),
+            'subscription_ends_at' => now()->subDays(30),
             'subscription_suspended_at' => null,
             'active' => 1,
         ]);

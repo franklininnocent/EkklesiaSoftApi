@@ -327,6 +327,73 @@ class BccFamilyMembershipService
         return $query->orderBy('family_name')->paginate($perPage);
     }
 
+    /**
+     * Relocate or first-assign a family onto a BCC with household-transition metadata.
+     */
+    public function transferFamilyToBcc(
+        int $tenantId,
+        Family $family,
+        string $targetBccId,
+        string $effectiveDate,
+        string $transferReason,
+        string $transitionId,
+        int $userId,
+        ?string $historicalNote = null,
+        bool $hadCurrent = false,
+    ): BccFamilyMembership {
+        $bcc = $this->findBcc($tenantId, $targetBccId);
+        if ($bcc->status !== 'active') {
+            throw new BccDomainException('Only an active BCC can accept families.');
+        }
+
+        if ($family->status === 'migrated') {
+            throw new BccDomainException('Transferred families cannot be assigned to a BCC.');
+        }
+
+        if ($hadCurrent) {
+            $current = BccFamilyMembership::query()
+                ->forTenant($tenantId)
+                ->current()
+                ->where('family_id', $family->id)
+                ->first();
+
+            if ($current !== null) {
+                $this->closeMembership(
+                    $tenantId,
+                    $current,
+                    $effectiveDate,
+                    $transferReason,
+                    [
+                        'transition_id' => $transitionId,
+                        'transfer_reason' => $transferReason,
+                        'transferred_by_user_id' => $userId,
+                        'historical_note' => $historicalNote,
+                    ],
+                );
+            } elseif ($family->bcc_id) {
+                $this->closeCurrentForFamily($tenantId, $family->id, (string) $family->bcc_id, $transferReason);
+            }
+        }
+
+        $source = $hadCurrent ? 'transfer' : 'assign';
+
+        return $this->openCurrentForFamily(
+            $tenantId,
+            $bcc->id,
+            $family->refresh(),
+            $effectiveDate,
+            $source,
+            [
+                'transition_id' => $transitionId,
+                'transfer_reason' => $transferReason,
+                'transferred_by_user_id' => $userId,
+                'historical_note' => $historicalNote,
+                'created_by' => $userId,
+                'updated_by' => $userId,
+            ],
+        );
+    }
+
     public function paginateHistory(int $tenantId, string $bccId, int $perPage): LengthAwarePaginator
     {
         $this->findBcc($tenantId, $bccId);
@@ -340,14 +407,18 @@ class BccFamilyMembershipService
             ->paginate($perPage);
     }
 
+    /**
+     * @param  array<string, mixed>  $attributes
+     */
     private function openCurrentForFamily(
         int $tenantId,
         string $bccId,
         Family $family,
         string $joinedDate,
         string $source,
+        array $attributes = [],
     ): BccFamilyMembership {
-        $membership = BccFamilyMembership::create([
+        $membership = BccFamilyMembership::create(array_merge([
             'tenant_id' => $tenantId,
             'bcc_id' => $bccId,
             'family_id' => $family->id,
@@ -356,7 +427,7 @@ class BccFamilyMembershipService
             'is_current' => true,
             'created_by' => Auth::id(),
             'updated_by' => Auth::id(),
-        ]);
+        ], $attributes));
 
         $family->bcc_id = $bccId;
         $family->save();
@@ -394,11 +465,15 @@ class BccFamilyMembershipService
         }
     }
 
+    /**
+     * @param  array<string, mixed>  $attributes
+     */
     private function closeMembership(
         int $tenantId,
         BccFamilyMembership $membership,
         ?string $exitDate,
         string $reason,
+        array $attributes = [],
     ): void {
         $old = $membership->only(['status', 'is_current', 'exit_date', 'bcc_id', 'family_id']);
 
@@ -406,7 +481,17 @@ class BccFamilyMembershipService
         $membership->is_current = false;
         $membership->exit_date = $exitDate ?: now()->toDateString();
         $membership->exit_reason = $reason;
-        $membership->updated_by = Auth::id();
+        $membership->updated_by = $attributes['updated_by'] ?? Auth::id();
+        foreach ([
+            'transition_id',
+            'transfer_reason',
+            'transferred_by_user_id',
+            'historical_note',
+        ] as $field) {
+            if (array_key_exists($field, $attributes)) {
+                $membership->{$field} = $attributes[$field];
+            }
+        }
         $membership->save();
 
         Family::query()

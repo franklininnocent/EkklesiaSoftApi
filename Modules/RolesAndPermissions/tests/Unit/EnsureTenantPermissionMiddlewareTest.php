@@ -158,8 +158,9 @@ class EnsureTenantPermissionMiddlewareTest extends TestCase
         ]);
         $role->permissions()->sync([$permission->id]);
 
-        $user = User::factory()->create(['tenant_id' => $homeTenant->id, 'role_id' => $role->id]);
+        $user = User::factory()->create(['tenant_id' => null, 'role_id' => $role->id]);
         $user->syncRoles([$role->id]);
+        $user->forceFill(['tenant_id' => $homeTenant->id])->save();
 
         $session = new ActiveSupportSession(
             id: 'support-session-test',

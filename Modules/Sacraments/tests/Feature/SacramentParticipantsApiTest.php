@@ -619,6 +619,7 @@ class SacramentParticipantsApiTest extends TestCase
         $person = Person::factory()->create([
             'tenant_id' => $this->tenant->id,
             'first_name' => 'Andrew',
+            'middle_name' => null,
             'last_name' => 'Kosmos',
         ]);
         $role = LeadershipRole::query()->where('title', 'Pastor')->first()

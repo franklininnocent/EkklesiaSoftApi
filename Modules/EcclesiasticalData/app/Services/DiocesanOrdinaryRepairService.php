@@ -42,13 +42,16 @@ class DiocesanOrdinaryRepairService
         }
 
         if (! $currentOrdinary) {
-            return BishopManagement::query()
-                ->where('archdiocese_id', $dioceseId)
-                ->where('status', 'active')
-                ->exists();
+            // Sede vacante is a valid canonical state. Do not treat leftover
+            // active bishop persons (auxiliaries, ended ordinaries) as corruption.
+            return false;
         }
 
-        return false;
+        return BishopAppointment::query()
+            ->where('diocese_id', $dioceseId)
+            ->where('is_current', true)
+            ->ordinary()
+            ->count() > 1;
     }
 
     /**
@@ -130,7 +133,7 @@ class DiocesanOrdinaryRepairService
             ->ordinary()
             ->exists();
 
-        if (! $hasCurrentOrdinary) {
+        if (! $hasCurrentOrdinary && $stats['ordinaries_ended'] > 0) {
             $successor = BishopManagement::query()
                 ->where('archdiocese_id', $dioceseId)
                 ->where('status', 'active')

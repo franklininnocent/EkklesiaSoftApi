@@ -6,6 +6,7 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Modules\EcclesiasticalData\Exceptions\EcclesiasticalDomainException;
 use Modules\EcclesiasticalData\Models\BishopAppointment;
+use Modules\EcclesiasticalData\Models\BishopManagement;
 use Modules\EcclesiasticalData\Support\AppointmentEndReason;
 use Modules\EcclesiasticalData\Support\AppointmentStatus;
 use Modules\EcclesiasticalData\Support\CanonicalRole;
@@ -83,6 +84,8 @@ class EpiscopalAppointmentService
         ]);
         $appointment->save();
 
+        $this->syncBishopPersonAfterAppointmentEnd($appointment, $reason);
+
         $this->leadershipStateService->refreshDioceseLeadershipState((int) $appointment->diocese_id);
         $this->invalidateBishopListCaches((int) $appointment->bishop_id);
 
@@ -146,6 +149,34 @@ class EpiscopalAppointmentService
             ->select('id')
             ->lockForUpdate()
             ->get();
+    }
+
+    private function syncBishopPersonAfterAppointmentEnd(
+        BishopAppointment $appointment,
+        AppointmentEndReason $reason,
+    ): void {
+        if (! $appointment->isOrdinaryRole()) {
+            return;
+        }
+
+        $bishop = $appointment->bishop ?? BishopManagement::query()->find($appointment->bishop_id);
+        if (! $bishop) {
+            return;
+        }
+
+        $status = $bishop->status === 'active'
+            ? match ($reason) {
+                AppointmentEndReason::Retirement => 'retired',
+                AppointmentEndReason::Transfer => 'transferred',
+                AppointmentEndReason::Death => 'deceased',
+                default => 'emeritus',
+            }
+            : $bishop->status;
+
+        $bishop->update([
+            'is_current' => false,
+            'status' => $status,
+        ]);
     }
 
     private function assertNoCurrentOrdinary(int $dioceseId, ?string $excludeAppointmentId = null): void

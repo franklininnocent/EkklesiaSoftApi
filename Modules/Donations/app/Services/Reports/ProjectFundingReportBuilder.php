@@ -102,7 +102,7 @@ final class ProjectFundingReportBuilder extends AbstractDonationReportBuilder
         $rows = $query->forPage($page, $perPage)->get()->map(fn (ProjectFamilyAssignment $a) => $this->mapFamilyGapRow($a))->all();
 
         $gapTotal = '0';
-        $this->familyGapsQuery($tenantId, $filter)->select(['target_amount', 'amount_collected'])->chunk(200, function ($chunk) use (&$gapTotal): void {
+        $this->familyGapsQuery($tenantId, $filter)->chunk(200, function ($chunk) use (&$gapTotal): void {
             foreach ($chunk as $assignment) {
                 $target = (string) $assignment->target_amount;
                 $collected = (string) $assignment->amount_collected;
@@ -171,9 +171,9 @@ final class ProjectFundingReportBuilder extends AbstractDonationReportBuilder
     {
         $query = ProjectFamilyAssignment::query()
             ->forTenant($tenantId)
-            ->where('status', 'active')
-            ->where('is_exempt', false)
-            ->whereColumn('target_amount', '>', 'amount_collected')
+            ->where('project_family_assignments.status', 'active')
+            ->where('project_family_assignments.is_exempt', false)
+            ->whereColumn('project_family_assignments.target_amount', '>', 'project_family_assignments.amount_collected')
             ->with(['family:id,family_name,family_code,bcc_id', 'project:id,name,entity_kind,status']);
 
         $project = $this->resolveProject($tenantId, $filter);

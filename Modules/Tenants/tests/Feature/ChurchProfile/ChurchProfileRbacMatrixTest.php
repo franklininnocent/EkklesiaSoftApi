@@ -5,6 +5,7 @@ namespace Modules\Tenants\Tests\Feature\ChurchProfile;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Modules\Tenants\Testing\ChurchProfileCertificationTestCase;
+use Modules\Tenants\Tests\Support\MediaSecurityFixtures;
 use PHPUnit\Framework\Attributes\Test;
 
 class ChurchProfileRbacMatrixTest extends ChurchProfileCertificationTestCase
@@ -53,6 +54,7 @@ class ChurchProfileRbacMatrixTest extends ChurchProfileCertificationTestCase
     #[Test]
     public function it_should_allow_edit_without_delete_for_profile_but_block_patron_delete(): void
     {
+        Storage::fake('local');
         Storage::fake('public');
         $ctx = $this->actingAsTenantWith(['church.settings.edit']);
         $profile = $this->seedChurchProfile($ctx['tenant'], [
@@ -62,7 +64,7 @@ class ChurchProfileRbacMatrixTest extends ChurchProfileCertificationTestCase
 
         $this->putJson('/api/church-profile', $this->validProfilePayload())->assertOk();
         $this->postJson('/api/church-profile/upload-patron-image', [
-            'image' => UploadedFile::fake()->image('new-patron.jpg'),
+            'image' => MediaSecurityFixtures::validJpeg(200, 200),
         ])->assertOk();
 
         $this->deleteJson('/api/church-profile/patron-image')->assertForbidden();

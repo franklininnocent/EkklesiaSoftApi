@@ -195,7 +195,10 @@ class SacramentRepositoryTest extends TestCase
         ]);
 
         // Assert
-        $this->assertEquals('2025-12-31', $result->first()->date_administered);
+        $this->assertSame(
+            '2025-12-31',
+            $result->first()->date_administered?->format('Y-m-d'),
+        );
     }
 
     /** @test */

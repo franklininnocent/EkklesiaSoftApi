@@ -4,6 +4,7 @@ namespace Modules\Tenants\LoadTesting;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Modules\Authentication\Models\Role;
 use Modules\Authentication\Models\User;
@@ -267,7 +268,46 @@ class LoadTestFixtureBuilder
             return 0;
         }
 
-        Tenant::query()->whereIn('id', $tenantIds)->forceDelete();
+        Schema::disableForeignKeyConstraints();
+        try {
+            $userIds = DB::table('users')->whereIn('tenant_id', $tenantIds)->pluck('id');
+            $roleIds = DB::table('roles')->whereIn('tenant_id', $tenantIds)->pluck('id');
+
+            if (Schema::hasTable('family_members')) {
+                DB::table('family_members')->whereIn('tenant_id', $tenantIds)->delete();
+            }
+            if (Schema::hasTable('families')) {
+                DB::table('families')->whereIn('tenant_id', $tenantIds)->delete();
+            }
+            if (Schema::hasTable('persons')) {
+                if (Schema::hasColumn('persons', 'father_person_id')) {
+                    DB::table('persons')->whereIn('tenant_id', $tenantIds)->update([
+                        'father_person_id' => null,
+                        'mother_person_id' => null,
+                    ]);
+                }
+                DB::table('persons')->whereIn('tenant_id', $tenantIds)->delete();
+            }
+            if (Schema::hasTable('oauth_access_tokens') && $userIds->isNotEmpty()) {
+                DB::table('oauth_access_tokens')->whereIn('user_id', $userIds)->delete();
+            }
+            if (Schema::hasTable('role_user') && $userIds->isNotEmpty()) {
+                DB::table('role_user')->whereIn('user_id', $userIds)->delete();
+            }
+            if (Schema::hasTable('permission_role') && $roleIds->isNotEmpty()) {
+                DB::table('permission_role')->whereIn('role_id', $roleIds)->delete();
+            }
+            if ($userIds->isNotEmpty()) {
+                DB::table('users')->whereIn('id', $userIds)->delete();
+            }
+            if ($roleIds->isNotEmpty()) {
+                DB::table('roles')->whereIn('id', $roleIds)->delete();
+            }
+
+            Tenant::query()->whereIn('id', $tenantIds)->forceDelete();
+        } finally {
+            Schema::enableForeignKeyConstraints();
+        }
 
         return count($tenantIds);
     }

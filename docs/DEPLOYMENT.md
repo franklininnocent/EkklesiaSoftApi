@@ -14,10 +14,10 @@ Git remote URL, server addresses, database names, and secrets were not present a
 
 | Item | Value in this repository |
 | --- | --- |
-| Framework | Laravel 13.35.0 (`laravel/framework` ^13.0, lock `v13.35.0`) |
+| Framework | Laravel 13.37.0 (`laravel/framework` ^13.0, lock `v13.37.0`) |
 | PHP constraint | `^8.3` |
-| Authentication | Laravel Passport 13.9.0, guard `api` |
-| Modules | nwidart/laravel-modules 12.0.5 |
+| Authentication | Laravel Passport 13.x, guard `api` |
+| Modules | nwidart/laravel-modules 13.0.0 |
 | Database driver expected in UAT and Production | `pgsql` |
 | Cache default | `redis` through `predis/predis` 2.4.1 |
 | Queue default | `database` |
@@ -38,14 +38,14 @@ Verified against vendor support pages on 15 Oct 2026. Install the Ubuntu archive
 | --- | --- | --- | --- |
 | Ubuntu Server | 26.04 LTS | Standard support to May 2031 | https://ubuntu.com/about/release-cycle |
 | PHP | 8.5 from the Ubuntu 26.04 archive | Laravel 13 supports 8.3–8.5. Active PHP support to 31 Dec 2027 | https://www.php.net/supported-versions.php and https://laravel.com/docs/13.x/releases |
-| PostgreSQL | 18 on a new empty database | Supported to 14 Nov 2030. Laravel 13 supports PostgreSQL 10+ | https://www.postgresql.org/support/versioning/ |
+| PostgreSQL | 18.6 on a new empty database | PostgreSQL 18 is supported to 14 Nov 2030. Laravel 13 supports PostgreSQL 10+. Pin the Docker image to `postgres:18.6` | https://www.postgresql.org/support/versioning/ |
 | Nginx | Ubuntu 26.04 package 1.28.x | Distro security updates. Do not switch to Nginx Current only because the number is higher | https://packages.ubuntu.com/resolute/nginx |
 | Composer | Composer 2, current stable | Signature-checked installer from https://getcomposer.org/download/ | https://getcomposer.org/download/ |
 | Cache | Distro Redis-protocol server | `apt-cache policy valkey-server redis-server`. Use whichever package Ubuntu 26.04 provides. The application speaks the Redis protocol through Predis | Application `config/database.php` and `config/cache.php` |
 
-CI in `.github/workflows/ci.yml` currently runs PHP 8.3 and PostgreSQL 16. Before the first UAT migration, run `composer test` on the PHP and PostgreSQL versions that the server actually installed. If PHP 8.5 fails that suite, stop and install PHP 8.3 instead. Do not continue on an untested PHP major.
+CI in `.github/workflows/ci.yml` currently runs PHP 8.5 and PostgreSQL 18.6 (`postgres:18.6`). SQLite PHPUnit suites need `php8.5-sqlite3` (PDO sqlite). This workstation currently has PDO sqlite on PHP 8.4 only; install the 8.5 sqlite package before treating PHP 8.5 as verified. Before the first UAT migration, run `composer test` on the PHP and PostgreSQL versions that the server actually installed. If PHP 8.5 fails that suite, stop and install PHP 8.3 instead. Do not continue on an untested PHP major.
 
-If an existing database is already PostgreSQL 16, leave it on 16. A major upgrade is a separate approved dump and restore, not part of an application release.
+If an existing database is already PostgreSQL 16, leave it on 16 until you run an approved dump/restore or `pg_upgrade` onto 18.6. Do not dump or restore a live UAT or Production database as part of an application release.
 
 An existing Ubuntu 24.04 server stays on 24.04. Its PHP-FPM socket name will not be `php8.5-fpm`. Confirm the socket with `ls /run/php` before writing Nginx configuration.
 

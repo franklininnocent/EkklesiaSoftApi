@@ -2,6 +2,7 @@
 
 namespace Modules\Family\Tests\Feature;
 
+use Laravel\Passport\Passport;
 use Modules\Family\Models\Family;
 use Modules\Family\Models\FamilyMember;
 use Modules\Family\Models\Person;
@@ -130,7 +131,7 @@ class FamilyModule360Test extends FamilyCertificationTestCase
     public function it_should_forbid_staff_without_delete_permission_from_deleting_family(): void
     {
         $ctx = $this->makeStaffUser();
-        $this->grantFamilyPermissions($ctx['user'], ['families.view', 'families.create', 'families.edit']);
+        $this->syncFamilyPermissions($ctx['user'], ['families.view', 'families.create', 'families.edit']);
         Passport::actingAs($ctx['user']);
         $family = Family::factory()->create(['tenant_id' => $ctx['tenant']->id]);
 

@@ -225,4 +225,33 @@ abstract class FamilyCertificationTestCase extends TestCase
         $user->clearPermissionsCache();
         $user->clearRequestPermissionCache();
     }
+
+    /**
+     * Replace the user's family permissions instead of merging.
+     *
+     * @param  list<string>  $names
+     */
+    protected function syncFamilyPermissions(User $user, array $names): void
+    {
+        $ids = [];
+        foreach ($names as $name) {
+            $permission = Permission::query()->firstOrCreate(
+                ['name' => $name],
+                [
+                    'display_name' => $name,
+                    'module' => 'Families',
+                    'category' => 'families',
+                    'scope' => Permission::SCOPE_TENANT,
+                    'active' => 1,
+                    'tenant_id' => null,
+                    'is_custom' => false,
+                ]
+            );
+            $ids[] = $permission->id;
+        }
+
+        $user->permissions()->sync($ids);
+        $user->clearPermissionsCache();
+        $user->clearRequestPermissionCache();
+    }
 }

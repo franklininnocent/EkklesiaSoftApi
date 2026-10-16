@@ -232,6 +232,9 @@ class SacramentPhase10ApiTest extends TestCase
     #[Test]
     public function it_requires_baptism_date_and_birth_fields_for_eucharist(): void
     {
+        $this->member->forceFill(['date_of_birth' => null])->save();
+        $this->member->person?->forceFill(['date_of_birth' => null])->save();
+
         $response = $this->postJson('/api/sacraments', [
             'sacrament_type_id' => $this->eucharistType->id,
             'date_administered' => '2026-08-10',

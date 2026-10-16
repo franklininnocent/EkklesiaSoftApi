@@ -121,7 +121,8 @@ class TenantMinistriesModuleStatusApiTest extends TestCase
     public function support_session_returns_disabled_when_feature_not_enabled_on_session_tenant(): void
     {
         [$user, $tenant, $session] = $this->seedActiveReadonlySession([
-            'features' => [],
+            'plan' => 'starter',
+            'features' => ['donations'],
         ]);
 
         Passport::actingAs($user);
@@ -137,7 +138,8 @@ class TenantMinistriesModuleStatusApiTest extends TestCase
     public function tenant_without_ministries_feature_returns_enabled_false_not_feature_middleware_block(): void
     {
         [$admin] = $this->seedTenantAdmin([
-            'features' => [],
+            'plan' => 'starter',
+            'features' => ['donations'],
         ]);
 
         Passport::actingAs($admin);

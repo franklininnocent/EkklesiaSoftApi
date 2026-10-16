@@ -108,6 +108,7 @@ return [
         'gated_modules' => [
             'donations',
             'ministries_associations',
+            'mass_intentions',
             'groups',
             'messaging',
             'events',

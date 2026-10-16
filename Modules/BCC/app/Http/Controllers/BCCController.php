@@ -95,6 +95,8 @@ class BCCController extends Controller
      */
     public function store(StoreBCCRequest $request): JsonResponse
     {
+        $this->authorize('create', BCC::class);
+
         try {
             $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
@@ -177,16 +179,27 @@ class BCCController extends Controller
      */
     public function update(UpdateBCCRequest $request, string $id): JsonResponse
     {
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+
+        if (!$tenantId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tenant ID is required',
+            ], 403);
+        }
+
+        $existing = $this->bccService->getBCCById($id, (string) $tenantId);
+        if (!$existing) {
+            return response()->json([
+                'success' => false,
+                'message' => 'BCC not found',
+            ], 404);
+        }
+
+        $this->authorize('update', $existing);
+
         try {
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
-            
-            if (!$tenantId) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Tenant ID is required'
-                ], 403);
-            }
 
             $bcc = $this->bccService->updateBCC(
                 $id,
@@ -227,16 +240,27 @@ class BCCController extends Controller
      */
     public function destroy(string $id): JsonResponse
     {
+        $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
+
+        if (!$tenantId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tenant ID is required',
+            ], 403);
+        }
+
+        $existing = $this->bccService->getBCCById($id, (string) $tenantId);
+        if (!$existing) {
+            return response()->json([
+                'success' => false,
+                'message' => 'BCC not found or does not belong to your tenant',
+            ], 404);
+        }
+
+        $this->authorize('delete', $existing);
+
         try {
-            $tenantId = app(\Modules\Tenants\Support\TenantContext::class)->requireEffectiveTenantId();
             $userId = Auth::id();
-            
-            if (!$tenantId) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Tenant ID is required'
-                ], 403);
-            }
 
             $result = $this->bccService->deleteBCC($id, $tenantId, $userId);
 

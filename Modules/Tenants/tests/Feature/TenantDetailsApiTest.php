@@ -153,6 +153,7 @@ class TenantDetailsApiTest extends TestCase
     public function storage_calculation_is_scoped_to_tenant_prefix(): void
     {
         Storage::fake('public');
+        Storage::fake('local');
         $this->asSuperAdmin();
 
         $tenantA = $this->makeOperationalTenant();

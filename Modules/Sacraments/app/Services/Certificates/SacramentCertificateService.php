@@ -103,11 +103,22 @@ class SacramentCertificateService
     {
         $this->findSacrament($sacramentId, $tenantId);
 
+        $certificateIds = SacramentCertificate::query()
+            ->where('tenant_id', $tenantId)
+            ->where('sacrament_id', $sacramentId)
+            ->pluck('id')
+            ->map(static fn ($id): string => (string) $id)
+            ->all();
+
+        if ($certificateIds === []) {
+            return [];
+        }
+
         return SacramentAuditLog::query()
             ->where('tenant_id', $tenantId)
             ->where('event', 'certificate_download')
             ->where('target_type', 'sacrament_certificate')
-            ->where('metadata->sacrament_id', $sacramentId)
+            ->whereIn('target_id', $certificateIds)
             ->with(['actor.role'])
             ->orderByDesc('created_at')
             ->get()
