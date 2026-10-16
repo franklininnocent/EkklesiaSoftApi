@@ -1,0 +1,11 @@
+{
+    "name": "ApplicationAccess",
+    "alias": "applicationaccess",
+    "description": "Platform Application Access & Security Monitoring",
+    "keywords": [],
+    "priority": 1,
+    "providers": [
+        "Modules\\ApplicationAccess\\Providers\\ApplicationAccessServiceProvider"
+    ],
+    "files": []
+}

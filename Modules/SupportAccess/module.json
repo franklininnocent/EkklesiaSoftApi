@@ -1,0 +1,11 @@
+{
+    "name": "SupportAccess",
+    "alias": "supportaccess",
+    "description": "Platform Support Access & Tenant Impersonation Framework",
+    "keywords": [],
+    "priority": 1,
+    "providers": [
+        "Modules\\SupportAccess\\Providers\\SupportAccessServiceProvider"
+    ],
+    "files": []
+}

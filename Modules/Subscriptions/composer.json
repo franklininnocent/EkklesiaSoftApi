@@ -1,0 +1,21 @@
+{
+    "name": "nwidart/subscriptions",
+    "description": "Subscription plans, versions, feature catalog and tenant entitlements",
+    "extra": {
+        "laravel": {
+            "providers": [],
+            "aliases": {}
+        }
+    },
+    "autoload": {
+        "psr-4": {
+            "Modules\\Subscriptions\\": "app/",
+            "Modules\\Subscriptions\\Database\\Seeders\\": "database/seeders/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Modules\\Subscriptions\\Tests\\": "tests/"
+        }
+    }
+}

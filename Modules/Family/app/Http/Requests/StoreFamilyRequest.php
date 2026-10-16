@@ -1,0 +1,56 @@
+<?php
+
+namespace Modules\Family\app\Http\Requests;
+
+use App\Rules\PhoneNumberForTenant;
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+use Modules\Family\app\Http\Requests\Concerns\ValidatesPersonParentFields;
+use Modules\Tenants\Support\TenantContext;
+
+class StoreFamilyRequest extends FormRequest
+{
+    use ValidatesPersonParentFields;
+
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $this->mergeEmptyParentIdsToNull();
+    }
+
+    public function rules(): array
+    {
+        return array_merge([
+            'family_name' => ['required', 'string', 'max:255'],
+            'head_of_family' => ['nullable', 'string', 'max:255'],
+            'address_line_1' => ['nullable', 'string', 'max:255'],
+            'address_line_2' => ['nullable', 'string', 'max:255'],
+            'city' => ['nullable', 'string', 'max:120'],
+            'postal_code' => ['nullable', 'string', 'max:40'],
+            'bcc_id' => [
+                'nullable',
+                'uuid',
+                Rule::exists('bccs', 'id')->where(function ($query) {
+                    $tenantId = app(TenantContext::class)->effectiveTenantId();
+                    $query->where('tenant_id', $tenantId)->whereNull('deleted_at');
+                }),
+            ],
+            'status' => ['nullable', 'in:active,inactive,migrated'],
+            'notes' => ['nullable', 'string'],
+            'tenant_id' => ['prohibited'],
+            'allow_duplicate' => ['nullable', 'boolean'],
+
+            // members (optional)
+            'members' => ['nullable', 'array'],
+            'members.*.first_name' => ['required_with:members', 'string', 'max:120'],
+            'members.*.last_name' => ['required_with:members', 'string', 'max:120'],
+            'members.*.date_of_birth' => ['required_with:members', 'date', 'before:today'],
+            'members.*.phone' => ['nullable', new PhoneNumberForTenant],
+            'members.*.email' => ['nullable', 'email', 'max:255'],
+        ], $this->personParentFieldRules('members.*'));
+    }
+}

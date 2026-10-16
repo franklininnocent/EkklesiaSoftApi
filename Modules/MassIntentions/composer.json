@@ -1,0 +1,30 @@
+{
+    "name": "nwidart/massintentions",
+    "description": "",
+    "authors": [
+        {
+            "name": "Nicolas Widart",
+            "email": "n.widart@gmail.com"
+        }
+    ],
+    "extra": {
+        "laravel": {
+            "providers": [],
+            "aliases": {
+
+            }
+        }
+    },
+    "autoload": {
+        "psr-4": {
+            "Modules\\MassIntentions\\": "app/",
+            "Modules\\MassIntentions\\Database\\Factories\\": "database/factories/",
+            "Modules\\MassIntentions\\Database\\Seeders\\": "database/seeders/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Modules\\MassIntentions\\Tests\\": "tests/"
+        }
+    }
+}

@@ -1,0 +1,11 @@
+{
+    "name": "MinistriesAssociations",
+    "alias": "ministriesassociations",
+    "description": "Ministries and associations organization management",
+    "keywords": [],
+    "priority": 0,
+    "providers": [
+        "Modules\\MinistriesAssociations\\Providers\\MinistriesAssociationsServiceProvider"
+    ],
+    "files": []
+}

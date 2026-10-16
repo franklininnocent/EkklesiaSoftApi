@@ -1,0 +1,19 @@
+{
+    "Authentication": true,
+    "Tenants": true,
+    "RolesAndPermissions": true,
+    "EcclesiasticalData": true,
+    "Sacraments": true,
+    "Family": true,
+    "BCC": true,
+    "Donations": true,
+    "MinistriesAssociations": true,
+    "SupportAccess": true,
+    "PastoralCare": true,
+    "SupportTickets": true,
+    "ApplicationAccess": true,
+    "Notifications": true,
+    "Subscriptions": true,
+    "MassIntentions": true,
+    "Marketing": true
+}

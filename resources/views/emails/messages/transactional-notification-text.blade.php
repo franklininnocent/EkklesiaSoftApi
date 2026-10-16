@@ -1,0 +1,5 @@
+{{ $productName ?? 'EkklesiaNexus' }}
+
+{{ $heading }}
+
+{{ $plainBody }}
