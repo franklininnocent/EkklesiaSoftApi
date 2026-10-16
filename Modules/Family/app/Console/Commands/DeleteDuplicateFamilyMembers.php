@@ -82,12 +82,7 @@ class DeleteDuplicateFamilyMembers extends Command
         $errors = 0;
 
         foreach ($duplicates as $duplicateGroup) {
-            // Sort by created_at to keep the oldest
-            usort($duplicateGroup, function ($a, $b) {
-                return strtotime($a['created_at']) <=> strtotime($b['created_at']);
-            });
-
-            // Keep the first one (oldest), delete the rest
+            // Groups are ordered by created_at ascending in findDuplicates()
             $toKeep = array_shift($duplicateGroup);
 
             foreach ($duplicateGroup as $duplicate) {
@@ -179,17 +174,35 @@ class DeleteDuplicateFamilyMembers extends Command
 
         $duplicateGroupsRaw = $query->get();
 
-        foreach ($duplicateGroupsRaw as $group) {
-            // Get all members matching this group
-            $membersQuery = FamilyMember::where('tenant_id', $tenantId)
-                ->where('family_id', $group->family_id)
-                ->where('first_name', $group->first_name)
-                ->where('last_name', $group->last_name)
-                ->whereNull('deleted_at')
-                ->orderBy('created_at', 'asc');
+        if ($duplicateGroupsRaw->isEmpty()) {
+            return [];
+        }
 
-            $members = $membersQuery->get()
-                ->map(function ($member) {
+        $members = FamilyMember::query()
+            ->where('tenant_id', $tenantId)
+            ->whereNull('deleted_at')
+            ->when($familyId, fn ($q) => $q->where('family_id', $familyId))
+            ->where(function ($outer) use ($duplicateGroupsRaw): void {
+                foreach ($duplicateGroupsRaw as $group) {
+                    $outer->orWhere(function ($q) use ($group): void {
+                        $q->where('family_id', $group->family_id)
+                            ->where('first_name', $group->first_name)
+                            ->where('last_name', $group->last_name);
+                    });
+                }
+            })
+            ->orderBy('created_at')
+            ->get();
+
+        foreach ($members->groupBy(
+            fn (FamilyMember $member) => $member->family_id.'|'.$member->first_name.'|'.$member->last_name
+        ) as $groupMembers) {
+            if ($groupMembers->count() < 2) {
+                continue;
+            }
+
+            $duplicateGroups[] = $groupMembers
+                ->map(function (FamilyMember $member) {
                     return [
                         'id' => $member->id,
                         'family_id' => $member->family_id,
@@ -202,12 +215,8 @@ class DeleteDuplicateFamilyMembers extends Command
                         'created_at' => $member->created_at->format('Y-m-d H:i:s'),
                     ];
                 })
-                ->toArray();
-
-            // Only include if we have more than one member (duplicates)
-            if (count($members) > 1) {
-                $duplicateGroups[] = $members;
-            }
+                ->values()
+                ->all();
         }
 
         return $duplicateGroups;

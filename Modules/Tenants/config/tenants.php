@@ -365,6 +365,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Local demo parish primary admin (non-production)
+    |--------------------------------------------------------------------------
+    |
+    | Used when running tenants:seed-demo-data and local Sacred Heart recovery.
+    | Override via DEMO_TENANT_ADMIN_* env vars. Never use production defaults.
+    |
+    */
+    'demo' => [
+        'default_admin_email' => env('DEMO_TENANT_ADMIN_EMAIL', 'shadmin@gmail.com'),
+        'default_admin_password' => env('DEMO_TENANT_ADMIN_PASSWORD', 'TempPassword123!'),
+        'default_admin_name' => env('DEMO_TENANT_ADMIN_NAME', 'Sacred Heart Admin'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Load testing (Phase 8)
     |--------------------------------------------------------------------------
     |

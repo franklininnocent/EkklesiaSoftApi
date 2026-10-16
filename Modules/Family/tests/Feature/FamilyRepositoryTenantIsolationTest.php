@@ -73,6 +73,44 @@ class FamilyRepositoryTenantIsolationTest extends TestCase
     }
 
     #[Test]
+    public function sync_head_of_family_prefers_active_head_over_inactive(): void
+    {
+        $tenant = Tenant::factory()->active()->create();
+
+        $family = Family::factory()->create([
+            'tenant_id' => $tenant->id,
+            'head_of_family' => 'Stale Head',
+            'status' => 'active',
+        ]);
+
+        FamilyMember::factory()->create([
+            'tenant_id' => $tenant->id,
+            'family_id' => $family->id,
+            'first_name' => 'Inactive',
+            'last_name' => 'Head',
+            'relationship_to_head' => 'head',
+            'status' => 'inactive',
+            'created_at' => now()->subDay(),
+        ]);
+
+        FamilyMember::factory()->create([
+            'tenant_id' => $tenant->id,
+            'family_id' => $family->id,
+            'first_name' => 'Active',
+            'last_name' => 'Head',
+            'relationship_to_head' => 'head',
+            'status' => 'active',
+            'created_at' => now(),
+        ]);
+
+        TenantContextBinder::bind($tenant->id);
+
+        app(FamilyRepository::class)->syncHeadOfFamily($family->id);
+
+        $this->assertSame('Active Head', $family->fresh()->head_of_family);
+    }
+
+    #[Test]
     public function sync_head_of_family_does_not_update_when_tenant_context_is_unbound(): void
     {
         TenantContextBinder::clear();

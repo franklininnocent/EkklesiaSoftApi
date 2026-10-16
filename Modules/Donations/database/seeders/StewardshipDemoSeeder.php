@@ -21,6 +21,8 @@ use Modules\Donations\Services\ProjectInstallmentDueService;
 use Modules\Donations\Support\ContributionBalance;
 use Modules\Donations\Support\DonationBusinessDate;
 use Modules\Donations\Support\MoneyMath;
+use Modules\BCC\Models\BCC;
+use Modules\Donations\Models\PaymentAllocation;
 use Modules\Family\Models\Family;
 use Modules\Tenants\Database\Seeders\Support\CompactDemoMarkers;
 use Modules\Tenants\Database\Seeders\Support\DemoSeedGuard;
@@ -70,7 +72,8 @@ class StewardshipDemoSeeder extends Seeder
         ));
 
         if (ContributionPlan::forTenant($tenantId)->where('code', self::PLAN_CODE_MONTHLY)->exists()) {
-            $this->command?->info('Stewardship demo already present. Running verification.');
+            $this->command?->info('Stewardship demo already present. Repairing compact scope and verifying.');
+            $this->repairCompactStewardshipScope($tenantId, (int) $actor->id);
             $this->reportVerification($tenantId);
 
             return;
@@ -162,8 +165,10 @@ class StewardshipDemoSeeder extends Seeder
 
         $this->syncIndividualAssignments($planService, $tenantId, (int) $actor->id, $individualPlan, $families, $scheduleStart->toDateString());
 
+        $compactFamilyIds = $families->pluck('id')->all();
+
         foreach ([$monthlyPlan, $annualPlan, $festivalPlan, $individualPlan] as $plan) {
-            $result = $dueService->generateSchedule($tenantId, (int) $actor->id, $plan->fresh(), null, true);
+            $result = $dueService->generateSchedule($tenantId, (int) $actor->id, $plan->fresh(), $compactFamilyIds, true);
             $this->command?->info(sprintf(
                 'Plan %s: generated %d dues (%d families × %d periods).',
                 $plan->code,
@@ -506,6 +511,71 @@ class StewardshipDemoSeeder extends Seeder
             ->exists();
     }
 
+    private function repairCompactStewardshipScope(int $tenantId, int $actorId): void
+    {
+        $compactFamilies = $this->compactDemoFamilies($tenantId);
+        if ($compactFamilies->isEmpty()) {
+            $this->command?->warn('No compact demo families; skipping stewardship repair.');
+
+            return;
+        }
+
+        $compactFamilyIds = $compactFamilies->pluck('id')->all();
+        $demoPlanIds = ContributionPlan::forTenant($tenantId)->where('code', 'like', 'DEMO_%')->pluck('id');
+
+        if ($demoPlanIds->isEmpty()) {
+            return;
+        }
+
+        $foreignDueIds = ContributionDue::forTenant($tenantId)
+            ->whereIn('plan_id', $demoPlanIds)
+            ->whereNotIn('family_id', $compactFamilyIds)
+            ->pluck('id');
+
+        if ($foreignDueIds->isNotEmpty()) {
+            PaymentAllocation::query()
+                ->where('tenant_id', $tenantId)
+                ->where('allocatable_type', 'due')
+                ->whereIn('allocatable_id', $foreignDueIds)
+                ->delete();
+
+            $removed = ContributionDue::forTenant($tenantId)
+                ->whereIn('id', $foreignDueIds)
+                ->delete();
+
+            $this->command?->info(sprintf(
+                'Removed %d stewardship demo due(s) outside compact families.',
+                $removed
+            ));
+        }
+
+        $individualPlan = ContributionPlan::forTenant($tenantId)->where('code', 'DEMO_FAMILY_PLEDGE')->first();
+        if ($individualPlan !== null) {
+            $planService = app(ContributionPlanService::class);
+            $scheduleStart = Carbon::parse('2025-04-01');
+            $this->syncIndividualAssignments($planService, $tenantId, $actorId, $individualPlan, $compactFamilies, $scheduleStart->toDateString());
+        }
+
+        $dueService = app(ContributionDueService::class);
+        foreach (ContributionPlan::forTenant($tenantId)->where('code', 'like', 'DEMO_%')->get() as $plan) {
+            $dueService->generateSchedule($tenantId, $actorId, $plan, $compactFamilyIds, true);
+        }
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, Family>
+     */
+    private function compactDemoFamilies(int $tenantId): Collection
+    {
+        return Family::query()
+            ->where('tenant_id', $tenantId)
+            ->where('status', 'active')
+            ->whereNotNull('bcc_id')
+            ->where('notes', 'like', '%'.CompactDemoMarkers::MARKER.'%')
+            ->orderBy('family_code')
+            ->get(['id', 'family_name', 'head_of_family', 'bcc_id', 'family_code']);
+    }
+
     private function reportVerification(int $tenantId): void
     {
         $errors = [];
@@ -520,17 +590,24 @@ class StewardshipDemoSeeder extends Seeder
             $errors[] = 'Expected at least 8 demo projects.';
         }
 
-        $bccIds = Family::query()
+        $bccIds = BCC::query()
             ->where('tenant_id', $tenantId)
-            ->whereNotNull('bcc_id')
-            ->distinct()
-            ->pluck('bcc_id');
+            ->whereIn('bcc_code', CompactDemoMarkers::BCC_CODES)
+            ->pluck('id');
 
         foreach ($bccIds as $bccId) {
-            $familyIds = Family::query()->where('tenant_id', $tenantId)->where('bcc_id', $bccId)->pluck('id');
-            $dueFamilies = ContributionDue::forTenant($tenantId)->whereIn('family_id', $familyIds)->distinct()->count('family_id');
+            $familyIds = Family::query()
+                ->where('tenant_id', $tenantId)
+                ->where('bcc_id', $bccId)
+                ->where('notes', 'like', '%'.CompactDemoMarkers::MARKER.'%')
+                ->pluck('id');
+            $dueFamilies = ContributionDue::forTenant($tenantId)
+                ->whereIn('family_id', $familyIds)
+                ->whereHas('plan', fn ($q) => $q->where('code', 'like', 'DEMO_%'))
+                ->distinct()
+                ->count('family_id');
             if ($dueFamilies === 0) {
-                $errors[] = 'BCC '.$bccId.' has no contribution dues.';
+                $errors[] = 'Compact BCC '.$bccId.' has no demo contribution dues.';
             }
         }
 

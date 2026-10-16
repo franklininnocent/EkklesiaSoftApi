@@ -15,6 +15,7 @@ use Modules\Tenants\Database\Seeders\Support\DemoSeedGuard;
 use Modules\Tenants\Database\Seeders\Support\TenantDemoMarkers;
 use Modules\Tenants\Database\Seeders\Support\TenantDemoResolver;
 use Modules\Tenants\Database\Seeders\Support\TenantDemoVerifier;
+use Modules\Tenants\Services\DemoTenantAdminBootstrap;
 
 /**
  * Enterprise demo-data pipeline for a single parish tenant (compact dataset).
@@ -66,18 +67,17 @@ class TenantDemoDataOrchestratorSeeder extends Seeder
     {
         TenantDemoResolver::propagateChildSeederEnv($tenantId);
 
-        $actor = TenantDemoResolver::resolveActor($tenantId);
-        if ($actor) {
-            TenantDemoResolver::bindTenantContext($actor, $tenantId);
-        } else {
-            $this->command?->warn('No parish user found — some steps may be skipped.');
-        }
-
         if (TenantDemoResolver::flagIsTrue(TenantDemoMarkers::ENV_DRY_RUN)) {
             $this->command?->warn('Dry run — would seed tenant #'.$tenantId.' ('.$tenant->name.').');
 
             return;
         }
+
+        $actor = app(DemoTenantAdminBootstrap::class)->ensurePrimaryAdmin($tenant);
+        TenantDemoResolver::bindTenantContext($actor, $tenantId);
+        $this->command?->info(
+            'Demo primary admin: '.$actor->email.' (password from DEMO_TENANT_ADMIN_PASSWORD or tenants.demo config; not printed).'
+        );
 
         $this->command?->info('');
         $this->command?->info('═══════════════════════════════════════════════════════════');

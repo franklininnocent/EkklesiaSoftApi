@@ -22,17 +22,22 @@ use Modules\Tenants\Services\ChurchCurrencyResolver;
 use Modules\Tenants\Services\ChurchFinancialPeriodResolver;
 
 const PARISH_NAME = 'Sacred Heart Church';
-const ADMIN_EMAIL = 'shadmin@gmail.com';
 
 require __DIR__.'/../vendor/autoload.php';
 $app = require_once __DIR__.'/../bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
+$adminEmail = (string) config('tenants.demo.default_admin_email', 'shadmin@gmail.com');
 $adminPassword = getenv('RECOVERY_ADMIN_PASSWORD');
 if (! is_string($adminPassword) || $adminPassword === '') {
-    fwrite(STDERR, "Set RECOVERY_ADMIN_PASSWORD in the environment before running this recovery script.\n");
-    exit(1);
+    if (app()->environment('production')) {
+        fwrite(STDERR, "Set RECOVERY_ADMIN_PASSWORD in the environment before running this recovery script in production.\n");
+        exit(1);
+    }
+    $adminPassword = (string) config('tenants.demo.default_admin_password', 'TempPassword123!');
 }
+
+define('ADMIN_EMAIL', $adminEmail);
 
 $existing = User::withTrashed()->where('email', ADMIN_EMAIL)->first();
 if ($existing) {
@@ -61,7 +66,7 @@ if (! $stateId) {
 $superAdmin = User::where('email', 'franklininnocent.fs@gmail.com')->first();
 $createdBy = $superAdmin?->id;
 
-DB::transaction(function () use ($countryId, $stateId, $createdBy) {
+DB::transaction(function () use ($countryId, $stateId, $createdBy, $adminPassword) {
     $plan = 'enterprise';
     $planModel = SubscriptionPlan::query()->where('key', $plan)->first();
     $features = $planModel?->features

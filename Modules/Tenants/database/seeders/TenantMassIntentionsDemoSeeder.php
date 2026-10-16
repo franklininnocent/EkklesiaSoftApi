@@ -118,16 +118,22 @@ class TenantMassIntentionsDemoSeeder extends Seeder
             }
 
             $beneficiaryName = trim($member->first_name.' '.$member->last_name);
-            $requestService->create($tenantId, $actor, [
+            $payload = [
                 'celebration_id' => $celebration->id,
                 'mass_intention_category_id' => $category->id,
                 'beneficiary_name' => $beneficiaryName,
-                'beneficiary_person_id' => $member->person_id,
-                'beneficiary_place' => 'Parish',
                 'intention_description' => 'Demo intention for '.$beneficiaryName,
                 'notes' => CompactDemoMarkers::MARKER,
                 'requester_name' => 'Parish Office',
-            ]);
+            ];
+
+            if ($member->person_id !== null) {
+                $payload['beneficiary_person_id'] = $member->person_id;
+            } else {
+                $payload['beneficiary_place'] = 'Parish';
+            }
+
+            $requestService->create($tenantId, $actor, $payload);
             $created++;
         }
 

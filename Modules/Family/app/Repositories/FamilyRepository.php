@@ -397,29 +397,20 @@ class FamilyRepository
             return;
         }
 
-        // Find active member with relationship='self' or 'head'
-        $headMember = FamilyMember::where('family_id', $familyId)
+        $headMember = FamilyMember::query()
+            ->where('family_id', $familyId)
             ->whereIn('relationship_to_head', ['self', 'head'])
-            ->where('status', 'active')
+            ->orderByRaw("CASE WHEN status = 'active' THEN 0 ELSE 1 END")
+            ->orderBy('created_at')
             ->first();
 
-        if ($headMember) {
-            // Update head_of_family to match the active head member's full name
-            $family->update([
-                'head_of_family' => trim("{$headMember->first_name} {$headMember->last_name}"),
-            ]);
-        } else {
-            // If no active head member, try to find any member with relationship='self' or 'head'
-            $headMember = FamilyMember::where('family_id', $familyId)
-                ->whereIn('relationship_to_head', ['self', 'head'])
-                ->first();
-
-            if ($headMember) {
-                $family->update([
-                    'head_of_family' => trim("{$headMember->first_name} {$headMember->last_name}"),
-                ]);
-            }
+        if ($headMember === null) {
+            return;
         }
+
+        $family->update([
+            'head_of_family' => trim("{$headMember->first_name} {$headMember->last_name}"),
+        ]);
     }
 
     /**
