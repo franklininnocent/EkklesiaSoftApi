@@ -7,6 +7,9 @@ use Illuminate\Routing\Router;
 use Illuminate\Support\ServiceProvider;
 use Modules\Subscriptions\Console\Commands\AlignLaunchPlanFeatures;
 use Modules\Subscriptions\Console\Commands\RebuildLaunchPlanCatalog;
+use Modules\Subscriptions\Console\Commands\ApplyScheduledBillingMaintenance;
+use Modules\Subscriptions\Console\Commands\ReleaseExpiredBillingReservations;
+use Modules\Subscriptions\Console\Commands\RunBillingReconciliation;
 use Modules\Subscriptions\Console\Commands\ApplyScheduledSubscriptionChanges;
 use Modules\Subscriptions\Console\Commands\BackfillTenantSubscriptions;
 use Modules\Subscriptions\Console\Commands\SendUsageThresholdAlerts;
@@ -68,6 +71,9 @@ class SubscriptionsServiceProvider extends ServiceProvider
             SendUsageThresholdAlerts::class,
             AlignLaunchPlanFeatures::class,
             RebuildLaunchPlanCatalog::class,
+            RunBillingReconciliation::class,
+            ReleaseExpiredBillingReservations::class,
+            ApplyScheduledBillingMaintenance::class,
         ]);
 
         $this->registerCommandSchedules();
@@ -94,6 +100,18 @@ class SubscriptionsServiceProvider extends ServiceProvider
             if (config('subscriptions.usage.alerts_scheduler_enabled', true)) {
                 $schedule->command('subscriptions:usage-alerts')
                     ->dailyAt((string) config('subscriptions.usage.alerts_time', '02:40'))
+                    ->withoutOverlapping();
+            }
+
+            if (config('subscriptions.billing.reconciliation_scheduler_enabled', true)) {
+                $schedule->command('billing:reconcile')
+                    ->dailyAt((string) config('subscriptions.billing.reconciliation_time', '03:15'))
+                    ->withoutOverlapping();
+                $schedule->command('billing:release-expired-reservations')
+                    ->hourly()
+                    ->withoutOverlapping();
+                $schedule->command('billing:apply-scheduled-maintenance')
+                    ->everyFifteenMinutes()
                     ->withoutOverlapping();
             }
         });

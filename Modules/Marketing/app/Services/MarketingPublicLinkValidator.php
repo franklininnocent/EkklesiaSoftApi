@@ -68,7 +68,19 @@ class MarketingPublicLinkValidator
         if (preg_match('/^#[a-z0-9-]+$/i', $href)) {
             return;
         }
-        if (in_array($href, ['/', '/privacy', '/terms'], true)) {
+        $allowedRoutes = [
+            '/',
+            '/privacy',
+            '/terms',
+            '/features',
+            '/about',
+            '/contact',
+            '/solutions/catholic-parishes',
+        ];
+        if (in_array($href, $allowedRoutes, true)) {
+            return;
+        }
+        if (preg_match('#^/features/[a-z0-9-]+$#', $href)) {
             return;
         }
         throw new \InvalidArgumentException("{$path}.href is not an allowed public link.");

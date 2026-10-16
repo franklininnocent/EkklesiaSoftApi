@@ -34,9 +34,11 @@ class AuthenticationServiceProvider extends ServiceProvider
         // Load module migrations
         $this->loadMigrationsFrom(module_path($this->name, 'database/migrations'));
 
-        // Load module configuration
+        // Load module configuration. When config is cached, env() in this
+        // file returns null and would wipe SUPER_ADMIN_* values baked into
+        // bootstrap/cache/config.php.
         $configPath = module_path($this->name, 'config/authentication.php');
-        if (file_exists($configPath)) {
+        if (file_exists($configPath) && ! $this->app->configurationIsCached()) {
             $this->mergeConfigFrom($configPath, 'authentication');
         }
 
@@ -130,7 +132,9 @@ class AuthenticationServiceProvider extends ServiceProvider
                     $key = ($config === 'config.php') ? $this->nameLower : implode('.', $normalized);
 
                     $this->publishes([$file->getPathname() => config_path($config)], 'config');
-                    $this->merge_config_from($file->getPathname(), $key);
+                    if (! $this->app->configurationIsCached()) {
+                        $this->merge_config_from($file->getPathname(), $key);
+                    }
                 }
             }
         }

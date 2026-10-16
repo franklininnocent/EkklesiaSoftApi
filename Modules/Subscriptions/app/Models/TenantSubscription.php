@@ -34,6 +34,8 @@ class TenantSubscription extends Model
 
     public const SOURCE_VERSION_MIGRATION = 'VERSION_MIGRATION';
 
+    public const SOURCE_BILLING_PAYMENT = 'BILLING_PAYMENT';
+
     protected $table = 'tenant_subscriptions';
 
     protected $fillable = [

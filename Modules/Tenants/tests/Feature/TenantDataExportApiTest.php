@@ -719,7 +719,7 @@ class TenantDataExportApiTest extends TestCase
         $registry->shouldReceive('get')
             ->once()
             ->with('users')
-            ->andThrow(new \RuntimeException('SQLSTATE[HY000]: secret stack at /var/www/html/EkklesiaSoft/secret.php:99'));
+            ->andThrow(new \RuntimeException('SQLSTATE[HY000]: secret stack at /var/www/html/EkklesiaNexus/secret.php:99'));
 
         $orchestrator = new TenantDataExportOrchestrator(
             $registry,

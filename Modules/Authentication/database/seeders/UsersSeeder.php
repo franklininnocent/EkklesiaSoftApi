@@ -13,7 +13,7 @@ class UsersSeeder extends Seeder
     {
         // Super admin (no tenant)
        /* User::firstOrCreate(
-            ['email' => 'admin@ekklesiasoft.test'],
+            ['email' => 'admin@ekklesianexus.test'],
             [
                 'name' => 'System Admin',
                 'password' => Hash::make('Password123!'),

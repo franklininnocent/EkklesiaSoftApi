@@ -15,6 +15,7 @@ class MarketingContentService
     public function __construct(
         private readonly MarketingSeoValidator $seoValidator,
         private readonly MarketingPublicLinkValidator $linkValidator,
+        private readonly MarketingSiteRevalidator $siteRevalidator,
     ) {
     }
     /** @var list<string> */
@@ -114,6 +115,8 @@ class MarketingContentService
         ]);
 
         $this->auditMarketingContent($publisher, 'marketing.content.published', $beforeSeo, $this->extractSeoAuditSlice($payload));
+
+        $this->siteRevalidator->revalidateMarketingSite();
 
         return $revision;
     }

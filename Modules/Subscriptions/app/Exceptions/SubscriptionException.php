@@ -36,6 +36,12 @@ class SubscriptionException extends RuntimeException implements Responsable
 
     public const PLAN_ARCHIVE_REQUIRES_CONFIRMATION = 'PLAN_ARCHIVE_REQUIRES_CONFIRMATION';
 
+    public const BILLING_ACTION_DENIED = 'BILLING_ACTION_DENIED';
+
+    public const BILLING_INVALID_STATE = 'BILLING_INVALID_STATE';
+
+    public const BILLING_VERIFICATION_FAILED = 'BILLING_VERIFICATION_FAILED';
+
     /**
      * @param  array<string, mixed>  $context
      */
@@ -124,6 +130,22 @@ class SubscriptionException extends RuntimeException implements Responsable
     public static function invalidState(string $message): self
     {
         return new self(self::INVALID_STATE, $message, 409);
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     */
+    public static function billingDenied(string $reasonCode, string $message, array $context = []): self
+    {
+        return new self(self::BILLING_ACTION_DENIED, $message, 403, [
+            'reason_code' => $reasonCode,
+            ...$context,
+        ]);
+    }
+
+    public static function billingVerificationFailed(string $message): self
+    {
+        return new self(self::BILLING_VERIFICATION_FAILED, $message, 422);
     }
 
     /**
