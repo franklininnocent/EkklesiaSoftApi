@@ -87,6 +87,14 @@ class MarketingPlanCatalogTest extends TestCase
 
         $codes = array_column($this->getJson('/api/public/subscription-plans')->json('data'), 'code');
         $this->assertSame(['STARTER', 'STANDARD', 'PROFESSIONAL', 'ENTERPRISE'], $codes);
+
+        $starter = collect($this->getJson('/api/public/subscription-plans')->json('data'))->firstWhere('code', 'STARTER');
+        $this->assertIsArray($starter);
+        $this->assertSame('INR', $starter['currency_code']);
+        $this->assertSame('1499.00', $starter['monthly_price']);
+        $this->assertSame('1499.00', $starter['regional_prices']['INR']['monthly_price']);
+        $this->assertSame('39.00', $starter['regional_prices']['USD']['monthly_price']);
+        $this->assertSame('99.00', $starter['regional_prices']['BRL']['monthly_price']);
     }
 
     public function test_ekklesia_admin_cannot_publish_plan_catalog(): void
