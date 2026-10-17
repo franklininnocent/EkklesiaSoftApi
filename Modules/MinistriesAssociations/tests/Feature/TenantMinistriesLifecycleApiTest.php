@@ -455,6 +455,81 @@ class TenantMinistriesLifecycleApiTest extends TestCase
     }
 
     #[Test]
+    public function authorized_user_can_update_about_fields(): void
+    {
+        $this->authenticateAdmin();
+        $org = $this->createOrganization([
+            'code' => 'ABT1',
+            'name' => 'About Fields Org',
+            'description' => '<p>Old description</p>',
+            'vision' => '<p>Old vision</p>',
+            'mission' => '<p>Old mission</p>',
+            'objectives' => '<p>Old objectives</p>',
+        ]);
+
+        $this->putJson("/api/tenant/ministries/organizations/{$org->id}", [
+            'description' => '<p>New description</p>',
+        ])->assertOk()
+            ->assertJsonPath('data.description', '<p>New description</p>')
+            ->assertJsonPath('data.vision', '<p>Old vision</p>');
+
+        $this->putJson("/api/tenant/ministries/organizations/{$org->id}", [
+            'vision' => '<p>New vision</p>',
+            'mission' => '<p>New mission</p>',
+            'objectives' => '<p>New objectives</p>',
+        ])->assertOk()
+            ->assertJsonPath('data.description', '<p>New description</p>')
+            ->assertJsonPath('data.vision', '<p>New vision</p>')
+            ->assertJsonPath('data.mission', '<p>New mission</p>')
+            ->assertJsonPath('data.objectives', '<p>New objectives</p>');
+
+        $this->getJson("/api/tenant/ministries/organizations/{$org->id}")
+            ->assertOk()
+            ->assertJsonPath('data.description', '<p>New description</p>')
+            ->assertJsonPath('data.vision', '<p>New vision</p>')
+            ->assertJsonPath('data.mission', '<p>New mission</p>')
+            ->assertJsonPath('data.objectives', '<p>New objectives</p>');
+
+        $this->assertDatabaseHas('ma_organizations', [
+            'id' => $org->id,
+            'description' => '<p>New description</p>',
+            'vision' => '<p>New vision</p>',
+            'mission' => '<p>New mission</p>',
+            'objectives' => '<p>New objectives</p>',
+        ]);
+    }
+
+    #[Test]
+    public function viewer_cannot_update_about_fields(): void
+    {
+        $this->authenticateAdmin();
+        $org = $this->createOrganization(['code' => 'ABT2', 'name' => 'Viewer Org']);
+
+        $viewerRole = Role::create([
+            'name' => 'Ministries Viewer About',
+            'description' => 'Read only',
+            'level' => 5,
+            'active' => 1,
+            'tenant_id' => $this->tenant->id,
+            'is_custom' => true,
+            'role_type' => Role::ROLE_TYPE_TENANT,
+        ]);
+        $viewer = User::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'role_id' => $viewerRole->id,
+        ]);
+        $viewer->syncRoles([$viewerRole->id]);
+        $viewPermission = Permission::query()->where('name', 'ministries.view')->firstOrFail();
+        $viewerRole->permissions()->syncWithoutDetaching([$viewPermission->id]);
+
+        Passport::actingAs($viewer);
+
+        $this->putJson("/api/tenant/ministries/organizations/{$org->id}", [
+            'description' => '<p>Hacked</p>',
+        ])->assertForbidden();
+    }
+
+    #[Test]
     public function user_without_manage_members_cannot_enroll(): void
     {
         $this->authenticateAdmin();

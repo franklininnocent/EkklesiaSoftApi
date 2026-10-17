@@ -26,6 +26,7 @@ class MarketingPlanCatalogService
         private readonly MarketingPlanCatalogValidator $validator,
         private readonly MarketingSiteRevalidator $revalidator,
         private readonly MarketingPlanFeatureVisibility $visibility,
+        private readonly MarketingRegionalPricesAssembler $regionalPrices,
     ) {}
 
     /**
@@ -72,7 +73,7 @@ class MarketingPlanCatalogService
             ->first();
 
         $live = $this->buildLiveSnapshot();
-        $readiness = $this->validator->validate($live['plans']);
+        $readiness = $this->mergeCatalogValidation($live['plans'], $live);
 
         return [
             'published' => $published ? $this->revisionSummary($published) : null,
@@ -98,7 +99,7 @@ class MarketingPlanCatalogService
     public function generatePreview(User $actor, ?string $notes = null): MarketingPlanCatalogRevision
     {
         $snapshot = $this->buildLiveSnapshot();
-        $validation = $this->validator->validate($snapshot['plans']);
+        $validation = $this->mergeCatalogValidation($snapshot['plans'], $snapshot);
         if ($validation['errors'] !== []) {
             throw new InvalidArgumentException(implode(' ', $validation['errors']));
         }
@@ -495,6 +496,8 @@ class MarketingPlanCatalogService
     {
         $plans = [];
         $sourceRefs = [];
+        $regionalErrors = [];
+        $regionalWarnings = [];
 
         $rows = Plan::query()->publiclyListed()
             ->with('activeVersion.entitlements.feature')
@@ -504,7 +507,14 @@ class MarketingPlanCatalogService
 
         foreach ($rows as $plan) {
             $version = $plan->activeVersion;
+            $assembled = $this->regionalPrices->assemble($plan, $version);
+            $regionalErrors = array_merge($regionalErrors, $assembled['errors']);
+            $regionalWarnings = array_merge($regionalWarnings, $assembled['warnings']);
+
             $card = $this->presenter->publicPlan($plan, $version);
+            if ($assembled['regional_prices'] !== []) {
+                $card['regional_prices'] = $assembled['regional_prices'];
+            }
             $plans[] = $this->validator->allowlistPlan($card);
             $sourceRefs[] = [
                 'plan_code' => $plan->code,
@@ -522,7 +532,29 @@ class MarketingPlanCatalogService
             'plans' => $plans,
             'source_refs' => $sourceRefs,
             'source_fingerprint' => $fingerprint,
+            'regional_errors' => $regionalErrors,
+            'regional_warnings' => $regionalWarnings,
         ];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $plans
+     * @param  array{regional_errors?: list<string>, regional_warnings?: list<string>}  $snapshotMeta
+     * @return array{errors: list<string>, warnings: list<string>}
+     */
+    private function mergeCatalogValidation(array $plans, array $snapshotMeta = []): array
+    {
+        $validation = $this->validator->validate($plans);
+        $validation['errors'] = array_merge(
+            $validation['errors'],
+            $snapshotMeta['regional_errors'] ?? [],
+        );
+        $validation['warnings'] = array_merge(
+            $validation['warnings'],
+            $snapshotMeta['regional_warnings'] ?? [],
+        );
+
+        return $validation;
     }
 
     /**
