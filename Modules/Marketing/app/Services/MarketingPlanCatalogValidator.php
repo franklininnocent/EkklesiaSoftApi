@@ -30,7 +30,11 @@ class MarketingPlanCatalogValidator
         'limits',
         'coverage',
         'version_number',
+        'regional_prices',
     ];
+
+    /** @var list<string> */
+    public const MARKETING_REGIONAL_CURRENCIES = ['INR', 'USD', 'BRL'];
 
     /**
      * @param  list<array<string, mixed>>  $plans
@@ -102,6 +106,8 @@ class MarketingPlanCatalogValidator
             if (($plan['short_description'] ?? '') === '') {
                 $warnings[] = "{$code}: missing short_description.";
             }
+
+            $this->validateRegionalPrices($plan, $code, $errors);
         }
 
         $orders = array_map(static fn (array $p) => (int) ($p['display_order'] ?? 0), $plans);
@@ -133,6 +139,48 @@ class MarketingPlanCatalogValidator
                 $desc = strtolower((string) ($row['description'] ?? ''));
                 if (str_contains($desc, 'import and export') || (str_contains($desc, 'import') && ! str_contains($desc, 'export'))) {
                     $errors[] = "{$code}: IMPORT_EXPORT description must not advertise bulk import.";
+                }
+            }
+        }
+    }
+
+    /**
+     * @param  list<string>  $errors
+     */
+    private function validateRegionalPrices(array $plan, string $code, array &$errors): void
+    {
+        if (! array_key_exists('regional_prices', $plan)) {
+            return;
+        }
+
+        $regional = $plan['regional_prices'];
+        if (! is_array($regional)) {
+            $errors[] = "{$code}: regional_prices must be an object.";
+
+            return;
+        }
+
+        foreach ($regional as $currency => $entry) {
+            $currencyKey = strtoupper((string) $currency);
+            if (! in_array($currencyKey, self::MARKETING_REGIONAL_CURRENCIES, true)) {
+                $errors[] = "{$code}: unexpected regional currency {$currencyKey}.";
+
+                continue;
+            }
+            if (! is_array($entry)) {
+                $errors[] = "{$code}: regional_prices.{$currencyKey} must be an object.";
+
+                continue;
+            }
+            foreach (['monthly_price', 'annual_price'] as $priceKey) {
+                if (! array_key_exists($priceKey, $entry)) {
+                    $errors[] = "{$code}: regional_prices.{$currencyKey} missing {$priceKey}.";
+
+                    continue;
+                }
+                $value = $entry[$priceKey];
+                if ($value !== null && ! is_string($value)) {
+                    $errors[] = "{$code}: regional_prices.{$currencyKey}.{$priceKey} must be a decimal string or null.";
                 }
             }
         }

@@ -292,6 +292,16 @@ final class SubscriptionCatalogDefinition
     {
         return [
             [
+                'country_code' => 'IN',
+                'currency_code' => 'INR',
+                'plans' => [
+                    'STARTER' => ['monthly_price' => '1499.00', 'annual_price' => '14990.00'],
+                    'STANDARD' => ['monthly_price' => '2999.00', 'annual_price' => '29990.00'],
+                    'PROFESSIONAL' => ['monthly_price' => '4999.00', 'annual_price' => '49990.00'],
+                    'ENTERPRISE' => ['monthly_price' => null, 'annual_price' => null],
+                ],
+            ],
+            [
                 'country_code' => 'US',
                 'currency_code' => 'USD',
                 'plans' => [
