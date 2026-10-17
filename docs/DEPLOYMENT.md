@@ -396,6 +396,19 @@ Run inside the release directory as `ekklesia`.
 ```bash
 cd /srv/ekklesianexus/api/releases/<RELEASE_ID>
 composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
+```
+
+Root `composer.json` must list explicit PSR-4 paths for the Marketing module (`Modules\\Marketing\\` → `Modules/Marketing/app/`). If `composer install` runs as root with plugins disabled, Marketing classes are skipped without those entries and Artisan fails with `MarketingServiceProvider` not found. After deploy, verify autoload:
+
+```bash
+export COMPOSER_ALLOW_SUPERUSER=1
+composer dump-autoload -o --no-interaction
+php -r "require 'vendor/autoload.php'; exit(class_exists('Modules\\Marketing\\Providers\\MarketingServiceProvider') ? 0 : 1);"
+```
+
+Then continue:
+
+```bash
 php artisan storage:link
 php artisan config:cache
 php artisan route:cache
