@@ -27,6 +27,8 @@ class MarketingPlanCatalogTest extends TestCase
             ->assertOk()
             ->assertJsonPath('success', true)
             ->assertJsonPath('data', []);
+
+        $this->assertNull(\Illuminate\Support\Facades\Cache::get(MarketingPlanCatalogCache::KEY_PUBLISHED));
     }
 
     public function test_subscription_version_activation_does_not_auto_publish_marketing(): void

@@ -51,6 +51,13 @@ class MarketingPlanCatalogService
         };
 
         if ($ttl > 0) {
+            $publication = $this->publicationRow();
+            if ($publication->published_revision_id === null) {
+                MarketingPlanCatalogCache::forgetPublished();
+
+                return [];
+            }
+
             return Cache::remember(MarketingPlanCatalogCache::KEY_PUBLISHED, $ttl, $load);
         }
 
