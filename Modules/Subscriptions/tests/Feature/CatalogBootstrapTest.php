@@ -50,16 +50,29 @@ class CatalogBootstrapTest extends TestCase
     public function us_and_brazil_list_prices_are_seeded_in_billed_currency(): void
     {
         $expected = [
-            'US' => ['STARTER' => '39.00', 'STANDARD' => '59.00', 'PROFESSIONAL' => '89.00'],
-            'BR' => ['STARTER' => '99.00', 'STANDARD' => '199.00', 'PROFESSIONAL' => '399.00'],
+            'IN' => [
+                'STARTER' => ['1499.00', '14990.00'],
+                'STANDARD' => ['2999.00', '29990.00'],
+                'PROFESSIONAL' => ['4999.00', '49990.00'],
+            ],
+            'US' => [
+                'STARTER' => ['39.00', '390.00'],
+                'STANDARD' => ['59.00', '590.00'],
+                'PROFESSIONAL' => ['89.00', '890.00'],
+            ],
+            'BR' => [
+                'STARTER' => ['99.00', '990.00'],
+                'STANDARD' => ['199.00', '1990.00'],
+                'PROFESSIONAL' => ['399.00', '3990.00'],
+            ],
         ];
 
         foreach ($expected as $country => $plans) {
-            foreach ($plans as $code => $monthly) {
+            foreach ($plans as $code => [$monthly, $annual]) {
                 $row = $this->plan($code)->catalogPrices()->where('country_code', $country)->first();
                 $this->assertNotNull($row, "{$code} {$country}");
                 $this->assertSame($monthly, (string) $row->monthly_price, "{$code} {$country}");
-                $this->assertNull($row->annual_price, "{$code} {$country}");
+                $this->assertSame($annual, (string) $row->annual_price, "{$code} {$country}");
             }
             $enterprise = $this->plan('ENTERPRISE')->catalogPrices()->where('country_code', $country)->first();
             $this->assertNotNull($enterprise, $country);
