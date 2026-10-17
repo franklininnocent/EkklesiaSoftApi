@@ -3,10 +3,11 @@
 namespace Modules\Marketing\Tests\Feature;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Mail;
+use Modules\Marketing\Jobs\SendContactEnquiryNotificationJob;
 use Modules\Marketing\Mail\ContactEnquiryNotificationMail;
 use Modules\Marketing\Models\ContactEnquiry;
-use Modules\Marketing\Models\WebSetting;
 use Modules\Marketing\Services\ContactCaptchaService;
 use Tests\TestCase;
 
@@ -74,11 +75,23 @@ class PublicContactEnquiryTest extends TestCase
         $enquiry = ContactEnquiry::query()->first();
         $this->assertNotNull($enquiry);
         $this->assertSame('maria@example.com', $enquiry->email);
+        $this->assertSame('St Mary Parish', $enquiry->organisation);
+        $this->assertSame(
+            'We would like help evaluating EkklesiaNexus for our parish.',
+            $enquiry->subject,
+        );
         $this->assertFalse(isset($enquiry->tenant_id));
         $this->assertSame(ContactEnquiry::DELIVERY_SENT, $enquiry->fresh()->delivery_status);
 
-        Mail::assertSent(ContactEnquiryNotificationMail::class, function (ContactEnquiryNotificationMail $mail) {
-            return $mail->hasTo('contact@ekklesianexus.com');
+        Mail::assertSent(ContactEnquiryNotificationMail::class, function (ContactEnquiryNotificationMail $mail) use ($enquiry) {
+            $html = $mail->render();
+
+            return $mail->hasTo('super-admin-notify@example.test', 'EkklesiaNexus Super Admin')
+                && str_contains($html, (string) $enquiry->reference_number)
+                && str_contains($html, 'Maria Thomas')
+                && str_contains($html, 'St Mary Parish')
+                && str_contains($html, '/settings/contact-enquiries')
+                && str_contains($html, '#003070');
         });
     }
 
@@ -101,6 +114,7 @@ class PublicContactEnquiryTest extends TestCase
 
     public function test_invalid_captcha_is_rejected(): void
     {
+        Mail::fake();
         [$id] = $this->seedCaptcha();
 
         $this->postJson('/api/public/contact-enquiries', $this->validPayload($id, 'WRONG'))
@@ -108,6 +122,7 @@ class PublicContactEnquiryTest extends TestCase
             ->assertJsonValidationErrors(['captcha_response']);
 
         $this->assertDatabaseCount('contact_enquiries', 0);
+        Mail::assertNothingSent();
     }
 
     public function test_expired_captcha_is_rejected(): void
@@ -171,7 +186,7 @@ class PublicContactEnquiryTest extends TestCase
     public function test_missing_recipient_persists_enquiry_as_failed(): void
     {
         Mail::fake();
-        WebSetting::query()->update(['contact_recipient_email' => 'not-an-email']);
+        config(['authentication.super_admin.email' => 'not-an-email']);
         [$id, $answer] = $this->seedCaptcha();
 
         $this->postJson('/api/public/contact-enquiries', $this->validPayload($id, $answer))
@@ -267,8 +282,54 @@ class PublicContactEnquiryTest extends TestCase
         $this->postJson('/api/public/contact-enquiries', $payload)->assertCreated();
 
         Mail::assertSent(ContactEnquiryNotificationMail::class, function (ContactEnquiryNotificationMail $mail) {
-            return $mail->hasTo('contact@ekklesianexus.com')
+            return $mail->hasTo('super-admin-notify@example.test')
                 && ! $mail->hasTo('attacker@example.com');
         });
+    }
+
+    public function test_notification_mail_subject_matches_product_requirement(): void
+    {
+        Mail::fake();
+        [$id, $answer] = $this->seedCaptcha();
+        $this->postJson('/api/public/contact-enquiries', $this->validPayload($id, $answer))->assertCreated();
+
+        Mail::assertSent(ContactEnquiryNotificationMail::class, function (ContactEnquiryNotificationMail $mail) {
+            return $mail->envelope()->subject === 'New Contact Enquiry Received — EkklesiaNexus';
+        });
+    }
+
+    public function test_enquiry_notification_job_is_dispatched_after_http_response(): void
+    {
+        Bus::fake();
+        [$id, $answer] = $this->seedCaptcha();
+
+        $this->postJson('/api/public/contact-enquiries', $this->validPayload($id, $answer))
+            ->assertCreated();
+
+        $this->assertDatabaseCount('contact_enquiries', 1);
+        Bus::assertDispatchedAfterResponse(SendContactEnquiryNotificationJob::class);
+    }
+
+    public function test_notification_job_is_unique_per_enquiry(): void
+    {
+        $job = new SendContactEnquiryNotificationJob('enquiry-uuid-123');
+        $this->assertSame('enquiry-uuid-123', $job->uniqueId());
+        $this->assertSame(120, $job->uniqueFor);
+    }
+
+    public function test_organization_alias_is_stored_as_organisation(): void
+    {
+        Mail::fake();
+        [$id, $answer] = $this->seedCaptcha();
+        $payload = $this->validPayload($id, $answer);
+        unset($payload['organisation']);
+        $payload['organization'] = 'St Joseph Parish';
+
+        $this->postJson('/api/public/contact-enquiries', $payload)->assertCreated();
+
+        $this->assertSame(
+            'St Joseph Parish',
+            ContactEnquiry::query()->value('organisation'),
+        );
     }
 }

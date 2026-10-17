@@ -10,6 +10,7 @@ use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
 use Modules\Marketing\Models\ContactEnquiry;
+use Modules\Marketing\Services\ContactEnquiryNotificationRecipient;
 
 class ContactEnquiryNotificationMail extends Mailable
 {
@@ -24,7 +25,7 @@ class ContactEnquiryNotificationMail extends Mailable
         $visitorEmail = $this->safeEmail($this->enquiry->email);
 
         $envelope = new Envelope(
-            subject: $product.' — Contact enquiry '.$this->enquiry->reference_number,
+            subject: 'New Contact Enquiry Received — '.$product,
         );
 
         if ($visitorEmail !== null) {
@@ -38,6 +39,8 @@ class ContactEnquiryNotificationMail extends Mailable
 
     public function content(): Content
     {
+        $recipient = app(ContactEnquiryNotificationRecipient::class);
+
         return new Content(
             view: 'marketing::emails.contact-enquiry-notification',
             text: 'marketing::emails.contact-enquiry-notification-text',
@@ -45,6 +48,10 @@ class ContactEnquiryNotificationMail extends Mailable
                 'enquiry' => $this->enquiry,
                 'submittedAtLabel' => UserFacingDate::formatDateTime($this->enquiry->created_at),
                 'preheader' => 'New website contact enquiry '.$this->enquiry->reference_number,
+                'adminEnquiriesUrl' => $recipient->adminEnquiriesUrl(),
+                'brandNavy' => '#003070',
+                'brandGold' => '#E0A830',
+                'productTagline' => 'The Next Generation of Church Management System',
             ],
         );
     }

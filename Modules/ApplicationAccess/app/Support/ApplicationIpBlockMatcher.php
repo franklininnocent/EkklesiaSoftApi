@@ -3,6 +3,7 @@
 namespace Modules\ApplicationAccess\Support;
 
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Modules\ApplicationAccess\Models\ApplicationIpBlockRule;
 use Symfony\Component\HttpFoundation\IpUtils;
 
@@ -42,16 +43,24 @@ final class ApplicationIpBlockMatcher
      */
     private function activeRules(): array
     {
-        return Cache::remember('application_access:active_ip_blocks', 30, function () {
-            return ApplicationIpBlockRule::query()
-                ->whereNull('revoked_at')
-                ->where(function ($query): void {
-                    $query->whereNull('expires_at')
-                        ->orWhere('expires_at', '>', now());
-                })
-                ->get()
-                ->all();
-        });
+        try {
+            return Cache::remember('application_access:active_ip_blocks', 30, function () {
+                return ApplicationIpBlockRule::query()
+                    ->whereNull('revoked_at')
+                    ->where(function ($query): void {
+                        $query->whereNull('expires_at')
+                            ->orWhere('expires_at', '>', now());
+                    })
+                    ->get()
+                    ->all();
+            });
+        } catch (\Throwable $exception) {
+            Log::warning('Application IP block list unavailable', [
+                'exception' => $exception::class,
+            ]);
+
+            return [];
+        }
     }
 
     private function matchesRule(string $ip, ApplicationIpBlockRule $rule): bool

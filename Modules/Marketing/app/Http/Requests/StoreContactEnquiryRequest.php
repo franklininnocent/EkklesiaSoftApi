@@ -19,6 +19,13 @@ class StoreContactEnquiryRequest extends FormRequest
                 $merge[$field] = trim($this->input($field));
             }
         }
+        if (
+            ! array_key_exists('organisation', $merge)
+            && $this->has('organization')
+            && is_string($this->input('organization'))
+        ) {
+            $merge['organisation'] = trim($this->input('organization'));
+        }
         if ($merge !== []) {
             $this->merge($merge);
         }

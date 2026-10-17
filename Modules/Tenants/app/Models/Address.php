@@ -206,16 +206,37 @@ class Address extends Model
      */
     public function getFullAddressAttribute(): string
     {
+        $countryLabel = $this->resolveCountryLabel();
+        $pin = trim((string) ($this->pin_zip_code ?? ''));
+        $countryPin = $countryLabel !== '' && $pin !== ''
+            ? $countryLabel.' - '.$pin
+            : ($countryLabel !== '' ? $countryLabel : $pin);
+
         $parts = array_filter([
             $this->line1,
             $this->line2,
             $this->district,
             $this->city,
             $this->state_province,
-            $this->country . ' - ' . $this->pin_zip_code,
+            $countryPin !== '' ? $countryPin : null,
         ]);
 
         return implode(', ', $parts);
+    }
+
+    /**
+     * Country column vs eager-loaded country() relation share the "country" key in JSON.
+     */
+    private function resolveCountryLabel(): string
+    {
+        if ($this->relationLoaded('country')) {
+            $relation = $this->getRelation('country');
+            if ($relation instanceof Country) {
+                return trim((string) $relation->name);
+            }
+        }
+
+        return trim((string) ($this->attributes['country'] ?? ''));
     }
 
     /**

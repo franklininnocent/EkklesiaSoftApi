@@ -140,17 +140,18 @@ return Application::configure(basePath: dirname(__DIR__))
             $origin = $request->headers->get('Origin');
             $allowedOrigins = config('cors.allowed_origins', []);
 
+            if ($response->getStatusCode() >= 500 && (config('app.env') === 'production' || ! config('app.debug'))) {
+                $status = $response->getStatusCode();
+                $response = response()->json([
+                    'success' => false,
+                    'message' => 'An unexpected error occurred.',
+                ], $status);
+            }
+
             if ($origin && in_array($origin, $allowedOrigins, true)) {
                 $response->headers->set('Access-Control-Allow-Origin', $origin);
                 $response->headers->set('Access-Control-Allow-Credentials', 'true');
                 $response->headers->set('Vary', 'Origin');
-            }
-
-            if ($response->getStatusCode() >= 500 && (config('app.env') === 'production' || ! config('app.debug'))) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'An unexpected error occurred.',
-                ], $response->getStatusCode());
             }
 
             return $response;

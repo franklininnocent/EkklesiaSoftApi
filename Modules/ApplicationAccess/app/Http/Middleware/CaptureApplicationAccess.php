@@ -28,11 +28,17 @@ class CaptureApplicationAccess
         try {
             $this->captureService->capture($request, $response);
         } catch (\Throwable $exception) {
-            Cache::increment(ApplicationAccessStatsKeys::CAPTURE_FAILURES);
-            Log::warning('Application access capture failed', [
-                'message' => $exception->getMessage(),
-                'path' => $request->path(),
-            ]);
+            try {
+                Cache::increment(ApplicationAccessStatsKeys::CAPTURE_FAILURES);
+            } catch (\Throwable) {
+            }
+            try {
+                Log::warning('Application access capture failed', [
+                    'exception' => $exception::class,
+                    'path' => $request->path(),
+                ]);
+            } catch (\Throwable) {
+            }
         }
 
         return $response;

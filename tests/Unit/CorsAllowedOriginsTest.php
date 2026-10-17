@@ -17,7 +17,34 @@ class CorsAllowedOriginsTest extends TestCase
             'https://ekklesianexus.com',
         );
 
-        $this->assertSame(['https://ekklesianexus.com'], $origins);
+        $this->assertSame([
+            'https://app.ekklesianexus.com',
+            'https://ekklesianexus.com',
+        ], $origins);
+    }
+
+    #[Test]
+    public function production_keeps_official_origins_when_urls_are_missing(): void
+    {
+        $origins = CorsAllowedOrigins::resolve('production', null, null);
+
+        $this->assertSame([
+            'https://app.ekklesianexus.com',
+            'https://ekklesianexus.com',
+        ], $origins);
+    }
+
+    #[Test]
+    public function configured_urls_are_reduced_to_the_browser_origin(): void
+    {
+        $origins = CorsAllowedOrigins::resolve(
+            'production',
+            'https://uat.example.test/dashboard/',
+            null,
+        );
+
+        $this->assertContains('https://uat.example.test', $origins);
+        $this->assertNotContains('https://uat.example.test/dashboard/', $origins);
     }
 
     #[Test]
