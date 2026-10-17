@@ -8,11 +8,12 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Mail\Mailables\Address;
 use Illuminate\Support\Facades\Mail;
 use Modules\Marketing\Mail\ContactEnquiryNotificationMail;
 use Modules\Marketing\Models\ContactEnquiry;
+use Modules\Marketing\Services\ContactEnquiryNotificationRecipient;
 use Modules\Marketing\Services\ContactEnquiryService;
-use Modules\Marketing\Services\WebSettingsService;
 use Throwable;
 
 class SendContactEnquiryNotificationJob implements ShouldBeUnique, ShouldQueue
@@ -36,23 +37,24 @@ class SendContactEnquiryNotificationJob implements ShouldBeUnique, ShouldQueue
         return $this->enquiryId;
     }
 
-    public function handle(ContactEnquiryService $enquiries, WebSettingsService $settings): void
+    public function handle(ContactEnquiryService $enquiries, ContactEnquiryNotificationRecipient $recipientResolver): void
     {
         $enquiry = ContactEnquiry::query()->find($this->enquiryId);
         if ($enquiry === null) {
             return;
         }
 
-        $recipient = $settings->recipientEmail();
-        if ($recipient === null) {
-            $enquiries->markFailed($enquiry, 'Contact recipient is not configured.');
+        $recipientEmail = $recipientResolver->email();
+        if ($recipientEmail === null) {
+            $enquiries->markFailed($enquiry, 'Super Admin notification email is not configured.');
 
             return;
         }
 
         $enquiries->markQueued($enquiry);
 
-        Mail::to($recipient)->send(new ContactEnquiryNotificationMail($enquiry->fresh()));
+        Mail::to(new Address($recipientEmail, $recipientResolver->name()))
+            ->send(new ContactEnquiryNotificationMail($enquiry->fresh()));
 
         $enquiries->markSent($enquiry->fresh());
     }

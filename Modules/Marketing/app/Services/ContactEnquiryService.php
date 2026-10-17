@@ -19,6 +19,7 @@ class ContactEnquiryService
 {
     public function __construct(
         private readonly WebSettingsService $webSettings,
+        private readonly ContactEnquiryNotificationRecipient $notificationRecipient,
     ) {}
 
     /**
@@ -38,7 +39,7 @@ class ContactEnquiryService
                 'email' => strtolower(trim((string) $validated['email'])),
                 'phone' => $this->nullableLine($validated['phone'] ?? null),
                 'organisation' => $this->nullableLine($validated['organisation'] ?? null),
-                'subject' => $this->nullableLine($validated['subject'] ?? null),
+                'subject' => $this->resolveSubject($validated['subject'] ?? null, (string) $validated['message']),
                 'message' => trim((string) $validated['message']),
                 'enquiry_status' => ContactEnquiry::STATUS_UNREAD,
                 'delivery_status' => ContactEnquiry::DELIVERY_RECEIVED,
@@ -57,13 +58,12 @@ class ContactEnquiryService
             'correlation_id' => $enquiry->correlation_id,
         ]);
 
-        $recipient = $this->webSettings->recipientEmail();
-        if ($recipient === null) {
+        if ($this->notificationRecipient->email() === null) {
             $enquiry->delivery_status = ContactEnquiry::DELIVERY_FAILED;
-            $enquiry->last_delivery_error = 'Contact recipient is not configured.';
+            $enquiry->last_delivery_error = 'Super Admin notification email is not configured.';
             $enquiry->save();
-            $this->recordEvent($enquiry, ContactEnquiry::DELIVERY_FAILED, 0, 'No valid recipient configured.');
-            Log::error('web.contact_enquiry.recipient_missing', [
+            $this->recordEvent($enquiry, ContactEnquiry::DELIVERY_FAILED, 0, 'Super Admin notification email is not configured.');
+            Log::error('web.contact_enquiry.notification_recipient_missing', [
                 'enquiry_id' => $enquiry->id,
                 'reference_number' => $enquiry->reference_number,
             ]);
@@ -71,7 +71,7 @@ class ContactEnquiryService
             return $enquiry->fresh();
         }
 
-        SendContactEnquiryNotificationJob::dispatch($enquiry->id);
+        SendContactEnquiryNotificationJob::dispatchAfterResponse($enquiry->id);
 
         return $enquiry->fresh();
     }
@@ -186,7 +186,7 @@ class ContactEnquiryService
             throw new RuntimeException('already_sent');
         }
 
-        if ($this->webSettings->recipientEmail() === null) {
+        if ($this->notificationRecipient->email() === null) {
             throw new RuntimeException('recipient_missing');
         }
 
@@ -273,7 +273,7 @@ class ContactEnquiryService
             'email' => $enquiry->email,
             'phone' => $enquiry->phone,
             'organisation' => $enquiry->organisation,
-            'subject' => $enquiry->subject,
+            'subject' => $enquiry->subject ?: $this->resolveSubject(null, (string) $enquiry->message),
             'enquiry_status' => $enquiry->enquiry_status,
             'delivery_status' => $enquiry->delivery_status,
             'delivery_attempts' => (int) $enquiry->delivery_attempts,
@@ -331,6 +331,23 @@ class ContactEnquiryService
         $clean = $this->sanitizeLine($value);
 
         return $clean === '' ? null : $clean;
+    }
+
+    private function resolveSubject(mixed $subject, string $message): string
+    {
+        $explicit = $this->nullableLine($subject);
+        if ($explicit !== null) {
+            return $explicit;
+        }
+
+        $normalized = preg_replace("/\r\n|\r/", "\n", $message) ?? $message;
+        $firstLine = strtok($normalized, "\n");
+        $preview = $this->sanitizeLine(is_string($firstLine) ? $firstLine : '');
+        if ($preview === '') {
+            return 'Website contact enquiry';
+        }
+
+        return mb_strlen($preview) > 200 ? mb_substr($preview, 0, 200) : $preview;
     }
 
     private function hashIp(?string $ip): ?string

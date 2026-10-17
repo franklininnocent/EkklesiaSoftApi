@@ -1,4 +1,6 @@
-EkklesiaNexus website contact enquiry
+EkklesiaNexus — {{ $productTagline ?? 'The Next Generation of Church Management System' }}
+
+New contact enquiry received
 
 Reference: {{ $enquiry->reference_number }}
 Submitted: {{ $submittedAtLabel }}
@@ -14,5 +16,12 @@ Organisation: {{ $enquiry->organisation }}
 Subject: {{ $enquiry->subject }}
 @endif
 
-Message
+Details
 {{ $enquiry->message }}
+
+@if (!empty($adminEnquiriesUrl))
+View enquiries in the application (sign in required):
+{{ $adminEnquiriesUrl }}
+@endif
+
+Reply to this email to respond to the visitor.

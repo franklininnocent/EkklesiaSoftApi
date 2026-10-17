@@ -139,6 +139,8 @@ class AdminWebSettingsAndEnquiriesTest extends TestCase
         $id = ContactEnquiry::query()->where('email', 'alpha@example.com')->value('id');
         $this->getJson('/api/admin/contact-enquiries/'.$id)
             ->assertOk()
+            ->assertJsonPath('data.organisation', 'St Mary Parish')
+            ->assertJsonPath('data.subject', 'We would like to learn more about EkklesiaNexus.')
             ->assertJsonPath('data.message', 'We would like to learn more about EkklesiaNexus.');
     }
 
