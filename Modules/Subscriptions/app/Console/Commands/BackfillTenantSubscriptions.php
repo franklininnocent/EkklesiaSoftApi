@@ -19,9 +19,10 @@ class BackfillTenantSubscriptions extends Command
         if (! $dryRun) {
             $catalog = $bootstrapper->run();
             $this->info(sprintf(
-                'Catalog: %d features created, %d missing entitlements attached (off), legacy plans grandfathered: [%s], launch plans created: [%s]',
+                'Catalog: %d features created, %d missing entitlements attached (off), %d catalog prices created or filled, legacy plans grandfathered: [%s], launch plans created: [%s]',
                 $catalog['features_created'],
                 $catalog['entitlements_attached'],
+                $catalog['catalog_prices_created'],
                 implode(', ', $catalog['legacy_converted']),
                 implode(', ', $catalog['plans_created'])
             ));
