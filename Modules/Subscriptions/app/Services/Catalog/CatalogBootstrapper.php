@@ -223,7 +223,24 @@ class CatalogBootstrapper
                 if (! $plan) {
                     continue;
                 }
-                if (PlanCatalogPrice::query()->where('plan_id', $plan->id)->where('country_code', $countryCode)->exists()) {
+                $existing = PlanCatalogPrice::query()
+                    ->where('plan_id', $plan->id)
+                    ->where('country_code', $countryCode)
+                    ->first();
+
+                if ($existing !== null) {
+                    $fill = [];
+                    if ($existing->monthly_price === null && $amounts['monthly_price'] !== null) {
+                        $fill['monthly_price'] = $amounts['monthly_price'];
+                    }
+                    if ($existing->annual_price === null && $amounts['annual_price'] !== null) {
+                        $fill['annual_price'] = $amounts['annual_price'];
+                    }
+                    if ($fill !== []) {
+                        $existing->forceFill($fill)->save();
+                        $created++;
+                    }
+
                     continue;
                 }
 

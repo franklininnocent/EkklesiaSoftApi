@@ -25,8 +25,9 @@ class MarketingRegionalPricesAssemblerTest extends TestCase
         $this->assertSame('1499.00', $result['regional_prices']['INR']['monthly_price']);
         $this->assertSame('14990.00', $result['regional_prices']['INR']['annual_price']);
         $this->assertSame('39.00', $result['regional_prices']['USD']['monthly_price']);
-        $this->assertNull($result['regional_prices']['USD']['annual_price']);
+        $this->assertSame('390.00', $result['regional_prices']['USD']['annual_price']);
         $this->assertSame('99.00', $result['regional_prices']['BRL']['monthly_price']);
+        $this->assertSame('990.00', $result['regional_prices']['BRL']['annual_price']);
     }
 
     public function test_inr_catalog_row_disagreeing_with_version_is_error(): void
@@ -35,13 +36,10 @@ class MarketingRegionalPricesAssemblerTest extends TestCase
         $version = $starter->activeVersion;
         $this->assertNotNull($version);
 
-        PlanCatalogPrice::query()->create([
-            'plan_id' => $starter->id,
-            'country_code' => 'IN',
-            'currency_code' => 'INR',
-            'monthly_price' => '1599.00',
-            'annual_price' => '14990.00',
-        ]);
+        PlanCatalogPrice::query()
+            ->where('plan_id', $starter->id)
+            ->where('country_code', 'IN')
+            ->update(['monthly_price' => '1599.00']);
 
         $result = app(MarketingRegionalPricesAssembler::class)->assemble($starter, $version);
 

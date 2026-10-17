@@ -34,7 +34,7 @@ class TenantCatalogCountryPricingTest extends TestCase
 
         $this->assertSame('USD', $starter['currency_code']);
         $this->assertSame('39.00', $starter['monthly_price']);
-        $this->assertNull($starter['annual_price']);
+        $this->assertSame('390.00', $starter['annual_price']);
 
         $this->publishMarketingPlanCatalog();
 

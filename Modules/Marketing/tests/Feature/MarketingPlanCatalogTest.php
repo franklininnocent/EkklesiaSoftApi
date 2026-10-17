@@ -93,8 +93,11 @@ class MarketingPlanCatalogTest extends TestCase
         $this->assertSame('INR', $starter['currency_code']);
         $this->assertSame('1499.00', $starter['monthly_price']);
         $this->assertSame('1499.00', $starter['regional_prices']['INR']['monthly_price']);
+        $this->assertSame('14990.00', $starter['regional_prices']['INR']['annual_price']);
         $this->assertSame('39.00', $starter['regional_prices']['USD']['monthly_price']);
+        $this->assertSame('390.00', $starter['regional_prices']['USD']['annual_price']);
         $this->assertSame('99.00', $starter['regional_prices']['BRL']['monthly_price']);
+        $this->assertSame('990.00', $starter['regional_prices']['BRL']['annual_price']);
     }
 
     public function test_ekklesia_admin_cannot_publish_plan_catalog(): void
